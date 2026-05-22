@@ -51,7 +51,7 @@ def fetch_and_store() -> None:
         _upsert(rows)
         total += len(rows)
         print(f"[fetch_analytics] {start_date}..{end_date}: {len(rows)} rows")
-        time.sleep(0.5)
+        time.sleep(2)
 
     print(f"[fetch_analytics] total upserted: {total}")
 
