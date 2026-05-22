@@ -25,9 +25,9 @@ jobs:
           EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
           EBAY_REFRESH_TOKEN: ${{ secrets.EBAY_REFRESH_TOKEN_READ }}
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: python analytics/run_ingest.py
+        run: python -m analytics.run_ingest
 
       - name: Compute metrics
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: python analytics/compute_metrics.py
+        run: python -m analytics.compute_metrics
