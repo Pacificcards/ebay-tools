@@ -21,10 +21,11 @@ def fetch_and_store() -> None:
     end_date = date.today() - timedelta(days=1)
     start_date = end_date - timedelta(days=LOOKBACK_DAYS - 1)
 
+    # eBay Analytics API requires dates as YYYYMMDD with no time component
     params = {
         "dimension": "LISTING",
         "metric": "CLICK_THROUGH_RATE,LISTING_IMPRESSION_TOTAL,LISTING_VIEWS_TOTAL",
-        "filter": f"dateRange:[{start_date.isoformat()}T00:00:00..{end_date.isoformat()}T00:00:00],granularityBucket:DAY",
+        "filter": f"dateRange:[{start_date.strftime('%Y%m%d')}..{end_date.strftime('%Y%m%d')}],granularityBucket:DAY",
     }
 
     response = requests.get(
