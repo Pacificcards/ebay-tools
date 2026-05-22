@@ -77,27 +77,43 @@ def _date_range(start: date, end: date):
         d += timedelta(days=1)
 
 
+PAGE_SIZE = 200
+
+
 def _fetch_window(token: str, start_date: date, end_date: date) -> list[dict]:
     filter_str = (
         f"marketplace_ids:%7B{MARKETPLACE}%7D,"
         f"date_range:%5B{start_date.strftime('%Y%m%d')}..{end_date.strftime('%Y%m%d')}%5D"
     )
-    url = (
+    base_url = (
         f"{ANALYTICS_URL}"
         f"?dimension=LISTING"
         f"&metric={METRICS}"
         f"&filter={filter_str}"
+        f"&limit={PAGE_SIZE}"
     )
+    headers = {"Authorization": f"Bearer {token}", "Content-Language": "en-US"}
 
-    response = requests.get(
-        url,
-        headers={"Authorization": f"Bearer {token}", "Content-Language": "en-US"},
-    )
-    if not response.ok:
-        print(f"[fetch_analytics] HTTP {response.status_code}: {response.text}")
-        response.raise_for_status()
+    all_rows = []
+    offset = 0
 
-    return _parse(response.json(), end_date)
+    while True:
+        url = f"{base_url}&offset={offset}"
+        response = requests.get(url, headers=headers)
+        if not response.ok:
+            print(f"[fetch_analytics] HTTP {response.status_code}: {response.text}")
+            response.raise_for_status()
+
+        data = response.json()
+        rows = _parse(data, end_date)
+        all_rows.extend(rows)
+
+        # eBay returns `warnings` when there's a next page; stop when we get fewer than a full page
+        if len(rows) < PAGE_SIZE:
+            break
+        offset += PAGE_SIZE
+
+    return all_rows
 
 
 def _parse(data: dict, as_of_date: date) -> list[dict]:
