@@ -23,15 +23,11 @@ def fetch_and_store() -> None:
     )
 
     if os.environ.get("BACKFILL"):
-        # Fetch 90 days in 7-day chunks to avoid the 200-listing cap cutting off data
         end = date.today() - timedelta(days=1)
-        start = end - timedelta(days=89)
-        windows = []
-        cursor = start
-        while cursor <= end:
-            chunk_end = min(cursor + timedelta(days=6), end)
-            windows.append((cursor, chunk_end))
-            cursor = chunk_end + timedelta(days=1)
+        backfill_start = os.environ.get("BACKFILL_START", "2026-01-01")
+        start = date.fromisoformat(backfill_start)
+        # One API call per day to ensure daily granularity in listing_metrics_raw
+        windows = [(d, d) for d in _date_range(start, end)]
     else:
         yesterday = date.today() - timedelta(days=1)
         windows = [(yesterday, yesterday)]
@@ -44,6 +40,13 @@ def fetch_and_store() -> None:
         print(f"[fetch_analytics] {start_date}..{end_date}: {len(rows)} rows")
 
     print(f"[fetch_analytics] total upserted: {total}")
+
+
+def _date_range(start: date, end: date):
+    d = start
+    while d <= end:
+        yield d
+        d += timedelta(days=1)
 
 
 def _fetch_window(token: str, start_date: date, end_date: date) -> list[dict]:
