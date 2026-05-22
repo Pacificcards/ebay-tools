@@ -19,8 +19,12 @@ def fetch_and_store() -> None:
         os.environ["EBAY_REFRESH_TOKEN"],
     )
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)
-    filter_str = f"creationdate:[{cutoff.strftime('%Y-%m-%dT%H:%M:%S.000Z')}...]"
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=LOOKBACK_DAYS)
+    filter_str = (
+        f"creationdate:[{cutoff.strftime('%Y-%m-%dT%H:%M:%S.000Z')}"
+        f"..{now.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]"
+    )
 
     orders = _paginate(token, filter_str)
     rows = [_to_row(o) for o in orders if _to_row(o) is not None]
