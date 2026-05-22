@@ -25,7 +25,7 @@ def fetch_and_store() -> None:
     params = {
         "dimension": "LISTING",
         "metric": "CLICK_THROUGH_RATE,LISTING_IMPRESSION_TOTAL,LISTING_VIEWS_TOTAL",
-        "filter": f"dateRange:[{start_date.strftime('%Y%m%d')}..{end_date.strftime('%Y%m%d')}],granularityBucket:DAY",
+        "filter": f"date:[{start_date.strftime('%Y%m%d')}..{end_date.strftime('%Y%m%d')}],granularityBucket:DAY",
     }
 
     # Build URL manually to avoid requests percent-encoding commas in metric/filter values
