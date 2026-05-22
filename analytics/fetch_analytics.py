@@ -24,14 +24,15 @@ def fetch_and_store() -> None:
     # eBay Analytics API requires dates as YYYYMMDD with no time component
     params = {
         "dimension": "LISTING",
-        "metric": "CLICK_THROUGH_RATE|LISTING_IMPRESSION_TOTAL|LISTING_VIEWS_TOTAL",
+        "metric": "CLICK_THROUGH_RATE,LISTING_IMPRESSION_TOTAL,LISTING_VIEWS_TOTAL",
         "filter": f"dateRange:[{start_date.strftime('%Y%m%d')}..{end_date.strftime('%Y%m%d')}],granularityBucket:DAY",
     }
 
+    # Build URL manually to avoid requests percent-encoding commas in metric/filter values
+    qs = "&".join(f"{k}={v}" for k, v in params.items())
     response = requests.get(
-        ANALYTICS_URL,
+        f"{ANALYTICS_URL}?{qs}",
         headers={"Authorization": f"Bearer {token}", "Content-Language": "en-US"},
-        params=params,
     )
     if not response.ok:
         print(f"[fetch_analytics] HTTP {response.status_code}: {response.text}")
