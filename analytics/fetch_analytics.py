@@ -33,7 +33,9 @@ def fetch_and_store() -> None:
         headers={"Authorization": f"Bearer {token}", "Content-Language": "en-US"},
         params=params,
     )
-    response.raise_for_status()
+    if not response.ok:
+        print(f"[fetch_analytics] HTTP {response.status_code}: {response.text}")
+        response.raise_for_status()
     data = response.json()
 
     rows = _parse_traffic_report(data)
