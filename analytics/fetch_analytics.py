@@ -24,7 +24,7 @@ def fetch_and_store() -> None:
     # eBay Analytics API requires dates as YYYYMMDD with no time component
     params = {
         "dimension": "LISTING",
-        "metric": "CLICK_THROUGH_RATE,LISTING_IMPRESSION_TOTAL,LISTING_VIEWS_TOTAL",
+        "metric": "CLICK_THROUGH_RATE|LISTING_IMPRESSION_TOTAL|LISTING_VIEWS_TOTAL",
         "filter": f"dateRange:[{start_date.strftime('%Y%m%d')}..{end_date.strftime('%Y%m%d')}],granularityBucket:DAY",
     }
 
