@@ -6,11 +6,11 @@ eBay seller automation and analytics for Pacific Cards Co.
 
 | Project | Directory | Status |
 |---|---|---|
-| Analytics | `analytics/` | Active |
-| Campaign scheduler | `scheduler/` | Planned |
-| P&L | `pl/` | Planned |
-| Listings listener | `listener/` | Planned |
-| Listings publisher | `listings-publisher/` | Planned |
+| Campaign scheduler | `scheduler/` | Active |
+| Analytics | `analytics/` | In Progress |
+| P&L | `pl/` | Not Started |
+| Listings listener | `listener/` | Not Started |
+| Listings publisher | `listings-publisher/` | Not Started |
 
 ## Setup
 
@@ -22,11 +22,14 @@ pip install -r requirements.txt
 
 ## Analytics
 
+Fetches daily traffic data (impressions, clicks, page views) per listing from the eBay Analytics API.
+
 Daily ingest runs via GitHub Actions at 8am UTC. To run manually:
 
 ```bash
-python analytics/run_ingest.py   # fetch from eBay APIs → Supabase
-python analytics/compute_metrics.py  # transform raw → computed
+python -m analytics.run_ingest          # fetch yesterday's data
+BACKFILL=1 python -m analytics.run_ingest   # backfill full 90-day history
+python -m analytics.compute_metrics    # compute derived metrics
 ```
 
 ## Metabase

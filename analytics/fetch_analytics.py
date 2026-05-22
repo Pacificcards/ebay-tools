@@ -1,4 +1,8 @@
-"""Fetch traffic data from eBay Analytics API and upsert into listing_metrics_raw."""
+"""Fetch traffic data from eBay Analytics API and upsert into listing_metrics_raw.
+
+Runs daily, fetching yesterday's data for all listings (up to 200).
+On first run, pass BACKFILL=1 env var to fetch the full 90-day history in weekly chunks.
+"""
 import os
 from datetime import date, timedelta
 
@@ -8,7 +12,7 @@ from shared.db import get_connection
 from shared.ebay_auth import get_access_token
 
 ANALYTICS_URL = "https://api.ebay.com/sell/analytics/v1/traffic_report"
-LOOKBACK_DAYS = 90
+MARKETPLACE = "EBAY_US"
 
 
 def fetch_and_store() -> None:
@@ -18,57 +22,76 @@ def fetch_and_store() -> None:
         os.environ["EBAY_REFRESH_TOKEN"],
     )
 
-    end_date = date.today() - timedelta(days=1)
-    start_date = end_date - timedelta(days=LOOKBACK_DAYS - 1)
+    if os.environ.get("BACKFILL"):
+        # Fetch 90 days in 7-day chunks to avoid the 200-listing cap cutting off data
+        end = date.today() - timedelta(days=1)
+        start = end - timedelta(days=89)
+        windows = []
+        cursor = start
+        while cursor <= end:
+            chunk_end = min(cursor + timedelta(days=6), end)
+            windows.append((cursor, chunk_end))
+            cursor = chunk_end + timedelta(days=1)
+    else:
+        yesterday = date.today() - timedelta(days=1)
+        windows = [(yesterday, yesterday)]
 
-    # eBay Analytics API requires dates as YYYYMMDD with no time component
-    params = {
-        "dimension": "LISTING",
-        "metric": "CLICK_THROUGH_RATE,LISTING_IMPRESSION_TOTAL,LISTING_VIEWS_TOTAL",
-        "filter": f"date:[{start_date.strftime('%Y%m%d')}..{end_date.strftime('%Y%m%d')}],granularityBucket:DAY",
-    }
+    total = 0
+    for start_date, end_date in windows:
+        rows = _fetch_window(token, start_date, end_date)
+        _upsert(rows)
+        total += len(rows)
+        print(f"[fetch_analytics] {start_date}..{end_date}: {len(rows)} rows")
 
-    # Build URL manually to avoid requests percent-encoding commas in metric/filter values
-    qs = "&".join(f"{k}={v}" for k, v in params.items())
+    print(f"[fetch_analytics] total upserted: {total}")
+
+
+def _fetch_window(token: str, start_date: date, end_date: date) -> list[dict]:
+    # URL-encode { } and [ ] as required by eBay docs
+    filter_str = (
+        f"marketplace_ids:%7B{MARKETPLACE}%7D,"
+        f"date_range:%5B{start_date.strftime('%Y%m%d')}..{end_date.strftime('%Y%m%d')}%5D"
+    )
+    # Build URL manually: commas in metric must not be encoded, filter is pre-encoded
+    url = (
+        f"{ANALYTICS_URL}"
+        f"?dimension=LISTING"
+        f"&metric=CLICK_THROUGH_RATE,LISTING_IMPRESSION_TOTAL,LISTING_VIEWS_TOTAL"
+        f"&filter={filter_str}"
+    )
+
     response = requests.get(
-        f"{ANALYTICS_URL}?{qs}",
+        url,
         headers={"Authorization": f"Bearer {token}", "Content-Language": "en-US"},
     )
     if not response.ok:
         print(f"[fetch_analytics] HTTP {response.status_code}: {response.text}")
         response.raise_for_status()
+
     data = response.json()
-
-    rows = _parse_traffic_report(data)
-    _upsert(rows)
-    print(f"[fetch_analytics] upserted {len(rows)} rows")
+    return _parse(data, end_date)
 
 
-def _parse_traffic_report(data: dict) -> list[dict]:
-    """Parse the traffic report response into flat row dicts."""
+def _parse(data: dict, as_of_date: date) -> list[dict]:
+    header = data.get("header", {})
+    metric_keys = [m["key"] for m in header.get("metrics", [])]
+
     rows = []
-
-    metric_headers = [m["metricKey"] for m in data.get("metricKeys", [])]
-    dimension_headers = [d["dimensionKey"] for d in data.get("dimensionKeys", [])]
-
     for record in data.get("records", []):
-        dimension_values = record.get("dimensionValues", [])
+        dim_values = record.get("dimensionValues", [])
         metric_values = record.get("metricValues", [])
 
-        dims = dict(zip(dimension_headers, [d.get("value") for d in dimension_values]))
-        metrics = dict(zip(metric_headers, [m.get("value") for m in metric_values]))
-
-        listing_id = dims.get("LISTING")
-        record_date = dims.get("DATE")
-
-        if not listing_id or not record_date:
+        listing_id = dim_values[0]["value"] if dim_values else None
+        if not listing_id:
             continue
+
+        metrics = dict(zip(metric_keys, [m.get("value") for m in metric_values]))
 
         rows.append({
             "listing_id": listing_id,
-            "date": record_date[:10],  # trim to YYYY-MM-DD
+            "date": as_of_date.isoformat(),
             "impressions": _int(metrics.get("LISTING_IMPRESSION_TOTAL")),
-            "clicks": _int(metrics.get("CLICK_THROUGH_RATE")),  # API returns raw clicks here
+            "clicks": _int(metrics.get("CLICK_THROUGH_RATE")),
             "page_views": _int(metrics.get("LISTING_VIEWS_TOTAL")),
         })
 
