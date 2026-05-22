@@ -1,4 +1,8 @@
-"""Fetch orders from eBay Fulfillment API and upsert into orders_raw."""
+"""Fetch orders from eBay Fulfillment API and upsert into orders_raw.
+
+Runs daily, fetching the last 2 days to catch any late-arriving orders.
+Set BACKFILL=1 to fetch historical data from BACKFILL_START (default 2026-01-01).
+"""
 import os
 from datetime import date, timedelta, timezone, datetime
 
@@ -8,7 +12,6 @@ from shared.db import get_connection
 from shared.ebay_auth import get_access_token
 
 ORDERS_URL = "https://api.ebay.com/sell/fulfillment/v1/order"
-LOOKBACK_DAYS = 90
 PAGE_LIMIT = 200
 
 
@@ -20,16 +23,22 @@ def fetch_and_store() -> None:
     )
 
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(days=LOOKBACK_DAYS)
+
+    if os.environ.get("BACKFILL"):
+        start = date.fromisoformat(os.environ.get("BACKFILL_START", "2026-01-01"))
+        cutoff = datetime(start.year, start.month, start.day, tzinfo=timezone.utc)
+    else:
+        cutoff = now - timedelta(days=2)
+
     filter_str = (
         f"creationdate:[{cutoff.strftime('%Y-%m-%dT%H:%M:%S.000Z')}"
         f"..{now.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]"
     )
 
     orders = _paginate(token, filter_str)
-    rows = [_to_row(o) for o in orders if _to_row(o) is not None]
-    _upsert([r for r in rows if r])
-    print(f"[fetch_orders] upserted {len(rows)} rows")
+    flat_rows = _flatten([_to_rows(o) for o in orders])
+    _upsert(flat_rows)
+    print(f"[fetch_orders] upserted {len(flat_rows)} line items from {len(orders)} orders")
 
 
 def _paginate(token: str, filter_str: str) -> list[dict]:
@@ -38,15 +47,13 @@ def _paginate(token: str, filter_str: str) -> list[dict]:
     offset = 0
 
     while True:
-        params = {
-            "filter": filter_str,
-            "limit": PAGE_LIMIT,
-            "offset": offset,
-        }
+        params = {"filter": filter_str, "limit": PAGE_LIMIT, "offset": offset}
         response = requests.get(ORDERS_URL, headers=headers, params=params)
-        response.raise_for_status()
-        data = response.json()
+        if not response.ok:
+            print(f"[fetch_orders] HTTP {response.status_code}: {response.text}")
+            response.raise_for_status()
 
+        data = response.json()
         batch = data.get("orders", [])
         orders.extend(batch)
 
@@ -58,17 +65,12 @@ def _paginate(token: str, filter_str: str) -> list[dict]:
     return orders
 
 
-def _to_row(order: dict) -> dict | None:
+def _to_rows(order: dict) -> list[dict]:
     order_id = order.get("orderId")
     creation_date = order.get("creationDate", "")[:10]
-
-    line_items = order.get("lineItems", [])
-    if not line_items:
-        return None
-
-    # One row per line item, each with its own listing ID
     rows = []
-    for item in line_items:
+
+    for item in order.get("lineItems", []):
         listing_id = item.get("legacyItemId") or item.get("lineItemId")
         quantity = item.get("quantity", 1)
         sale_price = item.get("lineItemCost", {}).get("value")
@@ -77,38 +79,33 @@ def _to_row(order: dict) -> dict | None:
             continue
 
         rows.append({
-            "order_id": f"{order_id}_{item.get('lineItemId', '')}",
+            "order_id":   f"{order_id}_{item.get('lineItemId', '')}",
             "listing_id": str(listing_id),
             "order_date": creation_date,
-            "quantity": quantity,
+            "quantity":   quantity,
             "sale_price": float(sale_price),
         })
 
-    return rows if rows else None
+    return rows
 
 
-def _upsert(all_rows) -> None:
-    # _to_row returns a list or None; flatten
-    flat = []
-    for r in all_rows:
-        if isinstance(r, list):
-            flat.extend(r)
-        elif r:
-            flat.append(r)
+def _flatten(nested: list[list[dict]]) -> list[dict]:
+    return [row for rows in nested for row in rows]
 
-    if not flat:
+
+def _upsert(rows: list[dict]) -> None:
+    if not rows:
         return
-
     conn = get_connection()
     try:
         with conn, conn.cursor() as cur:
-            for row in flat:
+            for row in rows:
                 cur.execute(
                     """
                     INSERT INTO orders_raw (order_id, listing_id, order_date, quantity, sale_price)
                     VALUES (%(order_id)s, %(listing_id)s, %(order_date)s, %(quantity)s, %(sale_price)s)
                     ON CONFLICT (order_id) DO UPDATE SET
-                        quantity = EXCLUDED.quantity,
+                        quantity   = EXCLUDED.quantity,
                         sale_price = EXCLUDED.sale_price,
                         fetched_at = NOW()
                     """,

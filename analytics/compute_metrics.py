@@ -11,42 +11,49 @@ def compute() -> None:
     try:
         with conn, conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO listing_metrics_computed
-                    (listing_id, date, ctr, orders_per_1k_impr, revenue_per_impression,
-                     conversion_rate, orders, revenue)
+                INSERT INTO listing_metrics_computed (
+                    listing_id, date,
+                    ctr,
+                    orders, quantity, revenue,
+                    conversion_rate,
+                    units_per_view, units_per_1k_impr
+                )
                 SELECT
                     r.listing_id,
                     r.date,
-                    CASE WHEN r.impressions > 0
-                         THEN ROUND(r.clicks::NUMERIC / r.impressions, 4) END           AS ctr,
-                    CASE WHEN r.impressions > 0
-                         THEN ROUND(COALESCE(o.orders, 0)::NUMERIC / r.impressions * 1000, 4) END
-                                                                                          AS orders_per_1k_impr,
-                    CASE WHEN r.impressions > 0
-                         THEN ROUND(COALESCE(o.revenue, 0) / r.impressions, 6) END       AS revenue_per_impression,
-                    CASE WHEN r.page_views > 0
-                         THEN ROUND(COALESCE(o.orders, 0)::NUMERIC / r.page_views, 4) END
-                                                                                          AS conversion_rate,
-                    COALESCE(o.orders, 0)                                                 AS orders,
-                    COALESCE(o.revenue, 0)                                                AS revenue
+                    r.ctr,
+                    COALESCE(o.orders, 0)                                          AS orders,
+                    COALESCE(o.quantity, 0)                                        AS quantity,
+                    COALESCE(o.revenue, 0)                                         AS revenue,
+                    CASE WHEN r.views_total > 0
+                         THEN ROUND(COALESCE(o.orders, 0)::NUMERIC / r.views_total, 6)
+                    END                                                             AS conversion_rate,
+                    CASE WHEN r.views_total > 0
+                         THEN ROUND(COALESCE(o.quantity, 0)::NUMERIC / r.views_total, 6)
+                    END                                                             AS units_per_view,
+                    CASE WHEN r.impressions_total > 0
+                         THEN ROUND(COALESCE(o.quantity, 0)::NUMERIC / r.impressions_total * 1000, 4)
+                    END                                                             AS units_per_1k_impr
                 FROM listing_metrics_raw r
                 LEFT JOIN (
                     SELECT
                         listing_id,
-                        order_date AS date,
-                        COUNT(*)           AS orders,
-                        SUM(sale_price)    AS revenue
+                        order_date          AS date,
+                        COUNT(*)            AS orders,
+                        SUM(quantity)       AS quantity,
+                        SUM(sale_price)     AS revenue
                     FROM orders_raw
                     GROUP BY listing_id, order_date
                 ) o USING (listing_id, date)
                 ON CONFLICT (listing_id, date) DO UPDATE SET
-                    ctr                    = EXCLUDED.ctr,
-                    orders_per_1k_impr     = EXCLUDED.orders_per_1k_impr,
-                    revenue_per_impression = EXCLUDED.revenue_per_impression,
-                    conversion_rate        = EXCLUDED.conversion_rate,
-                    orders                 = EXCLUDED.orders,
-                    revenue                = EXCLUDED.revenue,
-                    computed_at            = NOW()
+                    ctr              = EXCLUDED.ctr,
+                    orders           = EXCLUDED.orders,
+                    quantity         = EXCLUDED.quantity,
+                    revenue          = EXCLUDED.revenue,
+                    conversion_rate  = EXCLUDED.conversion_rate,
+                    units_per_view   = EXCLUDED.units_per_view,
+                    units_per_1k_impr = EXCLUDED.units_per_1k_impr,
+                    computed_at      = NOW()
             """)
             rowcount = cur.rowcount
         print(f"[compute_metrics] upserted {rowcount} rows into listing_metrics_computed")

@@ -11,13 +11,21 @@ CREATE TABLE IF NOT EXISTS listing_metadata (
 );
 
 CREATE TABLE IF NOT EXISTS listing_metrics_raw (
-    id              SERIAL PRIMARY KEY,
-    listing_id      TEXT NOT NULL,
-    date            DATE NOT NULL,
-    impressions     INTEGER,
-    clicks          INTEGER,
-    page_views      INTEGER,
-    fetched_at      TIMESTAMPTZ DEFAULT NOW(),
+    id                  SERIAL PRIMARY KEY,
+    listing_id          TEXT NOT NULL,
+    date                DATE NOT NULL,
+    ctr                 NUMERIC(8,6),
+    impressions_total   INTEGER,
+    impressions_search  INTEGER,
+    impressions_store   INTEGER,
+    views_total         INTEGER,
+    views_search        INTEGER,
+    views_store         INTEGER,
+    views_direct        INTEGER,
+    views_off_ebay      INTEGER,
+    views_other_ebay    INTEGER,
+    orders              INTEGER,
+    fetched_at          TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(listing_id, date)
 );
 
@@ -32,16 +40,17 @@ CREATE TABLE IF NOT EXISTS orders_raw (
 );
 
 CREATE TABLE IF NOT EXISTS listing_metrics_computed (
-    id                      SERIAL PRIMARY KEY,
-    listing_id              TEXT NOT NULL,
-    date                    DATE NOT NULL,
-    ctr                     NUMERIC(6,4),
-    orders_per_1k_impr      NUMERIC(8,4),
-    revenue_per_impression  NUMERIC(10,6),
-    conversion_rate         NUMERIC(6,4),
-    orders                  INTEGER,
-    revenue                 NUMERIC(10,2),
-    computed_at             TIMESTAMPTZ DEFAULT NOW(),
+    id                  SERIAL PRIMARY KEY,
+    listing_id          TEXT NOT NULL,
+    date                DATE NOT NULL,
+    ctr                 NUMERIC(8,6),
+    orders              INTEGER,
+    quantity            INTEGER,
+    revenue             NUMERIC(10,2),
+    conversion_rate     NUMERIC(8,6),
+    units_per_view      NUMERIC(8,6),
+    units_per_1k_impr   NUMERIC(8,4),
+    computed_at         TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(listing_id, date)
 );
 

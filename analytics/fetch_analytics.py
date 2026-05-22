@@ -1,9 +1,11 @@
 """Fetch traffic data from eBay Analytics API and upsert into listing_metrics_raw.
 
 Runs daily, fetching yesterday's data for all listings (up to 200).
-On first run, pass BACKFILL=1 env var to fetch the full 90-day history in weekly chunks.
+Set BACKFILL=1 to fetch historical data. Set BACKFILL_START=YYYY-MM-DD to control
+the start date (defaults to 2026-01-01).
 """
 import os
+import time
 from datetime import date, timedelta
 
 import requests
@@ -13,6 +15,19 @@ from shared.ebay_auth import get_access_token
 
 ANALYTICS_URL = "https://api.ebay.com/sell/analytics/v1/traffic_report"
 MARKETPLACE = "EBAY_US"
+METRICS = ",".join([
+    "CLICK_THROUGH_RATE",
+    "LISTING_IMPRESSION_TOTAL",
+    "LISTING_IMPRESSION_SEARCH_RESULTS_PAGE",
+    "LISTING_IMPRESSION_STORE",
+    "LISTING_VIEWS_TOTAL",
+    "LISTING_VIEWS_SOURCE_SEARCH_RESULTS_PAGE",
+    "LISTING_VIEWS_SOURCE_STORE",
+    "LISTING_VIEWS_SOURCE_DIRECT",
+    "LISTING_VIEWS_SOURCE_OFF_EBAY",
+    "LISTING_VIEWS_SOURCE_OTHER_EBAY",
+    "TRANSACTION",
+])
 
 
 def fetch_and_store() -> None:
@@ -24,9 +39,7 @@ def fetch_and_store() -> None:
 
     if os.environ.get("BACKFILL"):
         end = date.today() - timedelta(days=1)
-        backfill_start = os.environ.get("BACKFILL_START", "2026-01-01")
-        start = date.fromisoformat(backfill_start)
-        # One API call per day to ensure daily granularity in listing_metrics_raw
+        start = date.fromisoformat(os.environ.get("BACKFILL_START", "2026-01-01"))
         windows = [(d, d) for d in _date_range(start, end)]
     else:
         yesterday = date.today() - timedelta(days=1)
@@ -34,12 +47,27 @@ def fetch_and_store() -> None:
 
     total = 0
     for start_date, end_date in windows:
-        rows = _fetch_window(token, start_date, end_date)
+        rows = _fetch_window_with_retry(token, start_date, end_date)
         _upsert(rows)
         total += len(rows)
         print(f"[fetch_analytics] {start_date}..{end_date}: {len(rows)} rows")
+        time.sleep(0.5)
 
     print(f"[fetch_analytics] total upserted: {total}")
+
+
+def _fetch_window_with_retry(token: str, start_date: date, end_date: date, retries: int = 3) -> list[dict]:
+    for attempt in range(retries):
+        try:
+            return _fetch_window(token, start_date, end_date)
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429 and attempt < retries - 1:
+                wait = 30 * (attempt + 1)
+                print(f"[fetch_analytics] rate limited, waiting {wait}s before retry...")
+                time.sleep(wait)
+            else:
+                raise
+    return []
 
 
 def _date_range(start: date, end: date):
@@ -50,16 +78,14 @@ def _date_range(start: date, end: date):
 
 
 def _fetch_window(token: str, start_date: date, end_date: date) -> list[dict]:
-    # URL-encode { } and [ ] as required by eBay docs
     filter_str = (
         f"marketplace_ids:%7B{MARKETPLACE}%7D,"
         f"date_range:%5B{start_date.strftime('%Y%m%d')}..{end_date.strftime('%Y%m%d')}%5D"
     )
-    # Build URL manually: commas in metric must not be encoded, filter is pre-encoded
     url = (
         f"{ANALYTICS_URL}"
         f"?dimension=LISTING"
-        f"&metric=CLICK_THROUGH_RATE,LISTING_IMPRESSION_TOTAL,LISTING_VIEWS_TOTAL"
+        f"&metric={METRICS}"
         f"&filter={filter_str}"
     )
 
@@ -71,8 +97,7 @@ def _fetch_window(token: str, start_date: date, end_date: date) -> list[dict]:
         print(f"[fetch_analytics] HTTP {response.status_code}: {response.text}")
         response.raise_for_status()
 
-    data = response.json()
-    return _parse(data, end_date)
+    return _parse(response.json(), end_date)
 
 
 def _parse(data: dict, as_of_date: date) -> list[dict]:
@@ -88,14 +113,22 @@ def _parse(data: dict, as_of_date: date) -> list[dict]:
         if not listing_id:
             continue
 
-        metrics = dict(zip(metric_keys, [m.get("value") for m in metric_values]))
+        m = dict(zip(metric_keys, [mv.get("value") for mv in metric_values]))
 
         rows.append({
             "listing_id": listing_id,
             "date": as_of_date.isoformat(),
-            "impressions": _int(metrics.get("LISTING_IMPRESSION_TOTAL")),
-            "clicks": _int(metrics.get("CLICK_THROUGH_RATE")),
-            "page_views": _int(metrics.get("LISTING_VIEWS_TOTAL")),
+            "ctr":                _float(m.get("CLICK_THROUGH_RATE")),
+            "impressions_total":  _int(m.get("LISTING_IMPRESSION_TOTAL")),
+            "impressions_search": _int(m.get("LISTING_IMPRESSION_SEARCH_RESULTS_PAGE")),
+            "impressions_store":  _int(m.get("LISTING_IMPRESSION_STORE")),
+            "views_total":        _int(m.get("LISTING_VIEWS_TOTAL")),
+            "views_search":       _int(m.get("LISTING_VIEWS_SOURCE_SEARCH_RESULTS_PAGE")),
+            "views_store":        _int(m.get("LISTING_VIEWS_SOURCE_STORE")),
+            "views_direct":       _int(m.get("LISTING_VIEWS_SOURCE_DIRECT")),
+            "views_off_ebay":     _int(m.get("LISTING_VIEWS_SOURCE_OFF_EBAY")),
+            "views_other_ebay":   _int(m.get("LISTING_VIEWS_SOURCE_OTHER_EBAY")),
+            "orders":             _int(m.get("TRANSACTION")),
         })
 
     return rows
@@ -104,6 +137,13 @@ def _parse(data: dict, as_of_date: date) -> list[dict]:
 def _int(val) -> int | None:
     try:
         return int(float(val)) if val is not None else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _float(val) -> float | None:
+    try:
+        return float(val) if val is not None else None
     except (ValueError, TypeError):
         return None
 
@@ -117,13 +157,34 @@ def _upsert(rows: list[dict]) -> None:
             for row in rows:
                 cur.execute(
                     """
-                    INSERT INTO listing_metrics_raw (listing_id, date, impressions, clicks, page_views)
-                    VALUES (%(listing_id)s, %(date)s, %(impressions)s, %(clicks)s, %(page_views)s)
+                    INSERT INTO listing_metrics_raw (
+                        listing_id, date,
+                        ctr,
+                        impressions_total, impressions_search, impressions_store,
+                        views_total, views_search, views_store,
+                        views_direct, views_off_ebay, views_other_ebay,
+                        orders
+                    ) VALUES (
+                        %(listing_id)s, %(date)s,
+                        %(ctr)s,
+                        %(impressions_total)s, %(impressions_search)s, %(impressions_store)s,
+                        %(views_total)s, %(views_search)s, %(views_store)s,
+                        %(views_direct)s, %(views_off_ebay)s, %(views_other_ebay)s,
+                        %(orders)s
+                    )
                     ON CONFLICT (listing_id, date) DO UPDATE SET
-                        impressions = EXCLUDED.impressions,
-                        clicks = EXCLUDED.clicks,
-                        page_views = EXCLUDED.page_views,
-                        fetched_at = NOW()
+                        ctr               = EXCLUDED.ctr,
+                        impressions_total  = EXCLUDED.impressions_total,
+                        impressions_search = EXCLUDED.impressions_search,
+                        impressions_store  = EXCLUDED.impressions_store,
+                        views_total        = EXCLUDED.views_total,
+                        views_search       = EXCLUDED.views_search,
+                        views_store        = EXCLUDED.views_store,
+                        views_direct       = EXCLUDED.views_direct,
+                        views_off_ebay     = EXCLUDED.views_off_ebay,
+                        views_other_ebay   = EXCLUDED.views_other_ebay,
+                        orders             = EXCLUDED.orders,
+                        fetched_at         = NOW()
                     """,
                     row,
                 )
