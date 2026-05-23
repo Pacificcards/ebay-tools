@@ -183,6 +183,28 @@ def make_chart(metric: str, title: str, current_df: pd.DataFrame, prior_df: pd.D
     return fig
 
 
+def add_derived(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    df = df.copy()
+    df["view_rate"] = df.apply(
+        lambda r: r["views_total"] / r["impressions_total"]
+        if r["impressions_total"] and r["impressions_total"] > 0 else None, axis=1
+    )
+    df["impressions_per_order"] = df.apply(
+        lambda r: r["impressions_total"] / r["orders"]
+        if r["orders"] and r["orders"] > 0 else None, axis=1
+    )
+    df["views_per_order"] = df.apply(
+        lambda r: r["views_total"] / r["orders"]
+        if r["orders"] and r["orders"] > 0 else None, axis=1
+    )
+    return df
+
+
+current_df = add_derived(current_df)
+prior_df = add_derived(prior_df)
+
 if current_df.empty:
     st.info("No data found for this listing in the selected date range.")
 else:
@@ -192,6 +214,22 @@ else:
     )
     st.plotly_chart(
         make_chart("views_total", "Daily Views", current_df, prior_df),
+        use_container_width=True,
+    )
+    st.plotly_chart(
+        make_chart("orders", "Daily Quantity Sold", current_df, prior_df),
+        use_container_width=True,
+    )
+    st.plotly_chart(
+        make_chart("view_rate", "CTR (Views ÷ Impressions)", current_df, prior_df),
+        use_container_width=True,
+    )
+    st.plotly_chart(
+        make_chart("impressions_per_order", "Impressions per Unit Sold", current_df, prior_df),
+        use_container_width=True,
+    )
+    st.plotly_chart(
+        make_chart("views_per_order", "Views per Unit Sold", current_df, prior_df),
         use_container_width=True,
     )
 
