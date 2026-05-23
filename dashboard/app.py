@@ -12,11 +12,10 @@ from shared.db import get_connection
 
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"))
 
-st.set_page_config(page_title="Pacific Cards — Listing Deep Dive", layout="wide")
+st.set_page_config(page_title="Pacific Cards", layout="wide")
 
 st.markdown("""
 <style>
-/* KPI cards */
 [data-testid="stMetric"] {
     background: #1c1f26;
     border: 1px solid #2a2f3d;
@@ -27,24 +26,30 @@ st.markdown("""
 [data-testid="stMetricLabel"] { font-size: 0.78rem; color: #8892a4; letter-spacing: 0.05em; text-transform: uppercase; }
 [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #e8eaf0; }
 [data-testid="stMetricDelta"] svg { display: none; }
-
-/* Sidebar search input */
-[data-testid="stSidebar"] .stTextInput input {
-    background: #1c1f26;
-    border: 1px solid #2a2f3d;
-    border-radius: 6px;
-}
-
-/* Tighter section spacing */
 .block-container { padding-top: 2rem; padding-bottom: 2rem; }
-
-/* Divider */
 hr { border-color: #2a2f3d; margin: 1.5rem 0; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("Listing Deep Dive")
+# ── Chart constants ───────────────────────────────────────────────────────────
 
+CARD_BG  = "#1c1f26"
+GRID_CLR = "#2a2f3d"
+
+BASE_LAYOUT = dict(
+    template="plotly_dark",
+    paper_bgcolor=CARD_BG,
+    plot_bgcolor=CARD_BG,
+    margin=dict(l=12, r=12, t=72, b=8),
+    hovermode="x unified",
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(size=11)),
+    xaxis=dict(gridcolor=GRID_CLR, zeroline=False),
+    yaxis=dict(gridcolor=GRID_CLR, zeroline=False),
+    font=dict(color="#8892a4"),
+    title_font=dict(color="#e8eaf0", size=13),
+)
+
+# ── Data loaders ──────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=300)
 def load_listings() -> pd.DataFrame:
@@ -84,6 +89,36 @@ def load_metrics(listing_id: str, start: date, end: date) -> pd.DataFrame:
     return df
 
 
+@st.cache_data(ttl=300)
+def load_all_metrics_for_date(target_date: date) -> pd.DataFrame:
+    """All listings' metrics for a single date, joined with metadata."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    m.listing_id,
+                    lm.title,
+                    lm.current_price,
+                    lm.status,
+                    m.impressions_total,
+                    m.views_total,
+                    m.orders
+                FROM listing_metrics_raw m
+                JOIN listing_metadata lm USING (listing_id)
+                WHERE m.date = %s
+                ORDER BY m.impressions_total DESC NULLS LAST
+            """, (target_date,))
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return pd.DataFrame(rows, columns=[
+        "listing_id", "title", "current_price", "status",
+        "impressions_total", "views_total", "orders",
+    ])
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
 def add_derived(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
@@ -103,138 +138,21 @@ def add_derived(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ── Sidebar ──────────────────────────────────────────────────────────────────
-
-listings = load_listings()
-
-if listings.empty:
-    st.warning("No listings found. Run sync_listings first.")
-    st.stop()
-
-def listing_label(row):
-    label = row["title"] or row["listing_id"]
-    if row["status"] != "active":
-        label += f" [{row['status']}]"
-    return label
-
-listing_options = {listing_label(row): row["listing_id"] for _, row in listings.iterrows()}
-
-with st.sidebar:
-    st.header("Listing")
-    search = st.text_input("Search by title", placeholder="e.g. Charizard")
-    filtered = {
-        label: lid for label, lid in listing_options.items()
-        if search.lower() in label.lower()
-    } if search else listing_options
-
-    if not filtered:
-        st.warning("No listings match your search.")
-        st.stop()
-
-    selected_label = st.selectbox(
-        f"{len(filtered)} listing{'s' if len(filtered) != 1 else ''} found",
-        list(filtered.keys()),
-    )
-    selected_id = filtered[selected_label]
-
-    st.header("Date range")
-    end_default = date.today() - timedelta(days=1)
-    start_default = end_default - timedelta(days=29)
-    start_date = st.date_input("From", value=start_default)
-    end_date = st.date_input("To", value=end_default)
-
-    if start_date >= end_date:
-        st.error("'From' must be before 'To'.")
-        st.stop()
-
-# ── Load data ─────────────────────────────────────────────────────────────────
-
-window_days = (end_date - start_date).days + 1
-prior_start = start_date - timedelta(days=7)
-prior_end = end_date - timedelta(days=7)
-
-current_df = load_metrics(selected_id, start_date, end_date)
-prior_df = load_metrics(selected_id, prior_start, prior_end)
-
-# Shift prior dates forward 7 days so they align with current on the x-axis
-if not prior_df.empty:
-    prior_df = prior_df.copy()
-    prior_df["date"] = prior_df["date"] + timedelta(days=7)
-
-current_df = add_derived(current_df)
-prior_df = add_derived(prior_df)
-
-# ── Listing info ──────────────────────────────────────────────────────────────
-
-meta = listings[listings["listing_id"] == selected_id].iloc[0]
-price_str = f"${meta['current_price']:.2f}" if pd.notna(meta["current_price"]) else "—"
-sku_str = meta["sku"] if pd.notna(meta["sku"]) and meta["sku"] else "—"
-st.caption(f"ID: {selected_id} · SKU: {sku_str} · Price: {price_str} · Status: {meta['status']}")
-
-# ── KPI cards (yesterday vs same day last week) ───────────────────────────────
-
-yesterday = pd.Timestamp(date.today() - timedelta(days=1))
-yesterday_cur = current_df[current_df["date"] == yesterday].iloc[0] if not current_df.empty and (current_df["date"] == yesterday).any() else None
-# prior_df dates are already shifted +7 days, so filtering on yesterday gives last week's same day
-yesterday_pri = prior_df[prior_df["date"] == yesterday].iloc[0] if not prior_df.empty and (prior_df["date"] == yesterday).any() else None
-
-yesterday_label = yesterday.strftime("%-d %b %Y")  # e.g. "21 May 2026"
-st.subheader(f"Yesterday — {yesterday_label}")
-
-def kpi(label, col, fmt="{:,.0f}", pct=False):
-    cur_val = yesterday_cur[col] if yesterday_cur is not None and pd.notna(yesterday_cur[col]) else None
-    pri_val = yesterday_pri[col] if yesterday_pri is not None and pd.notna(yesterday_pri[col]) else None
-
-    display = fmt.format(cur_val) if cur_val is not None else "—"
-    if pct and cur_val is not None:
-        display = f"{cur_val:.1%}"
-
-    delta = None
-    if cur_val is not None and pri_val is not None and pri_val > 0:
-        delta = f"{(cur_val - pri_val) / pri_val:+.1%} vs {(yesterday - timedelta(days=7)).strftime('%-d %b')}"
-    elif cur_val is not None and pri_val == 0:
-        delta = "↑ from 0 prior week"
-
-    st.metric(label, display, delta=delta)
+def fmt_delta(cur, pri) -> str | None:
+    if cur is None or pri is None:
+        return None
+    if pri > 0:
+        return f"{(cur - pri) / pri:+.1%}"
+    if pri == 0 and cur > 0:
+        return "↑ new"
+    return None
 
 
-if yesterday_cur is None:
-    st.caption("No data for yesterday yet.")
-
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    kpi("Impressions", "impressions_total")
-with col2:
-    kpi("Views", "views_total")
-with col3:
-    kpi("CTR", "view_rate", pct=True)
-with col4:
-    kpi("Orders", "orders")
-
-# ── Charts ────────────────────────────────────────────────────────────────────
-
-DARK_BG   = "#0e1117"
-CARD_BG   = "#1c1f26"
-GRID_CLR  = "#2a2f3d"
-
-BASE_LAYOUT = dict(
-    template="plotly_dark",
-    paper_bgcolor=CARD_BG,
-    plot_bgcolor=CARD_BG,
-    margin=dict(l=12, r=12, t=72, b=8),
-    hovermode="x unified",
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(size=11)),
-    xaxis=dict(gridcolor=GRID_CLR, zeroline=False),
-    yaxis=dict(gridcolor=GRID_CLR, zeroline=False),
-    font=dict(color="#8892a4"),
-    title_font=dict(color="#e8eaf0", size=13),
-)
-
+# ── Chart builders ────────────────────────────────────────────────────────────
 
 def make_impressions_views_ctr_chart(current_df: pd.DataFrame, prior_df: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
 
-    # Impressions — bars, left axis
     if not current_df.empty:
         fig.add_trace(go.Bar(
             x=current_df["date"], y=current_df["impressions_total"],
@@ -249,8 +167,6 @@ def make_impressions_views_ctr_chart(current_df: pd.DataFrame, prior_df: pd.Data
             marker_color="#1e3a5f", opacity=0.6,
             hovertemplate="%{x}: %{y:,}<extra>Impressions (prior week)</extra>",
         ))
-
-    # Views — line, right axis
     if not current_df.empty:
         fig.add_trace(go.Scatter(
             x=current_df["date"], y=current_df["views_total"],
@@ -268,8 +184,6 @@ def make_impressions_views_ctr_chart(current_df: pd.DataFrame, prior_df: pd.Data
             line=dict(color="#4c9be8", width=1.5, dash="dot"),
             hovertemplate="%{x}: %{y:,}<extra>Views (prior week)</extra>",
         ))
-
-    # CTR — line, hidden third axis
     if not current_df.empty:
         fig.add_trace(go.Scatter(
             x=current_df["date"], y=current_df["view_rate"],
@@ -304,7 +218,6 @@ def make_impressions_views_ctr_chart(current_df: pd.DataFrame, prior_df: pd.Data
 
 def make_chart(metric: str, title: str, current_df: pd.DataFrame, prior_df: pd.DataFrame, pct: bool = False) -> go.Figure:
     fig = go.Figure()
-
     fmt = ".1%" if pct else None
 
     if not current_df.empty:
@@ -316,7 +229,6 @@ def make_chart(metric: str, title: str, current_df: pd.DataFrame, prior_df: pd.D
             marker=dict(size=5),
             hovertemplate=f"%{{x}}: %{{y:{fmt}}}<extra></extra>" if fmt else None,
         ))
-
     if not prior_df.empty:
         fig.add_trace(go.Scatter(
             x=prior_df["date"], y=prior_df[metric],
@@ -337,28 +249,232 @@ def make_chart(metric: str, title: str, current_df: pd.DataFrame, prior_df: pd.D
     return fig
 
 
+# ── App shell ─────────────────────────────────────────────────────────────────
+
+st.title("Pacific Cards Co.")
+
+listings = load_listings()
+if listings.empty:
+    st.warning("No listings found. Run sync_listings first.")
+    st.stop()
+
+yesterday     = date.today() - timedelta(days=1)
+last_week     = yesterday - timedelta(days=7)
+yesterday_lbl = yesterday.strftime("%-d %b %Y")
+last_week_lbl = last_week.strftime("%-d %b")
+
+tab_mc, tab_dive = st.tabs(["Mission Control", "Listing Deep Dive"])
 
 
-if current_df.empty:
-    st.info("No data found for this listing in the selected date range.")
-else:
-    st.plotly_chart(make_impressions_views_ctr_chart(current_df, prior_df), use_container_width=True)
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 1 — Mission Control
+# ══════════════════════════════════════════════════════════════════════════════
 
-    col_a, col_b, col_c = st.columns(3)
-    with col_a:
-        st.plotly_chart(make_chart("orders", "Daily Quantity Sold", current_df, prior_df), use_container_width=True)
-    with col_b:
-        st.plotly_chart(make_chart("impressions_per_order", "Impressions per Unit Sold", current_df, prior_df), use_container_width=True)
-    with col_c:
-        st.plotly_chart(make_chart("views_per_order", "Views per Unit Sold", current_df, prior_df), use_container_width=True)
+with tab_mc:
+    st.subheader(f"Yesterday — {yesterday_lbl}")
 
-# ── Raw data table ────────────────────────────────────────────────────────────
+    today_df  = load_all_metrics_for_date(yesterday)
+    prior_df_mc = load_all_metrics_for_date(last_week)
 
-with st.expander("Raw data"):
-    if current_df.empty:
-        st.write("No rows.")
+    if today_df.empty:
+        st.info("No data for yesterday yet — check back after the pipeline runs.")
     else:
-        display = current_df.copy()
-        display["date"] = display["date"].dt.date
-        display["ctr"] = display["ctr"].map(lambda x: f"{x:.2%}" if pd.notna(x) else "—")
-        st.dataframe(display, use_container_width=True, hide_index=True)
+        # ── Aggregate KPIs ────────────────────────────────────────────────────
+        tot_impr  = int(today_df["impressions_total"].sum())
+        tot_views = int(today_df["views_total"].sum())
+        tot_orders = int(today_df["orders"].sum())
+
+        pri_impr  = int(prior_df_mc["impressions_total"].sum()) if not prior_df_mc.empty else None
+        pri_views = int(prior_df_mc["views_total"].sum())      if not prior_df_mc.empty else None
+        pri_orders = int(prior_df_mc["orders"].sum())          if not prior_df_mc.empty else None
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Total Impressions", f"{tot_impr:,}",
+                      delta=fmt_delta(tot_impr, pri_impr))
+        with c2:
+            st.metric("Total Views", f"{tot_views:,}",
+                      delta=fmt_delta(tot_views, pri_views))
+        with c3:
+            st.metric("Total Orders", f"{tot_orders:,}",
+                      delta=fmt_delta(tot_orders, pri_orders))
+
+        st.markdown("---")
+
+        # ── Build listings table with WoW deltas and flags ────────────────────
+        merged = today_df.copy()
+        if not prior_df_mc.empty:
+            merged = merged.merge(
+                prior_df_mc[["listing_id", "impressions_total", "views_total", "orders"]],
+                on="listing_id", how="left", suffixes=("", "_prior")
+            )
+        else:
+            merged["impressions_total_prior"] = None
+            merged["views_total_prior"]       = None
+            merged["orders_prior"]            = None
+
+        def wow_pct(cur, pri):
+            try:
+                if pri and pri > 0:
+                    return (cur - pri) / pri
+            except Exception:
+                pass
+            return None
+
+        merged["impr_wow"]  = merged.apply(lambda r: wow_pct(r["impressions_total"], r.get("impressions_total_prior")), axis=1)
+        merged["views_wow"] = merged.apply(lambda r: wow_pct(r["views_total"],       r.get("views_total_prior")),       axis=1)
+        merged["ctr"]       = merged.apply(
+            lambda r: r["views_total"] / r["impressions_total"]
+            if r["impressions_total"] and r["impressions_total"] > 0 else None, axis=1
+        )
+
+        def flag(row):
+            flags = []
+            if row["impr_wow"] is not None and row["impr_wow"] <= -0.5:
+                flags.append("⚠ Traffic drop")
+            if row["views_wow"] is not None and row["views_wow"] >= 0.5:
+                flags.append("↑ Views spike")
+            if row["views_total"] >= 10 and (row["orders"] is None or row["orders"] == 0):
+                flags.append("0 orders")
+            return "  ".join(flags) if flags else ""
+
+        merged["flags"] = merged.apply(flag, axis=1)
+
+        # ── Display table ─────────────────────────────────────────────────────
+        display = merged[[
+            "title", "impressions_total", "impr_wow",
+            "views_total", "views_wow", "ctr", "orders", "flags"
+        ]].copy()
+
+        display.columns = ["Title", "Impressions", "Impr WoW", "Views", "Views WoW", "CTR", "Orders", "Flags"]
+
+        display["Impr WoW"]  = display["Impr WoW"].map(lambda x: f"{x:+.1%}" if pd.notna(x) else "—")
+        display["Views WoW"] = display["Views WoW"].map(lambda x: f"{x:+.1%}" if pd.notna(x) else "—")
+        display["CTR"]       = display["CTR"].map(lambda x: f"{x:.1%}" if pd.notna(x) else "—")
+        display["Orders"]    = display["Orders"].fillna(0).astype(int)
+
+        st.dataframe(display, use_container_width=True, hide_index=True,
+                     column_config={
+                         "Title":       st.column_config.TextColumn(width="large"),
+                         "Impressions": st.column_config.NumberColumn(format="%d"),
+                         "Views":       st.column_config.NumberColumn(format="%d"),
+                         "Flags":       st.column_config.TextColumn(width="medium"),
+                     })
+
+        st.caption(f"Sorted by impressions. WoW vs {last_week_lbl}. Flags: ⚠ Traffic drop = impressions down ≥50% WoW · ↑ Views spike = views up ≥50% WoW · 0 orders = ≥10 views but no sale.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 2 — Listing Deep Dive
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab_dive:
+
+    # ── Controls ──────────────────────────────────────────────────────────────
+    def listing_label(row):
+        label = row["title"] or row["listing_id"]
+        if row["status"] != "active":
+            label += f" [{row['status']}]"
+        return label
+
+    listing_options = {listing_label(row): row["listing_id"] for _, row in listings.iterrows()}
+
+    ctrl_l, ctrl_m, ctrl_r = st.columns([2, 1, 1])
+    with ctrl_l:
+        search = st.text_input("Search by title", placeholder="e.g. Charizard", label_visibility="collapsed")
+        filtered = {
+            label: lid for label, lid in listing_options.items()
+            if search.lower() in label.lower()
+        } if search else listing_options
+
+        if not filtered:
+            st.warning("No listings match your search.")
+            st.stop()
+
+        selected_label = st.selectbox(
+            f"{len(filtered)} listing{'s' if len(filtered) != 1 else ''} found",
+            list(filtered.keys()),
+            label_visibility="collapsed",
+        )
+        selected_id = filtered[selected_label]
+
+    with ctrl_m:
+        end_default   = yesterday
+        start_default = end_default - timedelta(days=29)
+        start_date = st.date_input("From", value=start_default)
+
+    with ctrl_r:
+        end_date = st.date_input("To", value=end_default)
+
+    if start_date >= end_date:
+        st.error("'From' must be before 'To'.")
+        st.stop()
+
+    # ── Load data ─────────────────────────────────────────────────────────────
+    prior_start = start_date - timedelta(days=7)
+    prior_end   = end_date   - timedelta(days=7)
+
+    current_df = load_metrics(selected_id, start_date, end_date)
+    prior_df   = load_metrics(selected_id, prior_start, prior_end)
+
+    if not prior_df.empty:
+        prior_df = prior_df.copy()
+        prior_df["date"] = prior_df["date"] + timedelta(days=7)
+
+    current_df = add_derived(current_df)
+    prior_df   = add_derived(prior_df)
+
+    # ── Listing info ──────────────────────────────────────────────────────────
+    meta      = listings[listings["listing_id"] == selected_id].iloc[0]
+    price_str = f"${meta['current_price']:.2f}" if pd.notna(meta["current_price"]) else "—"
+    sku_str   = meta["sku"] if pd.notna(meta["sku"]) and meta["sku"] else "—"
+    st.caption(f"ID: {selected_id} · SKU: {sku_str} · Price: {price_str} · Status: {meta['status']}")
+
+    # ── KPI cards (yesterday vs same day last week) ───────────────────────────
+    yts = pd.Timestamp(yesterday)
+    yesterday_cur = current_df[current_df["date"] == yts].iloc[0] if not current_df.empty and (current_df["date"] == yts).any() else None
+    yesterday_pri = prior_df[prior_df["date"] == yts].iloc[0]     if not prior_df.empty   and (prior_df["date"] == yts).any()   else None
+
+    st.subheader(f"Yesterday — {yesterday_lbl}")
+
+    def kpi(label, col, pct=False):
+        cur_val = yesterday_cur[col] if yesterday_cur is not None and pd.notna(yesterday_cur[col]) else None
+        pri_val = yesterday_pri[col] if yesterday_pri is not None and pd.notna(yesterday_pri[col]) else None
+        display = (f"{cur_val:.1%}" if pct else f"{cur_val:,.0f}") if cur_val is not None else "—"
+        delta   = fmt_delta(cur_val, pri_val)
+        if delta and pri_val is not None:
+            delta = f"{delta} vs {last_week_lbl}"
+        st.metric(label, display, delta=delta)
+
+    if yesterday_cur is None:
+        st.caption("No data for yesterday yet.")
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: kpi("Impressions", "impressions_total")
+    with c2: kpi("Views",       "views_total")
+    with c3: kpi("CTR",         "view_rate", pct=True)
+    with c4: kpi("Orders",      "orders")
+
+    # ── Charts ────────────────────────────────────────────────────────────────
+    if current_df.empty:
+        st.info("No data found for this listing in the selected date range.")
+    else:
+        st.plotly_chart(make_impressions_views_ctr_chart(current_df, prior_df), use_container_width=True)
+
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            st.plotly_chart(make_chart("orders", "Daily Quantity Sold", current_df, prior_df), use_container_width=True)
+        with col_b:
+            st.plotly_chart(make_chart("impressions_per_order", "Impressions per Unit Sold", current_df, prior_df), use_container_width=True)
+        with col_c:
+            st.plotly_chart(make_chart("views_per_order", "Views per Unit Sold", current_df, prior_df), use_container_width=True)
+
+    # ── Raw data ──────────────────────────────────────────────────────────────
+    with st.expander("Raw data"):
+        if current_df.empty:
+            st.write("No rows.")
+        else:
+            display = current_df.copy()
+            display["date"] = display["date"].dt.date
+            display["ctr"]  = display["ctr"].map(lambda x: f"{x:.2%}" if pd.notna(x) else "—")
+            st.dataframe(display, use_container_width=True, hide_index=True)
