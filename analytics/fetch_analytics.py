@@ -32,7 +32,7 @@ METRICS = ",".join([
 ])
 
 CATCHUP_START = date(2026, 3, 15)
-CATCHUP_END   = date(2026, 5, 13)
+CATCHUP_END   = date(2026, 5, 21)
 CATCHUP_DAYS_PER_RUN = 5
 
 
