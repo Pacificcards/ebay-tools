@@ -151,8 +151,10 @@ with col4:
 
 # ── Charts ────────────────────────────────────────────────────────────────────
 
-def make_chart(metric: str, title: str, current_df: pd.DataFrame, prior_df: pd.DataFrame) -> go.Figure:
+def make_chart(metric: str, title: str, current_df: pd.DataFrame, prior_df: pd.DataFrame, pct: bool = False) -> go.Figure:
     fig = go.Figure()
+
+    fmt = ".1%" if pct else None
 
     if not current_df.empty:
         fig.add_trace(go.Scatter(
@@ -161,6 +163,7 @@ def make_chart(metric: str, title: str, current_df: pd.DataFrame, prior_df: pd.D
             mode="lines+markers",
             line=dict(color="#1f77b4", width=2),
             marker=dict(size=5),
+            hovertemplate=f"%{{x}}: %{{y:{fmt}}}<extra></extra>" if fmt else None,
         ))
 
     if not prior_df.empty:
@@ -169,12 +172,14 @@ def make_chart(metric: str, title: str, current_df: pd.DataFrame, prior_df: pd.D
             name="Prior week",
             mode="lines",
             line=dict(color="#aec7e8", width=1.5, dash="dot"),
+            hovertemplate=f"%{{x}}: %{{y:{fmt}}}<extra>Prior week</extra>" if fmt else None,
         ))
 
     fig.update_layout(
         title=title,
         xaxis_title=None,
         yaxis_title=None,
+        yaxis=dict(tickformat=".1%" if pct else None),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         margin=dict(l=0, r=0, t=40, b=0),
         hovermode="x unified",
@@ -221,7 +226,7 @@ else:
         use_container_width=True,
     )
     st.plotly_chart(
-        make_chart("view_rate", "CTR (Views ÷ Impressions)", current_df, prior_df),
+        make_chart("view_rate", "CTR (Views ÷ Impressions)", current_df, prior_df, pct=True),
         use_container_width=True,
     )
     st.plotly_chart(
