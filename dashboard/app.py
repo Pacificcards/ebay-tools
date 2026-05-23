@@ -151,6 +151,78 @@ with col4:
 
 # ── Charts ────────────────────────────────────────────────────────────────────
 
+def make_impressions_views_ctr_chart(current_df: pd.DataFrame, prior_df: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+
+    # Impressions — bars, left axis
+    if not current_df.empty:
+        fig.add_trace(go.Bar(
+            x=current_df["date"], y=current_df["impressions_total"],
+            name="Impressions", yaxis="y1",
+            marker_color="#aec7e8",
+            hovertemplate="%{x}: %{y:,}<extra>Impressions</extra>",
+        ))
+    if not prior_df.empty:
+        fig.add_trace(go.Bar(
+            x=prior_df["date"], y=prior_df["impressions_total"],
+            name="Impressions (prior week)", yaxis="y1",
+            marker_color="#d0e4f5", opacity=0.5,
+            hovertemplate="%{x}: %{y:,}<extra>Impressions (prior week)</extra>",
+        ))
+
+    # Views — line, right axis
+    if not current_df.empty:
+        fig.add_trace(go.Scatter(
+            x=current_df["date"], y=current_df["views_total"],
+            name="Views", yaxis="y2",
+            mode="lines+markers",
+            line=dict(color="#1f77b4", width=2),
+            marker=dict(size=5),
+            hovertemplate="%{x}: %{y:,}<extra>Views</extra>",
+        ))
+    if not prior_df.empty:
+        fig.add_trace(go.Scatter(
+            x=prior_df["date"], y=prior_df["views_total"],
+            name="Views (prior week)", yaxis="y2",
+            mode="lines",
+            line=dict(color="#1f77b4", width=1.5, dash="dot"),
+            hovertemplate="%{x}: %{y:,}<extra>Views (prior week)</extra>",
+        ))
+
+    # CTR — line, hidden third axis
+    if not current_df.empty:
+        fig.add_trace(go.Scatter(
+            x=current_df["date"], y=current_df["view_rate"],
+            name="CTR", yaxis="y3",
+            mode="lines+markers",
+            line=dict(color="#d62728", width=1.5),
+            marker=dict(size=4),
+            hovertemplate="%{x}: %{y:.1%}<extra>CTR</extra>",
+        ))
+    if not prior_df.empty:
+        fig.add_trace(go.Scatter(
+            x=prior_df["date"], y=prior_df["view_rate"],
+            name="CTR (prior week)", yaxis="y3",
+            mode="lines",
+            line=dict(color="#d62728", width=1, dash="dot"),
+            hovertemplate="%{x}: %{y:.1%}<extra>CTR (prior week)</extra>",
+        ))
+
+    fig.update_layout(
+        title="Impressions / Views / CTR",
+        xaxis=dict(domain=[0, 0.95]),
+        yaxis=dict(title="Impressions", side="left", showgrid=True),
+        yaxis2=dict(title="Views", side="right", overlaying="y", showgrid=False),
+        yaxis3=dict(overlaying="y", side="right", showgrid=False, showticklabels=False, showline=False),
+        barmode="overlay",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        margin=dict(l=0, r=0, t=40, b=0),
+        hovermode="x unified",
+        height=350,
+    )
+    return fig
+
+
 def make_chart(metric: str, title: str, current_df: pd.DataFrame, prior_df: pd.DataFrame, pct: bool = False) -> go.Figure:
     fig = go.Figure()
 
@@ -213,22 +285,14 @@ prior_df = add_derived(prior_df)
 if current_df.empty:
     st.info("No data found for this listing in the selected date range.")
 else:
-    row1_l, row1_r = st.columns(2)
-    with row1_l:
-        st.plotly_chart(make_chart("impressions_total", "Daily Impressions", current_df, prior_df), use_container_width=True)
-    with row1_r:
-        st.plotly_chart(make_chart("views_total", "Daily Views", current_df, prior_df), use_container_width=True)
+    st.plotly_chart(make_impressions_views_ctr_chart(current_df, prior_df), use_container_width=True)
 
-    row2_l, row2_r = st.columns(2)
-    with row2_l:
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
         st.plotly_chart(make_chart("orders", "Daily Quantity Sold", current_df, prior_df), use_container_width=True)
-    with row2_r:
-        st.plotly_chart(make_chart("view_rate", "CTR (Views ÷ Impressions)", current_df, prior_df, pct=True), use_container_width=True)
-
-    row3_l, row3_r = st.columns(2)
-    with row3_l:
+    with col_b:
         st.plotly_chart(make_chart("impressions_per_order", "Impressions per Unit Sold", current_df, prior_df), use_container_width=True)
-    with row3_r:
+    with col_c:
         st.plotly_chart(make_chart("views_per_order", "Views per Unit Sold", current_df, prior_df), use_container_width=True)
 
 # ── Raw data table ────────────────────────────────────────────────────────────
