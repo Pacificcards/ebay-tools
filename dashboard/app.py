@@ -72,8 +72,21 @@ listing_options = {listing_label(row): row["listing_id"] for _, row in listings.
 
 with st.sidebar:
     st.header("Listing")
-    selected_label = st.selectbox("Select listing", list(listing_options.keys()))
-    selected_id = listing_options[selected_label]
+    search = st.text_input("Search by title", placeholder="e.g. Charizard")
+    filtered = {
+        label: lid for label, lid in listing_options.items()
+        if search.lower() in label.lower()
+    } if search else listing_options
+
+    if not filtered:
+        st.warning("No listings match your search.")
+        st.stop()
+
+    selected_label = st.selectbox(
+        f"{len(filtered)} listing{'s' if len(filtered) != 1 else ''} found",
+        list(filtered.keys()),
+    )
+    selected_id = filtered[selected_label]
 
     st.header("Date range")
     end_default = date.today() - timedelta(days=1)
