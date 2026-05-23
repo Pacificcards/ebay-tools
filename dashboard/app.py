@@ -13,6 +13,35 @@ from shared.db import get_connection
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"))
 
 st.set_page_config(page_title="Pacific Cards — Listing Deep Dive", layout="wide")
+
+st.markdown("""
+<style>
+/* KPI cards */
+[data-testid="stMetric"] {
+    background: #1c1f26;
+    border: 1px solid #2a2f3d;
+    border-radius: 10px;
+    padding: 16px 20px;
+}
+[data-testid="stMetricLabel"] { font-size: 0.78rem; color: #8892a4; letter-spacing: 0.05em; text-transform: uppercase; }
+[data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #e8eaf0; }
+[data-testid="stMetricDelta"] svg { display: none; }
+
+/* Sidebar search input */
+[data-testid="stSidebar"] .stTextInput input {
+    background: #1c1f26;
+    border: 1px solid #2a2f3d;
+    border-radius: 6px;
+}
+
+/* Tighter section spacing */
+.block-container { padding-top: 2rem; padding-bottom: 2rem; }
+
+/* Divider */
+hr { border-color: #2a2f3d; margin: 1.5rem 0; }
+</style>
+""", unsafe_allow_html=True)
+
 st.title("Listing Deep Dive")
 
 
@@ -183,6 +212,24 @@ with col4:
 
 # ── Charts ────────────────────────────────────────────────────────────────────
 
+DARK_BG   = "#0e1117"
+CARD_BG   = "#1c1f26"
+GRID_CLR  = "#2a2f3d"
+
+BASE_LAYOUT = dict(
+    template="plotly_dark",
+    paper_bgcolor=CARD_BG,
+    plot_bgcolor=CARD_BG,
+    margin=dict(l=12, r=12, t=40, b=8),
+    hovermode="x unified",
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(size=11)),
+    xaxis=dict(gridcolor=GRID_CLR, zeroline=False),
+    yaxis=dict(gridcolor=GRID_CLR, zeroline=False),
+    font=dict(color="#8892a4"),
+    title_font=dict(color="#e8eaf0", size=13),
+)
+
+
 def make_impressions_views_ctr_chart(current_df: pd.DataFrame, prior_df: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
 
@@ -191,14 +238,14 @@ def make_impressions_views_ctr_chart(current_df: pd.DataFrame, prior_df: pd.Data
         fig.add_trace(go.Bar(
             x=current_df["date"], y=current_df["impressions_total"],
             name="Impressions", yaxis="y1",
-            marker_color="#aec7e8",
+            marker_color="#2d5a8e",
             hovertemplate="%{x}: %{y:,}<extra>Impressions</extra>",
         ))
     if not prior_df.empty:
         fig.add_trace(go.Bar(
             x=prior_df["date"], y=prior_df["impressions_total"],
             name="Impressions (prior week)", yaxis="y1",
-            marker_color="#d0e4f5", opacity=0.5,
+            marker_color="#1e3a5f", opacity=0.6,
             hovertemplate="%{x}: %{y:,}<extra>Impressions (prior week)</extra>",
         ))
 
@@ -208,7 +255,7 @@ def make_impressions_views_ctr_chart(current_df: pd.DataFrame, prior_df: pd.Data
             x=current_df["date"], y=current_df["views_total"],
             name="Views", yaxis="y2",
             mode="lines+markers",
-            line=dict(color="#1f77b4", width=2),
+            line=dict(color="#4c9be8", width=2),
             marker=dict(size=5),
             hovertemplate="%{x}: %{y:,}<extra>Views</extra>",
         ))
@@ -217,7 +264,7 @@ def make_impressions_views_ctr_chart(current_df: pd.DataFrame, prior_df: pd.Data
             x=prior_df["date"], y=prior_df["views_total"],
             name="Views (prior week)", yaxis="y2",
             mode="lines",
-            line=dict(color="#1f77b4", width=1.5, dash="dot"),
+            line=dict(color="#4c9be8", width=1.5, dash="dot"),
             hovertemplate="%{x}: %{y:,}<extra>Views (prior week)</extra>",
         ))
 
@@ -227,7 +274,7 @@ def make_impressions_views_ctr_chart(current_df: pd.DataFrame, prior_df: pd.Data
             x=current_df["date"], y=current_df["view_rate"],
             name="CTR", yaxis="y3",
             mode="lines+markers",
-            line=dict(color="#d62728", width=1.5),
+            line=dict(color="#f97316", width=1.5),
             marker=dict(size=4),
             hovertemplate="%{x}: %{y:.1%}<extra>CTR</extra>",
         ))
@@ -236,22 +283,21 @@ def make_impressions_views_ctr_chart(current_df: pd.DataFrame, prior_df: pd.Data
             x=prior_df["date"], y=prior_df["view_rate"],
             name="CTR (prior week)", yaxis="y3",
             mode="lines",
-            line=dict(color="#d62728", width=1, dash="dot"),
+            line=dict(color="#f97316", width=1, dash="dot"),
             hovertemplate="%{x}: %{y:.1%}<extra>CTR (prior week)</extra>",
         ))
 
-    fig.update_layout(
+    layout = dict(BASE_LAYOUT)
+    layout.update(
         title="Impressions / Views / CTR",
-        xaxis=dict(domain=[0, 0.95]),
-        yaxis=dict(title="Impressions", side="left", showgrid=True),
-        yaxis2=dict(title="Views", side="right", overlaying="y", showgrid=False),
-        yaxis3=dict(overlaying="y", side="right", showgrid=False, showticklabels=False, showline=False),
+        xaxis=dict(domain=[0, 0.93], gridcolor=GRID_CLR, zeroline=False),
+        yaxis=dict(title="Impressions", side="left", gridcolor=GRID_CLR, zeroline=False),
+        yaxis2=dict(title="Views", side="right", overlaying="y", showgrid=False, zeroline=False),
+        yaxis3=dict(overlaying="y", side="right", showgrid=False, showticklabels=False, showline=False, zeroline=False),
         barmode="overlay",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        margin=dict(l=0, r=0, t=40, b=0),
-        hovermode="x unified",
-        height=350,
+        height=360,
     )
+    fig.update_layout(**layout)
     return fig
 
 
@@ -265,7 +311,7 @@ def make_chart(metric: str, title: str, current_df: pd.DataFrame, prior_df: pd.D
             x=current_df["date"], y=current_df[metric],
             name="Current",
             mode="lines+markers",
-            line=dict(color="#1f77b4", width=2),
+            line=dict(color="#4c9be8", width=2),
             marker=dict(size=5),
             hovertemplate=f"%{{x}}: %{{y:{fmt}}}<extra></extra>" if fmt else None,
         ))
@@ -275,20 +321,18 @@ def make_chart(metric: str, title: str, current_df: pd.DataFrame, prior_df: pd.D
             x=prior_df["date"], y=prior_df[metric],
             name="Prior week",
             mode="lines",
-            line=dict(color="#aec7e8", width=1.5, dash="dot"),
+            line=dict(color="#4c9be8", width=1.5, dash="dot"),
+            opacity=0.45,
             hovertemplate=f"%{{x}}: %{{y:{fmt}}}<extra>Prior week</extra>" if fmt else None,
         ))
 
-    fig.update_layout(
+    layout = dict(BASE_LAYOUT)
+    layout.update(
         title=title,
-        xaxis_title=None,
-        yaxis_title=None,
-        yaxis=dict(tickformat=".1%" if pct else None),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        margin=dict(l=0, r=0, t=40, b=0),
-        hovermode="x unified",
+        yaxis=dict(tickformat=".1%" if pct else None, gridcolor=GRID_CLR, zeroline=False),
         height=300,
     )
+    fig.update_layout(**layout)
     return fig
 
 
