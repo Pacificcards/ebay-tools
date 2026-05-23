@@ -2,12 +2,15 @@
 -- ANALYTICS
 -- ============================================================
 CREATE TABLE IF NOT EXISTS listing_metadata (
-    listing_id      TEXT PRIMARY KEY,
-    title           TEXT,
-    sku             TEXT,
-    category        TEXT,
-    current_price   NUMERIC(10,2),
-    updated_at      TIMESTAMPTZ DEFAULT NOW()
+    listing_id          TEXT PRIMARY KEY,
+    title               TEXT,
+    sku                 TEXT,
+    current_price       NUMERIC(10,2),
+    status              TEXT,                -- 'active', 'active_hidden', 'ended'
+    hide_from_search    BOOLEAN,             -- HideFromSearch from Trading API
+    hide_reason         TEXT,               -- ReasonHideFromSearch from Trading API
+    last_synced_at      TIMESTAMPTZ,        -- when sync_listings last ran
+    updated_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS listing_metrics_raw (

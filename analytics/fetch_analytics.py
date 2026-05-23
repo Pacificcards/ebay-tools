@@ -37,6 +37,12 @@ def fetch_and_store() -> None:
         os.environ["EBAY_REFRESH_TOKEN"],
     )
 
+    active_ids = _get_active_listing_ids()
+    if active_ids:
+        print(f"[fetch_analytics] filtering to {len(active_ids)} active listings")
+    else:
+        print("[fetch_analytics] WARNING: no active listings in listing_metadata — sync_listings may not have run yet. Fetching all listings.")
+
     if os.environ.get("BACKFILL"):
         end = date.today() - timedelta(days=1)
         start = date.fromisoformat(os.environ.get("BACKFILL_START", "2026-01-01"))
@@ -48,6 +54,8 @@ def fetch_and_store() -> None:
     total = 0
     for start_date, end_date in windows:
         rows = _fetch_window_with_retry(token, start_date, end_date)
+        if active_ids:
+            rows = [r for r in rows if r["listing_id"] in active_ids]
         _upsert(rows)
         total += len(rows)
         print(f"[fetch_analytics] {start_date}..{end_date}: {len(rows)} rows")
@@ -162,6 +170,19 @@ def _float(val) -> float | None:
         return float(val) if val is not None else None
     except (ValueError, TypeError):
         return None
+
+
+def _get_active_listing_ids() -> set[str]:
+    """Return listing IDs from listing_metadata where status is not 'ended'."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT listing_id FROM listing_metadata WHERE status != 'ended'"
+            )
+            return {row[0] for row in cur.fetchall()}
+    finally:
+        conn.close()
 
 
 def _upsert(rows: list[dict]) -> None:
