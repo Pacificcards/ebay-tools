@@ -112,6 +112,9 @@ if not prior_df.empty:
     prior_df = prior_df.copy()
     prior_df["date"] = prior_df["date"] + timedelta(days=7)
 
+current_df = add_derived(current_df)
+prior_df = add_derived(prior_df)
+
 # ── Listing info ──────────────────────────────────────────────────────────────
 
 meta = listings[listings["listing_id"] == selected_id].iloc[0]
@@ -288,9 +291,6 @@ def add_derived(df: pd.DataFrame) -> pd.DataFrame:
     )
     return df
 
-
-current_df = add_derived(current_df)
-prior_df = add_derived(prior_df)
 
 if current_df.empty:
     st.info("No data found for this listing in the selected date range.")
