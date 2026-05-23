@@ -22,6 +22,7 @@ st.markdown("""
     border: 1px solid #2a2f3d;
     border-radius: 10px;
     padding: 16px 20px;
+    min-height: 110px;
 }
 [data-testid="stMetricLabel"] { font-size: 0.78rem; color: #8892a4; letter-spacing: 0.05em; text-transform: uppercase; }
 [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #e8eaf0; }
