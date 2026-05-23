@@ -220,7 +220,7 @@ BASE_LAYOUT = dict(
     template="plotly_dark",
     paper_bgcolor=CARD_BG,
     plot_bgcolor=CARD_BG,
-    margin=dict(l=12, r=12, t=40, b=8),
+    margin=dict(l=12, r=12, t=72, b=8),
     hovermode="x unified",
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(size=11)),
     xaxis=dict(gridcolor=GRID_CLR, zeroline=False),
