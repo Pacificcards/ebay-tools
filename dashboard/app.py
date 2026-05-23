@@ -54,6 +54,25 @@ def load_metrics(listing_id: str, start: date, end: date) -> pd.DataFrame:
     return df
 
 
+def add_derived(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    df = df.copy()
+    df["view_rate"] = df.apply(
+        lambda r: r["views_total"] / r["impressions_total"]
+        if r["impressions_total"] and r["impressions_total"] > 0 else None, axis=1
+    )
+    df["impressions_per_order"] = df.apply(
+        lambda r: r["impressions_total"] / r["orders"]
+        if r["orders"] and r["orders"] > 0 else None, axis=1
+    )
+    df["views_per_order"] = df.apply(
+        lambda r: r["views_total"] / r["orders"]
+        if r["orders"] and r["orders"] > 0 else None, axis=1
+    )
+    return df
+
+
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 
 listings = load_listings()
@@ -273,23 +292,6 @@ def make_chart(metric: str, title: str, current_df: pd.DataFrame, prior_df: pd.D
     return fig
 
 
-def add_derived(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return df
-    df = df.copy()
-    df["view_rate"] = df.apply(
-        lambda r: r["views_total"] / r["impressions_total"]
-        if r["impressions_total"] and r["impressions_total"] > 0 else None, axis=1
-    )
-    df["impressions_per_order"] = df.apply(
-        lambda r: r["impressions_total"] / r["orders"]
-        if r["orders"] and r["orders"] > 0 else None, axis=1
-    )
-    df["views_per_order"] = df.apply(
-        lambda r: r["views_total"] / r["orders"]
-        if r["orders"] and r["orders"] > 0 else None, axis=1
-    )
-    return df
 
 
 if current_df.empty:
