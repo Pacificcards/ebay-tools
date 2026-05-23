@@ -57,8 +57,16 @@ def fetch_and_store() -> None:
         print(f"[fetch_analytics] catch-up: {len(catchup_dates)} dates queued ({catchup_dates[0]} .. {catchup_dates[-1]})")
 
     total = 0
+    skipped = []
     for i, d in enumerate(windows):
-        rows = _fetch_window_with_retry(token, d, d)
+        try:
+            rows = _fetch_window_with_retry(token, d, d)
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:
+                print(f"[fetch_analytics] {d}: rate limited after retries, skipping (will retry next run)")
+                skipped.append(d)
+                continue
+            raise
         if active_ids:
             rows = [r for r in rows if r["listing_id"] in active_ids]
         _upsert(rows)
@@ -66,6 +74,9 @@ def fetch_and_store() -> None:
         print(f"[fetch_analytics] {d}: {len(rows)} rows")
         if i < len(windows) - 1:
             time.sleep(5)
+
+    if skipped:
+        print(f"[fetch_analytics] skipped {len(skipped)} date(s) due to rate limiting: {skipped}")
 
     print(f"[fetch_analytics] total upserted: {total}")
 
