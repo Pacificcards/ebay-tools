@@ -271,37 +271,48 @@ tab_mc, tab_dive = st.tabs(["Mission Control", "Listing Deep Dive"])
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab_mc:
-    st.subheader(f"Yesterday — {yesterday_lbl}")
+    hdr_col, toggle_col = st.columns([3, 1])
+    with hdr_col:
+        st.subheader(f"Yesterday — {yesterday_lbl}")
+    with toggle_col:
+        cmp_mode = st.radio("Compare to", ["Prior week", "Day before"],
+                            horizontal=True, label_visibility="collapsed")
 
-    today_df  = load_all_metrics_for_date(yesterday)
-    prior_df_mc = load_all_metrics_for_date(last_week)
+    day_before    = yesterday - timedelta(days=1)
+    cmp_date      = last_week if cmp_mode == "Prior week" else day_before
+    cmp_lbl       = cmp_date.strftime("%-d %b")
+    cmp_col_label = "WoW" if cmp_mode == "Prior week" else "DoD"
+
+    today_df    = load_all_metrics_for_date(yesterday)
+    prior_df_mc = load_all_metrics_for_date(cmp_date)
 
     if today_df.empty:
         st.info("No data for yesterday yet — check back after the pipeline runs.")
     else:
         # ── Aggregate KPIs ────────────────────────────────────────────────────
-        tot_impr  = int(today_df["impressions_total"].sum())
-        tot_views = int(today_df["views_total"].sum())
+        tot_impr   = int(today_df["impressions_total"].sum())
+        tot_views  = int(today_df["views_total"].sum())
         tot_orders = int(today_df["orders"].sum())
 
-        pri_impr  = int(prior_df_mc["impressions_total"].sum()) if not prior_df_mc.empty else None
-        pri_views = int(prior_df_mc["views_total"].sum())      if not prior_df_mc.empty else None
-        pri_orders = int(prior_df_mc["orders"].sum())          if not prior_df_mc.empty else None
+        pri_impr   = int(prior_df_mc["impressions_total"].sum()) if not prior_df_mc.empty else None
+        pri_views  = int(prior_df_mc["views_total"].sum())       if not prior_df_mc.empty else None
+        pri_orders = int(prior_df_mc["orders"].sum())            if not prior_df_mc.empty else None
+
+        def kpi_delta(cur, pri):
+            d = fmt_delta(cur, pri)
+            return f"{d} vs {cmp_lbl}" if d else None
 
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.metric("Total Impressions", f"{tot_impr:,}",
-                      delta=fmt_delta(tot_impr, pri_impr))
+            st.metric("Total Impressions", f"{tot_impr:,}", delta=kpi_delta(tot_impr, pri_impr))
         with c2:
-            st.metric("Total Views", f"{tot_views:,}",
-                      delta=fmt_delta(tot_views, pri_views))
+            st.metric("Total Views", f"{tot_views:,}", delta=kpi_delta(tot_views, pri_views))
         with c3:
-            st.metric("Total Orders", f"{tot_orders:,}",
-                      delta=fmt_delta(tot_orders, pri_orders))
+            st.metric("Total Orders", f"{tot_orders:,}", delta=kpi_delta(tot_orders, pri_orders))
 
         st.markdown("---")
 
-        # ── Build listings table with WoW deltas and flags ────────────────────
+        # ── Build listings table ──────────────────────────────────────────────
         merged = today_df.copy()
         if not prior_df_mc.empty:
             merged = merged.merge(
@@ -313,7 +324,7 @@ with tab_mc:
             merged["views_total_prior"]       = None
             merged["orders_prior"]            = None
 
-        def wow_pct(cur, pri):
+        def cmp_pct(cur, pri):
             try:
                 if pri and pri > 0:
                     return (cur - pri) / pri
@@ -321,8 +332,8 @@ with tab_mc:
                 pass
             return None
 
-        merged["impr_wow"]  = merged.apply(lambda r: wow_pct(r["impressions_total"], r.get("impressions_total_prior")), axis=1)
-        merged["views_wow"] = merged.apply(lambda r: wow_pct(r["views_total"],       r.get("views_total_prior")),       axis=1)
+        merged["impr_cmp"]  = merged.apply(lambda r: cmp_pct(r["impressions_total"], r.get("impressions_total_prior")), axis=1)
+        merged["views_cmp"] = merged.apply(lambda r: cmp_pct(r["views_total"],       r.get("views_total_prior")),       axis=1)
         merged["ctr"]       = merged.apply(
             lambda r: r["views_total"] / r["impressions_total"]
             if r["impressions_total"] and r["impressions_total"] > 0 else None, axis=1
@@ -330,9 +341,9 @@ with tab_mc:
 
         def flag(row):
             flags = []
-            if row["impr_wow"] is not None and row["impr_wow"] <= -0.5:
+            if row["impr_cmp"] is not None and row["impr_cmp"] <= -0.5:
                 flags.append("⚠ Traffic drop")
-            if row["views_wow"] is not None and row["views_wow"] >= 0.5:
+            if row["views_cmp"] is not None and row["views_cmp"] >= 0.5:
                 flags.append("↑ Views spike")
             if row["views_total"] >= 10 and (row["orders"] is None or row["orders"] == 0):
                 flags.append("0 orders")
@@ -342,21 +353,21 @@ with tab_mc:
 
         # ── Display table ─────────────────────────────────────────────────────
         display = merged[[
-            "title", "impressions_total", "impr_wow",
-            "views_total", "views_wow", "ctr", "orders", "flags"
+            "title", "impressions_total", "impr_cmp",
+            "views_total", "views_cmp", "ctr", "orders", "flags"
         ]].copy()
 
-        display.columns = ["Title", "Impressions", "Impr WoW", "Views", "Views WoW", "CTR", "Orders", "Flags"]
+        display.columns = ["Title", "Impressions", f"Impr {cmp_col_label}", "Views", f"Views {cmp_col_label}", "CTR", "Orders", "Flags"]
 
         def fmt_int(x):
             return "—" if pd.isna(x) or x == 0 else f"{int(x):,}"
 
-        display["Impressions"] = display["Impressions"].map(fmt_int)
-        display["Views"]       = display["Views"].map(fmt_int)
-        display["Orders"]      = display["Orders"].map(fmt_int)
-        display["Impr WoW"]    = display["Impr WoW"].map(lambda x: f"{x:+.1%}" if pd.notna(x) else "—")
-        display["Views WoW"]   = display["Views WoW"].map(lambda x: f"{x:+.1%}" if pd.notna(x) else "—")
-        display["CTR"]         = display["CTR"].map(lambda x: f"{x:.1%}" if pd.notna(x) else "—")
+        display["Impressions"]            = display["Impressions"].map(fmt_int)
+        display["Views"]                  = display["Views"].map(fmt_int)
+        display["Orders"]                 = display["Orders"].map(fmt_int)
+        display[f"Impr {cmp_col_label}"]  = display[f"Impr {cmp_col_label}"].map(lambda x: f"{x:+.1%}" if pd.notna(x) else "—")
+        display[f"Views {cmp_col_label}"] = display[f"Views {cmp_col_label}"].map(lambda x: f"{x:+.1%}" if pd.notna(x) else "—")
+        display["CTR"]                    = display["CTR"].map(lambda x: f"{x:.1%}" if pd.notna(x) else "—")
 
         st.dataframe(display, use_container_width=True, hide_index=True,
                      column_config={
@@ -364,7 +375,7 @@ with tab_mc:
                          "Flags": st.column_config.TextColumn(width="medium"),
                      })
 
-        st.caption(f"Sorted by impressions. WoW vs {last_week_lbl}. Flags: ⚠ Traffic drop = impressions down ≥50% WoW · ↑ Views spike = views up ≥50% WoW · 0 orders = ≥10 views but no sale.")
+        st.caption(f"Sorted by impressions. {cmp_col_label} vs {cmp_lbl}. Flags: ⚠ Traffic drop = impressions down ≥50% · ↑ Views spike = views up ≥50% · 0 orders = ≥10 views but no sale.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
