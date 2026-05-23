@@ -348,17 +348,20 @@ with tab_mc:
 
         display.columns = ["Title", "Impressions", "Impr WoW", "Views", "Views WoW", "CTR", "Orders", "Flags"]
 
-        display["Impr WoW"]  = display["Impr WoW"].map(lambda x: f"{x:+.1%}" if pd.notna(x) else "—")
-        display["Views WoW"] = display["Views WoW"].map(lambda x: f"{x:+.1%}" if pd.notna(x) else "—")
-        display["CTR"]       = display["CTR"].map(lambda x: f"{x:.1%}" if pd.notna(x) else "—")
-        display["Orders"]    = display["Orders"].fillna(0).astype(int)
+        def fmt_int(x):
+            return "—" if pd.isna(x) or x == 0 else f"{int(x):,}"
+
+        display["Impressions"] = display["Impressions"].map(fmt_int)
+        display["Views"]       = display["Views"].map(fmt_int)
+        display["Orders"]      = display["Orders"].map(fmt_int)
+        display["Impr WoW"]    = display["Impr WoW"].map(lambda x: f"{x:+.1%}" if pd.notna(x) else "—")
+        display["Views WoW"]   = display["Views WoW"].map(lambda x: f"{x:+.1%}" if pd.notna(x) else "—")
+        display["CTR"]         = display["CTR"].map(lambda x: f"{x:.1%}" if pd.notna(x) else "—")
 
         st.dataframe(display, use_container_width=True, hide_index=True,
                      column_config={
-                         "Title":       st.column_config.TextColumn(width="large"),
-                         "Impressions": st.column_config.NumberColumn(format="%d"),
-                         "Views":       st.column_config.NumberColumn(format="%d"),
-                         "Flags":       st.column_config.TextColumn(width="medium"),
+                         "Title": st.column_config.TextColumn(width="large"),
+                         "Flags": st.column_config.TextColumn(width="medium"),
                      })
 
         st.caption(f"Sorted by impressions. WoW vs {last_week_lbl}. Flags: ⚠ Traffic drop = impressions down ≥50% WoW · ↑ Views spike = views up ≥50% WoW · 0 orders = ≥10 views but no sale.")
