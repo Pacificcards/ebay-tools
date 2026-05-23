@@ -51,6 +51,7 @@ def fetch_and_store() -> None:
         yesterday = date.today() - timedelta(days=1)
         windows = [(yesterday, yesterday)]
 
+    is_backfill = bool(os.environ.get("BACKFILL"))
     total = 0
     for start_date, end_date in windows:
         rows = _fetch_window_with_retry(token, start_date, end_date)
@@ -59,7 +60,7 @@ def fetch_and_store() -> None:
         _upsert(rows)
         total += len(rows)
         print(f"[fetch_analytics] {start_date}..{end_date}: {len(rows)} rows")
-        time.sleep(2)
+        time.sleep(5 if is_backfill else 2)
 
     print(f"[fetch_analytics] total upserted: {total}")
 
