@@ -213,30 +213,23 @@ prior_df = add_derived(prior_df)
 if current_df.empty:
     st.info("No data found for this listing in the selected date range.")
 else:
-    st.plotly_chart(
-        make_chart("impressions_total", "Daily Impressions", current_df, prior_df),
-        use_container_width=True,
-    )
-    st.plotly_chart(
-        make_chart("views_total", "Daily Views", current_df, prior_df),
-        use_container_width=True,
-    )
-    st.plotly_chart(
-        make_chart("orders", "Daily Quantity Sold", current_df, prior_df),
-        use_container_width=True,
-    )
-    st.plotly_chart(
-        make_chart("view_rate", "CTR (Views ÷ Impressions)", current_df, prior_df, pct=True),
-        use_container_width=True,
-    )
-    st.plotly_chart(
-        make_chart("impressions_per_order", "Impressions per Unit Sold", current_df, prior_df),
-        use_container_width=True,
-    )
-    st.plotly_chart(
-        make_chart("views_per_order", "Views per Unit Sold", current_df, prior_df),
-        use_container_width=True,
-    )
+    row1_l, row1_r = st.columns(2)
+    with row1_l:
+        st.plotly_chart(make_chart("impressions_total", "Daily Impressions", current_df, prior_df), use_container_width=True)
+    with row1_r:
+        st.plotly_chart(make_chart("views_total", "Daily Views", current_df, prior_df), use_container_width=True)
+
+    row2_l, row2_r = st.columns(2)
+    with row2_l:
+        st.plotly_chart(make_chart("orders", "Daily Quantity Sold", current_df, prior_df), use_container_width=True)
+    with row2_r:
+        st.plotly_chart(make_chart("view_rate", "CTR (Views ÷ Impressions)", current_df, prior_df, pct=True), use_container_width=True)
+
+    row3_l, row3_r = st.columns(2)
+    with row3_l:
+        st.plotly_chart(make_chart("impressions_per_order", "Impressions per Unit Sold", current_df, prior_df), use_container_width=True)
+    with row3_r:
+        st.plotly_chart(make_chart("views_per_order", "Views per Unit Sold", current_df, prior_df), use_container_width=True)
 
 # ── Raw data table ────────────────────────────────────────────────────────────
 
