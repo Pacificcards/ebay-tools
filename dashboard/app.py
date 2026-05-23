@@ -119,35 +119,45 @@ price_str = f"${meta['current_price']:.2f}" if pd.notna(meta["current_price"]) e
 sku_str = meta["sku"] if pd.notna(meta["sku"]) and meta["sku"] else "—"
 st.caption(f"ID: {selected_id} · SKU: {sku_str} · Price: {price_str} · Status: {meta['status']}")
 
-# ── KPI cards ─────────────────────────────────────────────────────────────────
+# ── KPI cards (yesterday vs same day last week) ───────────────────────────────
 
-def kpi(label, current_df, prior_df, col, fmt="{:,.0f}"):
-    cur_val = current_df[col].sum() if not current_df.empty else 0
-    pri_val = prior_df[col].sum() if not prior_df.empty else None
+yesterday = pd.Timestamp(date.today() - timedelta(days=1))
+yesterday_cur = current_df[current_df["date"] == yesterday].iloc[0] if not current_df.empty and (current_df["date"] == yesterday).any() else None
+# prior_df dates are already shifted +7 days, so filtering on yesterday gives last week's same day
+yesterday_pri = prior_df[prior_df["date"] == yesterday].iloc[0] if not prior_df.empty and (prior_df["date"] == yesterday).any() else None
 
-    if col == "ctr":
-        cur_val = current_df[col].mean() if not current_df.empty else 0
-        pri_val = prior_df[col].mean() if not prior_df.empty else None
-        fmt = "{:.2%}"
+yesterday_label = yesterday.strftime("%-d %b %Y")  # e.g. "21 May 2026"
+st.subheader(f"Yesterday — {yesterday_label}")
+
+def kpi(label, col, fmt="{:,.0f}", pct=False):
+    cur_val = yesterday_cur[col] if yesterday_cur is not None and pd.notna(yesterday_cur[col]) else None
+    pri_val = yesterday_pri[col] if yesterday_pri is not None and pd.notna(yesterday_pri[col]) else None
+
+    display = fmt.format(cur_val) if cur_val is not None else "—"
+    if pct and cur_val is not None:
+        display = f"{cur_val:.1%}"
 
     delta = None
-    if pri_val is not None and pri_val > 0:
-        delta = f"{(cur_val - pri_val) / pri_val:+.1%} vs prior week"
-    elif pri_val == 0 and cur_val > 0:
+    if cur_val is not None and pri_val is not None and pri_val > 0:
+        delta = f"{(cur_val - pri_val) / pri_val:+.1%} vs {(yesterday - timedelta(days=7)).strftime('%-d %b')}"
+    elif cur_val is not None and pri_val == 0:
         delta = "↑ from 0 prior week"
 
-    st.metric(label, fmt.format(cur_val), delta=delta)
+    st.metric(label, display, delta=delta)
 
+
+if yesterday_cur is None:
+    st.caption("No data for yesterday yet.")
 
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    kpi("Impressions", current_df, prior_df, "impressions_total")
+    kpi("Impressions", "impressions_total")
 with col2:
-    kpi("Views", current_df, prior_df, "views_total")
+    kpi("Views", "views_total")
 with col3:
-    kpi("Avg CTR", current_df, prior_df, "ctr")
+    kpi("CTR", "view_rate", pct=True)
 with col4:
-    kpi("Orders", current_df, prior_df, "orders")
+    kpi("Orders", "orders")
 
 # ── Charts ────────────────────────────────────────────────────────────────────
 
