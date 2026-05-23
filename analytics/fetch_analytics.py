@@ -1,8 +1,10 @@
 """Fetch traffic data from eBay Analytics API and upsert into listing_metrics_raw.
 
-Runs daily, fetching yesterday's data for all listings (up to 200).
-Set BACKFILL=1 to fetch historical data. Set BACKFILL_START=YYYY-MM-DD to control
-the start date (defaults to 2026-01-01).
+Runs daily. Each run:
+  1. Fetches yesterday's data.
+  2. Fetches up to CATCHUP_DAYS_PER_RUN of the oldest missing dates in the
+     catch-up window [CATCHUP_START .. CATCHUP_END], defined as dates with
+     zero rows in listing_metrics_raw.
 """
 import os
 import time
@@ -29,6 +31,10 @@ METRICS = ",".join([
     "TRANSACTION",
 ])
 
+CATCHUP_START = date(2026, 3, 15)
+CATCHUP_END   = date(2026, 5, 13)
+CATCHUP_DAYS_PER_RUN = 5
+
 
 def fetch_and_store() -> None:
     token = get_access_token(
@@ -43,26 +49,44 @@ def fetch_and_store() -> None:
     else:
         print("[fetch_analytics] WARNING: no active listings in listing_metadata — sync_listings may not have run yet. Fetching all listings.")
 
-    if os.environ.get("BACKFILL"):
-        end = date.today() - timedelta(days=1)
-        start = date.fromisoformat(os.environ.get("BACKFILL_START", "2026-01-01"))
-        windows = [(d, d) for d in _date_range(start, end)]
-    else:
-        yesterday = date.today() - timedelta(days=1)
-        windows = [(yesterday, yesterday)]
+    yesterday = date.today() - timedelta(days=1)
+    catchup_dates = _get_missing_dates(CATCHUP_START, CATCHUP_END, CATCHUP_DAYS_PER_RUN)
 
-    is_backfill = bool(os.environ.get("BACKFILL"))
+    windows = [yesterday] + catchup_dates
+    if catchup_dates:
+        print(f"[fetch_analytics] catch-up: {len(catchup_dates)} dates queued ({catchup_dates[0]} .. {catchup_dates[-1]})")
+
     total = 0
-    for start_date, end_date in windows:
-        rows = _fetch_window_with_retry(token, start_date, end_date)
+    for i, d in enumerate(windows):
+        rows = _fetch_window_with_retry(token, d, d)
         if active_ids:
             rows = [r for r in rows if r["listing_id"] in active_ids]
         _upsert(rows)
         total += len(rows)
-        print(f"[fetch_analytics] {start_date}..{end_date}: {len(rows)} rows")
-        time.sleep(5 if is_backfill else 2)
+        print(f"[fetch_analytics] {d}: {len(rows)} rows")
+        if i < len(windows) - 1:
+            time.sleep(5)
 
     print(f"[fetch_analytics] total upserted: {total}")
+
+
+def _get_missing_dates(start: date, end: date, limit: int) -> list[date]:
+    """Return up to `limit` dates in [start, end] with no rows in listing_metrics_raw."""
+    all_dates = list(_date_range(start, end))
+    if not all_dates:
+        return []
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT date FROM listing_metrics_raw WHERE date BETWEEN %s AND %s",
+                (start, end),
+            )
+            fetched = {row[0] for row in cur.fetchall()}
+    finally:
+        conn.close()
+    missing = [d for d in all_dates if d not in fetched]
+    return missing[:limit]
 
 
 def _fetch_window_with_retry(token: str, start_date: date, end_date: date, retries: int = 3) -> list[dict]:
