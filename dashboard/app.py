@@ -253,6 +253,21 @@ def make_chart(metric: str, title: str, current_df: pd.DataFrame, prior_df: pd.D
 
 # ── Cost Entry data loaders ───────────────────────────────────────────────────
 
+@st.cache_data(ttl=60)
+def load_past_payment_methods() -> list[str]:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT payment_method
+                FROM import_queue
+                WHERE payment_method IS NOT NULL AND payment_method != ''
+                ORDER BY payment_method
+            """)
+            return [r[0] for r in cur.fetchall()]
+    finally:
+        conn.close()
+
 @st.cache_data(ttl=30)
 def load_import_queue() -> pd.DataFrame:
     conn = get_connection()
@@ -646,45 +661,40 @@ with tab_cost:
     # ── Left: Sales list ──────────────────────────────────────────────────────
     with col_list:
         st.markdown("**Sales**")
-        sale_search = st.text_input(
-            "Search", placeholder="Search sales…",
-            label_visibility="collapsed", key="sale_search",
-        )
 
-        filtered_sales = (
-            sales_df[sales_df["title"].str.contains(sale_search, case=False, na=False)]
-            if sale_search else sales_df
-        ).reset_index(drop=True)
-
-        if filtered_sales.empty:
+        if sales_df.empty:
             st.caption("No sales found.")
             sale = None
         else:
-            n_missing = int((filtered_sales["cost_count"] == 0).sum())
-            st.caption(f"{len(filtered_sales)} sales · {n_missing} uncosted")
+            n_missing = int((sales_df["cost_count"] == 0).sum())
+            st.caption(f"{len(sales_df)} sales · {n_missing} uncosted")
 
-            def _sale_label(row) -> str:
-                icon  = "✅" if row["cost_count"] > 0 else "⚠"
-                d     = str(row["order_date"])[5:]          # MM-DD
-                title = (row["title"] or "")
-                title = title[:28] + "…" if len(title) > 28 else title
-                price = f"${row['sale_price']:.0f}" if row["sale_price"] else "—"
-                return f"{icon} {d} · {title} · {price}"
+            tbl_df = sales_df[["order_date", "title", "sale_price", "cost_count"]].copy()
+            tbl_df["Costed"] = sales_df["cost_count"] > 0
 
-            # append short order suffix to guarantee unique labels
-            labels    = [f"{_sale_label(r)}  ·  …{r['order_id'][-4:]}" for _, r in filtered_sales.iterrows()]
-            label_map = {lbl: i for i, lbl in enumerate(labels)}
-
-            selected_label = st.radio(
-                "sale_radio", labels,
-                label_visibility="collapsed", key="sale_radio",
+            event = st.dataframe(
+                tbl_df,
+                use_container_width=True,
+                hide_index=True,
+                selection_mode="single-row",
+                on_select="rerun",
+                key="sales_table",
+                column_config={
+                    "order_date":  st.column_config.DateColumn("Date",    width="small"),
+                    "title":       st.column_config.TextColumn("Title"),
+                    "sale_price":  st.column_config.NumberColumn("Revenue", format="$%.2f", width="small"),
+                    "cost_count":  st.column_config.NumberColumn("Costs",   width="small"),
+                    "Costed":      st.column_config.CheckboxColumn("✓",     width="small"),
+                },
             )
-            sale = filtered_sales.iloc[label_map[selected_label]]
+
+            sel_rows = event.selection.rows
+            sale = sales_df.iloc[sel_rows[0]] if sel_rows else None
 
     # ── Right: Sale detail ────────────────────────────────────────────────────
     with col_detail:
         if sale is None:
-            st.info("No sales found.")
+            st.info("Select a sale from the table to view and assign costs.")
         else:
             order_id    = sale["order_id"]
             allocations = load_sale_allocations(order_id)
@@ -797,7 +807,12 @@ with tab_cost:
                     with mc3:
                         mc_vendor  = st.text_input("Vendor", placeholder="e.g. PSA, USPS, Topps")
                     with mc4:
-                        mc_payment = st.selectbox("Payment Method", ["Credit Card", "Debit Card", "PayPal", "Cash", "eBay Balance", "Bank Transfer", "Other"])
+                        mc_payment = st.selectbox(
+                            "Payment Method",
+                            options=load_past_payment_methods(),
+                            accept_new_options=True,
+                            placeholder="e.g. Costco Visa, PayPal, Cash",
+                        )
                     mc_notes = st.text_input("Notes (optional)")
                     if st.form_submit_button("Add Cost", type="primary"):
                         if not mc_desc.strip():
