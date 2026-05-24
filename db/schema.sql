@@ -98,6 +98,8 @@ CREATE TABLE IF NOT EXISTS import_queue (
     unit_cost       NUMERIC(10,2),
     total_cost      NUMERIC(10,2),
     notes           TEXT,
+    vendor          TEXT,
+    payment_method  TEXT,
     created_at      TIMESTAMPTZ DEFAULT NOW(),
     reviewed_at     TIMESTAMPTZ
 );

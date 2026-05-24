@@ -307,7 +307,9 @@ def load_sale_allocations(order_id: str) -> pd.DataFrame:
                     pa.notes,
                     COALESCE(iq.description, 'Unknown') AS description,
                     iq.source,
-                    iq.purchase_date
+                    iq.purchase_date,
+                    iq.vendor,
+                    iq.payment_method
                 FROM purchase_allocations pa
                 LEFT JOIN import_queue iq ON iq.id = pa.queue_item_id
                 WHERE pa.order_id = %s
@@ -316,7 +318,7 @@ def load_sale_allocations(order_id: str) -> pd.DataFrame:
             rows = cur.fetchall()
     finally:
         conn.close()
-    return pd.DataFrame(rows, columns=["id", "cost_allocated", "notes", "description", "source", "purchase_date"])
+    return pd.DataFrame(rows, columns=["id", "cost_allocated", "notes", "description", "source", "purchase_date", "vendor", "payment_method"])
 
 
 def _update_queue_status(ids: list, status: str) -> None:
@@ -347,7 +349,7 @@ def _save_allocation_from_queue(queue_item_id: int, order_id: str, cost_allocate
         conn.close()
 
 
-def _save_manual_cost(order_id: str, purchase_date, description: str, cost_allocated: float, notes: str) -> None:
+def _save_manual_cost(order_id: str, purchase_date, description: str, cost_allocated: float, vendor: str, payment_method: str, notes: str) -> None:
     """Create a manual import_queue entry and immediately allocate it to a sale in one transaction."""
     conn = get_connection()
     try:
@@ -355,11 +357,11 @@ def _save_manual_cost(order_id: str, purchase_date, description: str, cost_alloc
             cur.execute(
                 """
                 INSERT INTO import_queue
-                    (source, status, purchase_date, description, quantity, unit_cost, total_cost)
-                VALUES ('manual', 'allocated', %s, %s, 1, %s, %s)
+                    (source, status, purchase_date, description, quantity, unit_cost, total_cost, vendor, payment_method)
+                VALUES ('manual', 'allocated', %s, %s, 1, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                (purchase_date, description, cost_allocated, cost_allocated),
+                (purchase_date, description, cost_allocated, cost_allocated, vendor or None, payment_method or None),
             )
             queue_id = cur.fetchone()[0]
             cur.execute(
@@ -714,10 +716,12 @@ with tab_cost:
                     for _, alloc in allocations.iterrows():
                         a1, a2, a3 = st.columns([5, 1, 1])
                         with a1:
-                            src = "eBay" if alloc.get("source") == "ebay_purchase" else "Manual"
-                            date_str = f" · {alloc['purchase_date']}" if alloc.get("purchase_date") else ""
-                            note_str = f" · {alloc['notes']}" if alloc.get("notes") else ""
-                            st.markdown(f"{alloc['description']} <span style='color:#94a3b8;font-size:0.8rem'>({src}{date_str}{note_str})</span>", unsafe_allow_html=True)
+                            src        = "eBay" if alloc.get("source") == "ebay_purchase" else "Manual"
+                            date_str   = f" · {alloc['purchase_date']}" if alloc.get("purchase_date") else ""
+                            vendor_str = f" · {alloc['vendor']}" if alloc.get("vendor") else ""
+                            pay_str    = f" · {alloc['payment_method']}" if alloc.get("payment_method") else ""
+                            note_str   = f" · {alloc['notes']}" if alloc.get("notes") else ""
+                            st.markdown(f"{alloc['description']} <span style='color:#94a3b8;font-size:0.8rem'>({src}{date_str}{vendor_str}{pay_str}{note_str})</span>", unsafe_allow_html=True)
                         with a2:
                             st.markdown(f"**${alloc['cost_allocated']:.2f}**")
                         with a3:
@@ -784,7 +788,12 @@ with tab_cost:
                             mc_date = st.date_input("Date", value=date.today())
                         with mc2:
                             mc_amount = st.number_input("Amount ($)", min_value=0.0, value=0.0, step=0.01, format="%.2f")
-                        mc_desc  = st.text_input("Description", placeholder="e.g. PSA grading fee, shipping supplies")
+                        mc_desc = st.text_input("Description", placeholder="e.g. PSA grading fee, shipping supplies")
+                        mc3, mc4 = st.columns(2)
+                        with mc3:
+                            mc_vendor = st.text_input("Vendor", placeholder="e.g. PSA, USPS, Topps")
+                        with mc4:
+                            mc_payment = st.selectbox("Payment Method", ["Credit Card", "Debit Card", "PayPal", "Cash", "eBay Balance", "Bank Transfer", "Other"])
                         mc_notes = st.text_input("Notes (optional)")
                         if st.form_submit_button("Add Cost", type="primary"):
                             if not mc_desc.strip():
@@ -793,7 +802,7 @@ with tab_cost:
                                 st.error("Amount must be greater than zero.")
                             else:
                                 try:
-                                    _save_manual_cost(order_id, mc_date, mc_desc.strip(), mc_amount, mc_notes)
+                                    _save_manual_cost(order_id, mc_date, mc_desc.strip(), mc_amount, mc_vendor.strip() or None, mc_payment, mc_notes)
                                     load_sales.clear()
                                     load_sale_allocations.clear()
                                     st.success("Cost added.")
