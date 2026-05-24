@@ -112,17 +112,19 @@ CREATE TABLE IF NOT EXISTS purchase_allocations (
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Per-transaction fees from eBay Finances API.
+-- Per-transaction fees from eBay Finances API (getBillingActivities).
 CREATE TABLE IF NOT EXISTS order_fees (
-    id              SERIAL PRIMARY KEY,
-    order_id        TEXT NOT NULL,
-    listing_id      TEXT,
-    transaction_date DATE,
-    fee_type        TEXT,
-    amount          NUMERIC(10,2),
-    currency        TEXT DEFAULT 'USD',
-    fetched_at      TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(order_id, fee_type)
+    id                      SERIAL PRIMARY KEY,
+    billing_transaction_id  TEXT NOT NULL UNIQUE,
+    order_id                TEXT,
+    listing_id              TEXT,
+    transaction_date        DATE,
+    fee_type                TEXT,
+    fee_type_description    TEXT,
+    amount                  NUMERIC(10,2),
+    booking_entry           TEXT,              -- 'CREDIT' or 'DEBIT'
+    currency                TEXT DEFAULT 'USD',
+    fetched_at              TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Period-level non-COGS operating expenses.

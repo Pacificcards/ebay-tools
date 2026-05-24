@@ -27,6 +27,14 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: python -m analytics.run_ingest
 
+      - name: Fetch billing activity (fees)
+        env:
+          EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
+          EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
+          EBAY_REFRESH_TOKEN: ${{ secrets.EBAY_REFRESH_TOKEN_READ }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: python -m analytics.fetch_finances
+
       - name: Compute metrics
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
