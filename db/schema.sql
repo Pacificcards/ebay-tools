@@ -65,10 +65,76 @@ CREATE TABLE IF NOT EXISTS listing_tags (
 );
 
 -- ============================================================
--- P&L (scaffold — implement later)
+-- P&L — PURCHASE IMPORT QUEUE
 -- ============================================================
--- purchase_costs (listing_id, purchase_date, cost_per_unit, quantity, source)
--- pl_summary (listing_id, period, revenue, cogs, gross_profit, fees, net_profit)
+
+-- Raw buyer-side transactions from GetMyeBayBuying WonList.
+-- Append-only staging table; used to detect new purchases between runs.
+CREATE TABLE IF NOT EXISTS ebay_purchases_raw (
+    id              SERIAL PRIMARY KEY,
+    ebay_item_id    TEXT NOT NULL,
+    transaction_id  TEXT NOT NULL,
+    title           TEXT,
+    seller_id       TEXT,
+    purchase_date   DATE NOT NULL,
+    quantity        INTEGER NOT NULL DEFAULT 1,
+    item_cost       NUMERIC(10,2),
+    shipping_cost   NUMERIC(10,2),
+    total_cost      NUMERIC(10,2),
+    fetched_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(ebay_item_id, transaction_id)
+);
+
+-- Unified queue for unreviewed cost records (eBay purchases + manual entries).
+-- Auto-populated from ebay_purchases_raw; manual entries inserted directly.
+CREATE TABLE IF NOT EXISTS import_queue (
+    id              SERIAL PRIMARY KEY,
+    source          TEXT NOT NULL,                      -- 'ebay_purchase', 'manual'
+    status          TEXT NOT NULL DEFAULT 'pending',    -- 'pending', 'reviewed', 'allocated', 'ignored'
+    purchase_date   DATE NOT NULL,
+    description     TEXT NOT NULL,
+    source_ref      TEXT,                               -- ebay_item_id or receipt ref
+    quantity        INTEGER DEFAULT 1,
+    unit_cost       NUMERIC(10,2),
+    total_cost      NUMERIC(10,2),
+    notes           TEXT,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    reviewed_at     TIMESTAMPTZ
+);
+
+-- Links a queue item (cost) to one or more sales. Supports all matching patterns.
+CREATE TABLE IF NOT EXISTS purchase_allocations (
+    id              SERIAL PRIMARY KEY,
+    queue_item_id   INTEGER REFERENCES import_queue(id),
+    order_id        TEXT REFERENCES orders_raw(order_id),
+    cost_allocated  NUMERIC(10,2) NOT NULL,
+    notes           TEXT,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Per-transaction fees from eBay Finances API.
+CREATE TABLE IF NOT EXISTS order_fees (
+    id              SERIAL PRIMARY KEY,
+    order_id        TEXT NOT NULL,
+    listing_id      TEXT,
+    transaction_date DATE,
+    fee_type        TEXT,
+    amount          NUMERIC(10,2),
+    currency        TEXT DEFAULT 'USD',
+    fetched_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(order_id, fee_type)
+);
+
+-- Period-level non-COGS operating expenses.
+CREATE TABLE IF NOT EXISTS operating_expenses (
+    id              SERIAL PRIMARY KEY,
+    expense_date    DATE NOT NULL,
+    description     TEXT NOT NULL,
+    category        TEXT,   -- 'shipping_supplies', 'storage', 'software', 'other'
+    amount          NUMERIC(10,2) NOT NULL,
+    notes           TEXT,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
 
 -- ============================================================
 -- LISTINGS LISTENER (scaffold — implement later)
