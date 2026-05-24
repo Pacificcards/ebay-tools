@@ -448,7 +448,7 @@ def load_batch_sales(batch_id: int) -> pd.DataFrame:
                 LEFT JOIN listing_metadata lm ON lm.listing_id = o.listing_id
                 LEFT JOIN purchase_allocations pa ON pa.order_id = o.order_id
                 WHERE bs.batch_id = %s
-                GROUP BY o.order_id, lm.title, o.order_date, o.sale_price
+                GROUP BY o.order_id, o.listing_id, lm.title, o.order_date, o.sale_price
                 ORDER BY o.order_date DESC
             """, (batch_id,))
             rows = cur.fetchall()
