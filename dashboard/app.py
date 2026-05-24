@@ -639,170 +639,145 @@ with tab_dive:
 
 with tab_cost:
 
-    # ── Sales list ────────────────────────────────────────────────────────────
-    st.subheader("Sales")
-
-    sale_search = st.text_input("Search sales", placeholder="e.g. Charizard, PSA", label_visibility="collapsed", key="sale_search")
-
     sales_df = load_sales()
 
-    filtered_sales = sales_df[sales_df["title"].str.contains(sale_search, case=False, na=False)] if sale_search else sales_df
+    col_list, col_detail = st.columns([1, 2], gap="large")
 
-    if filtered_sales.empty:
-        st.info("No sales found.")
-    else:
-        display_sales = filtered_sales.copy()
-        display_sales.insert(0, "Select", False)
-        display_sales["status"] = display_sales["cost_count"].apply(lambda x: "✅" if x > 0 else "⚠ No cost")
-        display_sales["profit"] = display_sales["sale_price"] - display_sales["total_costs"]
-        display_sales["margin"] = display_sales.apply(
-            lambda r: f"{r['profit'] / r['sale_price']:.0%}" if r["sale_price"] and r["sale_price"] > 0 and r["cost_count"] > 0 else "—", axis=1
+    # ── Left: Sales list ──────────────────────────────────────────────────────
+    with col_list:
+        st.markdown("**Sales**")
+        sale_search = st.text_input(
+            "Search", placeholder="Search sales…",
+            label_visibility="collapsed", key="sale_search",
         )
 
-        edited_sales = st.data_editor(
-            display_sales[["Select", "status", "order_date", "title", "sale_price", "total_costs", "margin", "order_id"]],
-            use_container_width=True,
-            hide_index=True,
-            key="sales_editor",
-            column_config={
-                "Select":     st.column_config.CheckboxColumn("", width="small"),
-                "status":     st.column_config.TextColumn("", width="small"),
-                "order_date": st.column_config.DateColumn("Date", width="small"),
-                "title":      st.column_config.TextColumn("Sale", width="large"),
-                "sale_price": st.column_config.NumberColumn("Revenue", format="$%.2f", width="small"),
-                "total_costs":st.column_config.NumberColumn("Costs", format="$%.2f", width="small"),
-                "margin":     st.column_config.TextColumn("Margin", width="small"),
-                "order_id":   None,
-            },
-            disabled=["status", "order_date", "title", "sale_price", "total_costs", "margin"],
-        )
+        filtered_sales = (
+            sales_df[sales_df["title"].str.contains(sale_search, case=False, na=False)]
+            if sale_search else sales_df
+        ).reset_index(drop=True)
 
-        n_missing = int((filtered_sales["cost_count"] == 0).sum())
-        st.caption(f"{len(filtered_sales)} sales · {n_missing} with no cost assigned")
+        if filtered_sales.empty:
+            st.caption("No sales found.")
+            sale = None
+        else:
+            n_missing = int((filtered_sales["cost_count"] == 0).sum())
+            st.caption(f"{len(filtered_sales)} sales · {n_missing} uncosted")
 
-        selected_mask = edited_sales["Select"] == True
-        n_sel = int(selected_mask.sum())
+            def _sale_label(row) -> str:
+                icon  = "✅" if row["cost_count"] > 0 else "⚠"
+                d     = str(row["order_date"])[5:]          # MM-DD
+                title = (row["title"] or "")
+                title = title[:28] + "…" if len(title) > 28 else title
+                price = f"${row['sale_price']:.0f}" if row["sale_price"] else "—"
+                return f"{icon} {d} · {title} · {price}"
 
-        # ── Sale detail panel ─────────────────────────────────────────────────
-        if n_sel == 1:
-            sel_idx  = list(selected_mask.values).index(True)
-            sale     = filtered_sales.iloc[sel_idx]
-            order_id = sale["order_id"]
+            # append short order suffix to guarantee unique labels
+            labels    = [f"{_sale_label(r)}  ·  …{r['order_id'][-4:]}" for _, r in filtered_sales.iterrows()]
+            label_map = {lbl: i for i, lbl in enumerate(labels)}
+
+            selected_label = st.radio(
+                "sale_radio", labels,
+                label_visibility="collapsed", key="sale_radio",
+            )
+            sale = filtered_sales.iloc[label_map[selected_label]]
+
+    # ── Right: Sale detail ────────────────────────────────────────────────────
+    with col_detail:
+        if sale is None:
+            st.info("No sales found.")
+        else:
+            order_id    = sale["order_id"]
+            allocations = load_sale_allocations(order_id)
+            total_costs = float(sale["total_costs"])
+            revenue     = float(sale["sale_price"] or 0)
+            profit      = revenue - total_costs
+            margin      = profit / revenue if revenue > 0 else None
+
+            # Header KPIs
+            st.markdown(f"### {sale['title']}")
+            st.caption(f"{sale['order_date']} &nbsp;·&nbsp; {order_id}")
+
+            k1, k2, k3 = st.columns(3)
+            with k1: st.metric("Revenue",      f"${revenue:.2f}")
+            with k2: st.metric("Total Costs",  f"${total_costs:.2f}")
+            with k3: st.metric("Gross Profit", f"${profit:.2f}",
+                               delta=f"{margin:.0%} margin" if margin is not None else None)
 
             st.markdown("---")
-            with st.container(border=True):
 
-                # Header row
-                h1, h2, h3, h4 = st.columns([4, 1, 1, 1])
-                with h1:
-                    st.markdown(f"**{sale['title']}**")
-                    st.caption(f"{sale['order_date']} &nbsp;·&nbsp; {order_id}")
-                with h2:
-                    st.metric("Revenue", f"${sale['sale_price']:.2f}")
-
-                # Existing cost line items
-                allocations = load_sale_allocations(order_id)
-                total_costs = float(sale["total_costs"])
-                profit      = float(sale["sale_price"] or 0) - total_costs
-                margin      = profit / float(sale["sale_price"]) if sale["sale_price"] and float(sale["sale_price"]) > 0 else None
-
-                with h3:
-                    st.metric("Total Costs", f"${total_costs:.2f}")
-                with h4:
-                    st.metric("Gross Profit", f"${profit:.2f}", delta=f"{margin:.0%} margin" if margin is not None else None)
-
-                if not allocations.empty:
-                    st.markdown("**Assigned costs:**")
-                    for _, alloc in allocations.iterrows():
-                        a1, a2, a3 = st.columns([5, 1, 1])
-                        with a1:
-                            src        = "eBay" if alloc.get("source") == "ebay_purchase" else "Manual"
-                            date_str   = f" · {alloc['purchase_date']}" if alloc.get("purchase_date") else ""
-                            vendor_str = f" · {alloc['vendor']}" if alloc.get("vendor") else ""
-                            pay_str    = f" · {alloc['payment_method']}" if alloc.get("payment_method") else ""
-                            note_str   = f" · {alloc['notes']}" if alloc.get("notes") else ""
-                            st.markdown(f"{alloc['description']} <span style='color:#94a3b8;font-size:0.8rem'>({src}{date_str}{vendor_str}{pay_str}{note_str})</span>", unsafe_allow_html=True)
-                        with a2:
-                            st.markdown(f"**${alloc['cost_allocated']:.2f}**")
-                        with a3:
-                            if st.button("✕", key=f"rm_{alloc['id']}", help="Remove this cost"):
-                                try:
-                                    _remove_allocation(int(alloc["id"]))
-                                    load_sales.clear()
-                                    load_sale_allocations.clear()
-                                    st.success("Cost removed.")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Failed: {e}")
-                else:
-                    st.info("No costs assigned yet — add one below.")
-
+            # Cost line items
+            if not allocations.empty:
+                st.markdown("**Assigned costs**")
+                for _, alloc in allocations.iterrows():
+                    a1, a2, a3 = st.columns([5, 1, 1])
+                    with a1:
+                        src        = "eBay" if alloc.get("source") == "ebay_purchase" else "Manual"
+                        date_str   = f" · {alloc['purchase_date']}" if alloc.get("purchase_date") else ""
+                        vendor_str = f" · {alloc['vendor']}" if alloc.get("vendor") else ""
+                        pay_str    = f" · {alloc['payment_method']}" if alloc.get("payment_method") else ""
+                        note_str   = f" · {alloc['notes']}" if alloc.get("notes") else ""
+                        st.markdown(
+                            f"{alloc['description']} "
+                            f"<span style='color:#94a3b8;font-size:0.8rem'>"
+                            f"({src}{date_str}{vendor_str}{pay_str}{note_str})"
+                            f"</span>",
+                            unsafe_allow_html=True,
+                        )
+                    with a2:
+                        st.markdown(f"**${alloc['cost_allocated']:.2f}**")
+                    with a3:
+                        if st.button("✕", key=f"rm_{alloc['id']}", help="Remove"):
+                            try:
+                                _remove_allocation(int(alloc["id"]))
+                                load_sales.clear()
+                                load_sale_allocations.clear()
+                                st.success("Cost removed.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Failed: {e}")
                 st.markdown("---")
-                st.markdown("**Add a cost:**")
+            else:
+                st.info("No costs assigned yet.")
 
-                add_mode = st.radio(
-                    "add_mode", ["From import queue", "Enter manually"],
-                    horizontal=True, label_visibility="collapsed", key="add_mode",
-                )
+            # Add cost
+            st.markdown("**Add a cost**")
+            add_mode = st.radio(
+                "add_mode", ["From import queue", "Enter manually"],
+                horizontal=True, label_visibility="collapsed", key="add_mode",
+            )
 
-                if add_mode == "From import queue":
-                    queue_df   = load_import_queue()
-                    available  = queue_df[queue_df["status"].isin(["pending", "reviewed"])]
+            if add_mode == "From import queue":
+                queue_df  = load_import_queue()
+                available = queue_df[queue_df["status"].isin(["pending", "reviewed"])]
+
+                if available.empty:
+                    st.info("Import queue is empty — use 'Enter manually' instead.")
+                else:
+                    q_search = st.text_input(
+                        "Search queue", placeholder="e.g. PSA, Topps, hobby box",
+                        key="q_search",
+                    )
+                    if q_search:
+                        available = available[available["description"].str.contains(q_search, case=False, na=False)]
 
                     if available.empty:
-                        st.info("Import queue is empty. Use 'Enter manually' to add a cost directly.")
+                        st.caption("No matches in queue.")
                     else:
-                        q_search = st.text_input("Search purchases", placeholder="e.g. Topps, PSA grading, hobby box", key="q_search")
-                        if q_search:
-                            available = available[available["description"].str.contains(q_search, case=False, na=False)]
+                        q_labels = [
+                            f"{r['description']}  —  ${r['total_cost'] or 0:.2f}  ({r['purchase_date']})"
+                            for _, r in available.iterrows()
+                        ]
+                        q_ids   = available["id"].tolist()
+                        q_costs = available["total_cost"].tolist()
 
-                        if available.empty:
-                            st.caption("No matches in queue.")
-                        else:
-                            q_labels = [
-                                f"{r['description']}  —  ${r['total_cost'] or 0:.2f}  ({r['purchase_date']})"
-                                for _, r in available.iterrows()
-                            ]
-                            q_ids   = available["id"].tolist()
-                            q_costs = available["total_cost"].tolist()
-
-                            with st.form("queue_alloc_form"):
-                                sel_q      = st.selectbox("Select purchase", q_labels)
-                                q_idx      = q_labels.index(sel_q)
-                                cost_input = st.number_input("Amount to allocate ($)", min_value=0.0, value=float(q_costs[q_idx] or 0), step=0.01, format="%.2f")
-                                q_notes    = st.text_input("Notes (optional)")
-                                if st.form_submit_button("Add Cost", type="primary"):
-                                    try:
-                                        _save_allocation_from_queue(int(q_ids[q_idx]), order_id, cost_input, q_notes)
-                                        load_sales.clear()
-                                        load_sale_allocations.clear()
-                                        st.success("Cost added.")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Failed to save: {e}")
-
-                else:  # manual
-                    with st.form("manual_cost_form"):
-                        mc1, mc2 = st.columns(2)
-                        with mc1:
-                            mc_date = st.date_input("Date", value=date.today())
-                        with mc2:
-                            mc_amount = st.number_input("Amount ($)", min_value=0.0, value=0.0, step=0.01, format="%.2f")
-                        mc_desc = st.text_input("Description", placeholder="e.g. PSA grading fee, shipping supplies")
-                        mc3, mc4 = st.columns(2)
-                        with mc3:
-                            mc_vendor = st.text_input("Vendor", placeholder="e.g. PSA, USPS, Topps")
-                        with mc4:
-                            mc_payment = st.selectbox("Payment Method", ["Credit Card", "Debit Card", "PayPal", "Cash", "eBay Balance", "Bank Transfer", "Other"])
-                        mc_notes = st.text_input("Notes (optional)")
-                        if st.form_submit_button("Add Cost", type="primary"):
-                            if not mc_desc.strip():
-                                st.error("Description is required.")
-                            elif mc_amount <= 0:
-                                st.error("Amount must be greater than zero.")
-                            else:
+                        with st.form("queue_alloc_form"):
+                            sel_q      = st.selectbox("Purchase", q_labels)
+                            q_idx      = q_labels.index(sel_q)
+                            cost_input = st.number_input("Amount ($)", min_value=0.0, value=float(q_costs[q_idx] or 0), step=0.01, format="%.2f")
+                            q_notes    = st.text_input("Notes (optional)")
+                            if st.form_submit_button("Add Cost", type="primary"):
                                 try:
-                                    _save_manual_cost(order_id, mc_date, mc_desc.strip(), mc_amount, mc_vendor.strip() or None, mc_payment, mc_notes)
+                                    _save_allocation_from_queue(int(q_ids[q_idx]), order_id, cost_input, q_notes)
                                     load_sales.clear()
                                     load_sale_allocations.clear()
                                     st.success("Cost added.")
@@ -810,12 +785,37 @@ with tab_cost:
                                 except Exception as e:
                                     st.error(f"Failed to save: {e}")
 
-        elif n_sel > 1:
-            st.info("Select one sale at a time to assign costs.")
+            else:  # manual
+                with st.form("manual_cost_form"):
+                    mc1, mc2 = st.columns(2)
+                    with mc1:
+                        mc_date   = st.date_input("Date", value=date.today())
+                    with mc2:
+                        mc_amount = st.number_input("Amount ($)", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+                    mc_desc = st.text_input("Description", placeholder="e.g. PSA grading fee")
+                    mc3, mc4 = st.columns(2)
+                    with mc3:
+                        mc_vendor  = st.text_input("Vendor", placeholder="e.g. PSA, USPS, Topps")
+                    with mc4:
+                        mc_payment = st.selectbox("Payment Method", ["Credit Card", "Debit Card", "PayPal", "Cash", "eBay Balance", "Bank Transfer", "Other"])
+                    mc_notes = st.text_input("Notes (optional)")
+                    if st.form_submit_button("Add Cost", type="primary"):
+                        if not mc_desc.strip():
+                            st.error("Description is required.")
+                        elif mc_amount <= 0:
+                            st.error("Amount must be greater than zero.")
+                        else:
+                            try:
+                                _save_manual_cost(order_id, mc_date, mc_desc.strip(), mc_amount, mc_vendor.strip() or None, mc_payment, mc_notes)
+                                load_sales.clear()
+                                load_sale_allocations.clear()
+                                st.success("Cost added.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Failed to save: {e}")
 
+    # ── Import Queue (full-width, secondary) ──────────────────────────────────
     st.divider()
-
-    # ── Import Queue (secondary reference) ────────────────────────────────────
     with st.expander(":material/inbox: Import Queue — unmatched purchases"):
         queue_df = load_import_queue()
         pending  = queue_df[queue_df["status"].isin(["pending", "reviewed"])]
@@ -845,7 +845,7 @@ with tab_cost:
                 disabled=["purchase_date", "description", "source_ref", "quantity", "unit_cost", "total_cost", "status"],
             )
 
-            q_mask = edited_q["Select"] == True
+            q_mask    = edited_q["Select"] == True
             q_sel_ids = pending.loc[q_mask.values[:len(pending)], "id"].tolist()
 
             if q_sel_ids:
