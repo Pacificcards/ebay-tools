@@ -270,22 +270,53 @@ def load_import_queue() -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["id", "purchase_date", "description", "source_ref", "quantity", "unit_cost", "total_cost", "status"])
 
 
-@st.cache_data(ttl=300)
-def load_orders_for_allocation() -> pd.DataFrame:
+@st.cache_data(ttl=30)
+def load_sales() -> pd.DataFrame:
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT o.order_id, o.order_date, o.sale_price,
-                       COALESCE(lm.title, o.listing_id) AS title
+                SELECT
+                    o.order_id,
+                    o.order_date,
+                    o.sale_price,
+                    COALESCE(lm.title, o.listing_id) AS title,
+                    COALESCE(SUM(pa.cost_allocated), 0) AS total_costs,
+                    COUNT(pa.id) AS cost_count
                 FROM orders_raw o
                 LEFT JOIN listing_metadata lm USING (listing_id)
+                LEFT JOIN purchase_allocations pa ON pa.order_id = o.order_id
+                GROUP BY o.order_id, o.order_date, o.sale_price, lm.title, o.listing_id
                 ORDER BY o.order_date DESC
             """)
             rows = cur.fetchall()
     finally:
         conn.close()
-    return pd.DataFrame(rows, columns=["order_id", "order_date", "sale_price", "title"])
+    return pd.DataFrame(rows, columns=["order_id", "order_date", "sale_price", "title", "total_costs", "cost_count"])
+
+
+@st.cache_data(ttl=30)
+def load_sale_allocations(order_id: str) -> pd.DataFrame:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    pa.id,
+                    pa.cost_allocated,
+                    pa.notes,
+                    COALESCE(iq.description, 'Unknown') AS description,
+                    iq.source,
+                    iq.purchase_date
+                FROM purchase_allocations pa
+                LEFT JOIN import_queue iq ON iq.id = pa.queue_item_id
+                WHERE pa.order_id = %s
+                ORDER BY pa.created_at
+            """, (order_id,))
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return pd.DataFrame(rows, columns=["id", "cost_allocated", "notes", "description", "source", "purchase_date"])
 
 
 def _update_queue_status(ids: list, status: str) -> None:
@@ -300,7 +331,8 @@ def _update_queue_status(ids: list, status: str) -> None:
         conn.close()
 
 
-def _save_allocation(queue_item_id: int, order_id: str, cost_allocated: float, notes: str) -> None:
+def _save_allocation_from_queue(queue_item_id: int, order_id: str, cost_allocated: float, notes: str) -> None:
+    """Link an import queue item to a sale. Does not change queue status — user marks done manually."""
     conn = get_connection()
     try:
         with conn, conn.cursor() as cur:
@@ -311,26 +343,41 @@ def _save_allocation(queue_item_id: int, order_id: str, cost_allocated: float, n
                 """,
                 (queue_item_id, order_id, cost_allocated, notes or None),
             )
-            cur.execute(
-                "UPDATE import_queue SET status = 'allocated', reviewed_at = NOW() WHERE id = %s",
-                (queue_item_id,),
-            )
     finally:
         conn.close()
 
 
-def _add_manual_entry(purchase_date, description, source_ref, quantity, unit_cost, total_cost, notes) -> None:
+def _save_manual_cost(order_id: str, purchase_date, description: str, cost_allocated: float, notes: str) -> None:
+    """Create a manual import_queue entry and immediately allocate it to a sale in one transaction."""
     conn = get_connection()
     try:
         with conn, conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO import_queue
-                    (source, status, purchase_date, description, source_ref, quantity, unit_cost, total_cost, notes)
-                VALUES ('manual', 'pending', %s, %s, %s, %s, %s, %s, %s)
+                    (source, status, purchase_date, description, quantity, unit_cost, total_cost)
+                VALUES ('manual', 'allocated', %s, %s, 1, %s, %s)
+                RETURNING id
                 """,
-                (purchase_date, description, source_ref or None, quantity, unit_cost, total_cost, notes or None),
+                (purchase_date, description, cost_allocated, cost_allocated),
             )
+            queue_id = cur.fetchone()[0]
+            cur.execute(
+                """
+                INSERT INTO purchase_allocations (queue_item_id, order_id, cost_allocated, notes)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (queue_id, order_id, cost_allocated, notes or None),
+            )
+    finally:
+        conn.close()
+
+
+def _remove_allocation(allocation_id: int) -> None:
+    conn = get_connection()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM purchase_allocations WHERE id = %s", (allocation_id,))
     finally:
         conn.close()
 
@@ -590,146 +637,229 @@ with tab_dive:
 
 with tab_cost:
 
-    # ── Import Queue ──────────────────────────────────────────────────────────
-    st.subheader("Import Queue")
+    # ── Sales list ────────────────────────────────────────────────────────────
+    st.subheader("Sales")
 
-    queue_df = load_import_queue()
+    sale_search = st.text_input("Search sales", placeholder="e.g. Charizard, PSA", label_visibility="collapsed", key="sale_search")
 
-    if queue_df.empty:
-        st.info("Queue is empty — all purchases have been reviewed.")
+    sales_df = load_sales()
+
+    filtered_sales = sales_df[sales_df["title"].str.contains(sale_search, case=False, na=False)] if sale_search else sales_df
+
+    if filtered_sales.empty:
+        st.info("No sales found.")
     else:
-        display_queue = queue_df.copy()
-        display_queue.insert(0, "Select", False)
-
-        edited_queue = st.data_editor(
-            display_queue,
-            use_container_width=True,
-            hide_index=True,
-            key="queue_editor",
-            column_config={
-                "Select":        st.column_config.CheckboxColumn("", width="small"),
-                "id":            None,
-                "purchase_date": st.column_config.DateColumn("Date", width="small"),
-                "description":   st.column_config.TextColumn("Description", width="large"),
-                "source_ref":    st.column_config.TextColumn("Source", width="medium"),
-                "quantity":      st.column_config.NumberColumn("Qty", width="small"),
-                "unit_cost":     st.column_config.NumberColumn("Unit Cost", format="$%.2f", width="small"),
-                "total_cost":    st.column_config.NumberColumn("Total", format="$%.2f", width="small"),
-                "status":        st.column_config.TextColumn("Status", width="small"),
-            },
-            disabled=["purchase_date", "description", "source_ref", "quantity", "unit_cost", "total_cost", "status"],
+        display_sales = filtered_sales.copy()
+        display_sales.insert(0, "Select", False)
+        display_sales["status"] = display_sales["cost_count"].apply(lambda x: "✅" if x > 0 else "⚠ No cost")
+        display_sales["profit"] = display_sales["sale_price"] - display_sales["total_costs"]
+        display_sales["margin"] = display_sales.apply(
+            lambda r: f"{r['profit'] / r['sale_price']:.0%}" if r["sale_price"] and r["sale_price"] > 0 and r["cost_count"] > 0 else "—", axis=1
         )
 
-        selected_mask = edited_queue["Select"] == True
-        selected_ids  = queue_df.loc[selected_mask.values[:len(queue_df)], "id"].tolist()
-        n_selected    = len(selected_ids)
+        edited_sales = st.data_editor(
+            display_sales[["Select", "status", "order_date", "title", "sale_price", "total_costs", "margin", "order_id"]],
+            use_container_width=True,
+            hide_index=True,
+            key="sales_editor",
+            column_config={
+                "Select":     st.column_config.CheckboxColumn("", width="small"),
+                "status":     st.column_config.TextColumn("", width="small"),
+                "order_date": st.column_config.DateColumn("Date", width="small"),
+                "title":      st.column_config.TextColumn("Sale", width="large"),
+                "sale_price": st.column_config.NumberColumn("Revenue", format="$%.2f", width="small"),
+                "total_costs":st.column_config.NumberColumn("Costs", format="$%.2f", width="small"),
+                "margin":     st.column_config.TextColumn("Margin", width="small"),
+                "order_id":   None,
+            },
+            disabled=["status", "order_date", "title", "sale_price", "total_costs", "margin"],
+        )
 
-        if n_selected > 0:
-            st.markdown(f"**{n_selected} item{'s' if n_selected != 1 else ''} selected**")
-            col_ign, col_rev, _ = st.columns([1, 1, 5])
+        n_missing = int((filtered_sales["cost_count"] == 0).sum())
+        st.caption(f"{len(filtered_sales)} sales · {n_missing} with no cost assigned")
 
-            with col_ign:
-                if st.button("Mark ignored", type="secondary"):
-                    try:
-                        _update_queue_status(selected_ids, "ignored")
-                        st.success(f"Marked {n_selected} item(s) as ignored.")
-                        if "queue_editor" in st.session_state:
-                            del st.session_state["queue_editor"]
-                        load_import_queue.clear()
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Failed to save: {e}")
+        selected_mask = edited_sales["Select"] == True
+        n_sel = int(selected_mask.sum())
 
-            with col_rev:
-                if st.button("Mark reviewed", type="secondary"):
-                    try:
-                        _update_queue_status(selected_ids, "reviewed")
-                        st.success(f"Marked {n_selected} item(s) as reviewed.")
-                        if "queue_editor" in st.session_state:
-                            del st.session_state["queue_editor"]
-                        load_import_queue.clear()
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Failed to save: {e}")
-
-        # Allocation form — only when exactly one row is selected
-        if n_selected == 1:
-            item_idx = list(selected_mask.values).index(True)
-            item     = queue_df.iloc[item_idx]
+        # ── Sale detail panel ─────────────────────────────────────────────────
+        if n_sel == 1:
+            sel_idx  = list(selected_mask.values).index(True)
+            sale     = filtered_sales.iloc[sel_idx]
+            order_id = sale["order_id"]
 
             st.markdown("---")
             with st.container(border=True):
-                st.markdown(f"**Allocate:** {item['description']} &nbsp;·&nbsp; ${item['total_cost'] or 0:.2f} &nbsp;·&nbsp; {item['purchase_date']}")
 
-                orders      = load_orders_for_allocation()
-                order_labels = [
-                    f"{row['order_date']}  —  {row['title']}  —  ${row['sale_price']:.2f}"
-                    for _, row in orders.iterrows()
-                ]
-                order_ids = orders["order_id"].tolist()
+                # Header row
+                h1, h2, h3, h4 = st.columns([4, 1, 1, 1])
+                with h1:
+                    st.markdown(f"**{sale['title']}**")
+                    st.caption(f"{sale['order_date']} &nbsp;·&nbsp; {order_id}")
+                with h2:
+                    st.metric("Revenue", f"${sale['sale_price']:.2f}")
 
-                with st.form("allocation_form"):
-                    selected_order = st.selectbox("Link to order", order_labels)
-                    cost_allocated = st.number_input(
-                        "Cost to allocate ($)",
-                        min_value=0.0,
-                        value=float(item["total_cost"] or 0),
-                        step=0.01,
-                        format="%.2f",
-                    )
-                    alloc_notes = st.text_input("Notes (optional)")
-                    submitted   = st.form_submit_button("Save Allocation", type="primary")
+                # Existing cost line items
+                allocations = load_sale_allocations(order_id)
+                total_costs = float(sale["total_costs"])
+                profit      = float(sale["sale_price"] or 0) - total_costs
+                margin      = profit / float(sale["sale_price"]) if sale["sale_price"] and float(sale["sale_price"]) > 0 else None
 
-                    if submitted:
+                with h3:
+                    st.metric("Total Costs", f"${total_costs:.2f}")
+                with h4:
+                    st.metric("Gross Profit", f"${profit:.2f}", delta=f"{margin:.0%} margin" if margin is not None else None)
+
+                if not allocations.empty:
+                    st.markdown("**Assigned costs:**")
+                    for _, alloc in allocations.iterrows():
+                        a1, a2, a3 = st.columns([5, 1, 1])
+                        with a1:
+                            src = "eBay" if alloc.get("source") == "ebay_purchase" else "Manual"
+                            date_str = f" · {alloc['purchase_date']}" if alloc.get("purchase_date") else ""
+                            note_str = f" · {alloc['notes']}" if alloc.get("notes") else ""
+                            st.markdown(f"{alloc['description']} <span style='color:#94a3b8;font-size:0.8rem'>({src}{date_str}{note_str})</span>", unsafe_allow_html=True)
+                        with a2:
+                            st.markdown(f"**${alloc['cost_allocated']:.2f}**")
+                        with a3:
+                            if st.button("✕", key=f"rm_{alloc['id']}", help="Remove this cost"):
+                                try:
+                                    _remove_allocation(int(alloc["id"]))
+                                    load_sales.clear()
+                                    load_sale_allocations.clear()
+                                    st.success("Cost removed.")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Failed: {e}")
+                else:
+                    st.info("No costs assigned yet — add one below.")
+
+                st.markdown("---")
+                st.markdown("**Add a cost:**")
+
+                add_mode = st.radio(
+                    "add_mode", ["From import queue", "Enter manually"],
+                    horizontal=True, label_visibility="collapsed", key="add_mode",
+                )
+
+                if add_mode == "From import queue":
+                    queue_df   = load_import_queue()
+                    available  = queue_df[queue_df["status"].isin(["pending", "reviewed"])]
+
+                    if available.empty:
+                        st.info("Import queue is empty. Use 'Enter manually' to add a cost directly.")
+                    else:
+                        q_search = st.text_input("Search purchases", placeholder="e.g. Topps, PSA grading, hobby box", key="q_search")
+                        if q_search:
+                            available = available[available["description"].str.contains(q_search, case=False, na=False)]
+
+                        if available.empty:
+                            st.caption("No matches in queue.")
+                        else:
+                            q_labels = [
+                                f"{r['description']}  —  ${r['total_cost'] or 0:.2f}  ({r['purchase_date']})"
+                                for _, r in available.iterrows()
+                            ]
+                            q_ids   = available["id"].tolist()
+                            q_costs = available["total_cost"].tolist()
+
+                            with st.form("queue_alloc_form"):
+                                sel_q      = st.selectbox("Select purchase", q_labels)
+                                q_idx      = q_labels.index(sel_q)
+                                cost_input = st.number_input("Amount to allocate ($)", min_value=0.0, value=float(q_costs[q_idx] or 0), step=0.01, format="%.2f")
+                                q_notes    = st.text_input("Notes (optional)")
+                                if st.form_submit_button("Add Cost", type="primary"):
+                                    try:
+                                        _save_allocation_from_queue(int(q_ids[q_idx]), order_id, cost_input, q_notes)
+                                        load_sales.clear()
+                                        load_sale_allocations.clear()
+                                        st.success("Cost added.")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Failed to save: {e}")
+
+                else:  # manual
+                    with st.form("manual_cost_form"):
+                        mc1, mc2 = st.columns(2)
+                        with mc1:
+                            mc_date = st.date_input("Date", value=date.today())
+                        with mc2:
+                            mc_amount = st.number_input("Amount ($)", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+                        mc_desc  = st.text_input("Description", placeholder="e.g. PSA grading fee, shipping supplies")
+                        mc_notes = st.text_input("Notes (optional)")
+                        if st.form_submit_button("Add Cost", type="primary"):
+                            if not mc_desc.strip():
+                                st.error("Description is required.")
+                            elif mc_amount <= 0:
+                                st.error("Amount must be greater than zero.")
+                            else:
+                                try:
+                                    _save_manual_cost(order_id, mc_date, mc_desc.strip(), mc_amount, mc_notes)
+                                    load_sales.clear()
+                                    load_sale_allocations.clear()
+                                    st.success("Cost added.")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Failed to save: {e}")
+
+        elif n_sel > 1:
+            st.info("Select one sale at a time to assign costs.")
+
+    st.divider()
+
+    # ── Import Queue (secondary reference) ────────────────────────────────────
+    with st.expander(":material/inbox: Import Queue — unmatched purchases"):
+        queue_df = load_import_queue()
+        pending  = queue_df[queue_df["status"].isin(["pending", "reviewed"])]
+
+        if pending.empty:
+            st.info("No pending items in queue.")
+        else:
+            disp_q = pending.copy()
+            disp_q.insert(0, "Select", False)
+
+            edited_q = st.data_editor(
+                disp_q,
+                use_container_width=True,
+                hide_index=True,
+                key="queue_editor",
+                column_config={
+                    "Select":        st.column_config.CheckboxColumn("", width="small"),
+                    "id":            None,
+                    "purchase_date": st.column_config.DateColumn("Date", width="small"),
+                    "description":   st.column_config.TextColumn("Description", width="large"),
+                    "source_ref":    st.column_config.TextColumn("Source", width="medium"),
+                    "quantity":      st.column_config.NumberColumn("Qty", width="small"),
+                    "unit_cost":     st.column_config.NumberColumn("Unit Cost", format="$%.2f", width="small"),
+                    "total_cost":    st.column_config.NumberColumn("Total", format="$%.2f", width="small"),
+                    "status":        st.column_config.TextColumn("Status", width="small"),
+                },
+                disabled=["purchase_date", "description", "source_ref", "quantity", "unit_cost", "total_cost", "status"],
+            )
+
+            q_mask = edited_q["Select"] == True
+            q_sel_ids = pending.loc[q_mask.values[:len(pending)], "id"].tolist()
+
+            if q_sel_ids:
+                qb1, qb2, _ = st.columns([1, 1, 5])
+                with qb1:
+                    if st.button("Mark ignored", key="q_ign"):
                         try:
-                            order_id = order_ids[order_labels.index(selected_order)]
-                            _save_allocation(int(item["id"]), order_id, cost_allocated, alloc_notes)
-                            st.success("Allocation saved.")
+                            _update_queue_status(q_sel_ids, "ignored")
+                            st.success(f"Marked {len(q_sel_ids)} item(s) as ignored.")
                             if "queue_editor" in st.session_state:
                                 del st.session_state["queue_editor"]
                             load_import_queue.clear()
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Failed to save: {e}")
-
-    st.divider()
-
-    # ── Manual Entry ──────────────────────────────────────────────────────────
-    st.subheader("Manual Entry")
-
-    with st.form("manual_entry_form", clear_on_submit=True):
-        col_date, col_src = st.columns(2)
-        with col_date:
-            entry_date = st.date_input("Date", value=date.today())
-        with col_src:
-            source_choice = st.selectbox("Source", ["Topps", "Target", "eBay", "Other"])
-
-        description = st.text_input("Description")
-
-        if source_choice == "Other":
-            source_ref = st.text_input("Source name")
-        else:
-            source_ref = source_choice
-
-        col_qty, col_unit, col_total = st.columns(3)
-        with col_qty:
-            quantity = st.number_input("Quantity", min_value=1, value=1, step=1)
-        with col_unit:
-            unit_cost = st.number_input("Unit Cost ($)", min_value=0.0, value=0.0, step=0.01, format="%.2f")
-        with col_total:
-            st.metric("Total", f"${unit_cost * quantity:.2f}")
-
-        notes = st.text_area("Notes (optional)", height=80)
-
-        submitted_manual = st.form_submit_button("Add to Queue", type="primary")
-
-        if submitted_manual:
-            if not description.strip():
-                st.error("Description is required.")
-            else:
-                try:
-                    _add_manual_entry(entry_date, description.strip(), source_ref, quantity, unit_cost, unit_cost * quantity, notes)
-                    st.success("Entry added to queue.")
-                    load_import_queue.clear()
-                except Exception as e:
-                    st.error(f"Failed to save: {e}")
+                            st.error(f"Failed: {e}")
+                with qb2:
+                    if st.button("Mark reviewed", key="q_rev"):
+                        try:
+                            _update_queue_status(q_sel_ids, "reviewed")
+                            st.success(f"Marked {len(q_sel_ids)} item(s) as reviewed.")
+                            if "queue_editor" in st.session_state:
+                                del st.session_state["queue_editor"]
+                            load_import_queue.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed: {e}")
