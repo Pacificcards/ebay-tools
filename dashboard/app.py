@@ -16,25 +16,27 @@ st.set_page_config(page_title="Pacific Cards", layout="wide")
 
 st.markdown("""
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600&display=swap');
+* { font-family: 'Space Grotesk', sans-serif !important; }
 [data-testid="stMetric"] {
-    background: #1c1f26;
-    border: 1px solid #2a2f3d;
+    background: #1d293d;
+    border: 1px solid #314158;
     border-radius: 10px;
     padding: 16px 20px;
     min-height: 110px;
 }
-[data-testid="stMetricLabel"] { font-size: 0.78rem; color: #8892a4; letter-spacing: 0.05em; text-transform: uppercase; }
-[data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #e8eaf0; }
+[data-testid="stMetricLabel"] { font-size: 0.78rem; color: #94a3b8; letter-spacing: 0.05em; text-transform: uppercase; }
+[data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 600; color: #e2e8f0; }
 [data-testid="stMetricDelta"] svg { display: none; }
 .block-container { padding-top: 2rem; padding-bottom: 2rem; }
-hr { border-color: #2a2f3d; margin: 1.5rem 0; }
+hr { border-color: #314158; margin: 1.5rem 0; }
 </style>
 """, unsafe_allow_html=True)
 
 # ── Chart constants ───────────────────────────────────────────────────────────
 
-CARD_BG  = "#1c1f26"
-GRID_CLR = "#2a2f3d"
+CARD_BG  = "#1d293d"
+GRID_CLR = "#314158"
 
 BASE_LAYOUT = dict(
     template="plotly_dark",
@@ -157,14 +159,14 @@ def make_impressions_views_ctr_chart(current_df: pd.DataFrame, prior_df: pd.Data
         fig.add_trace(go.Bar(
             x=current_df["date"], y=current_df["impressions_total"],
             name="Impressions", yaxis="y1",
-            marker_color="#2d5a8e",
+            marker_color="#3d3799",
             hovertemplate="%{x}: %{y:,}<extra>Impressions</extra>",
         ))
     if not prior_df.empty:
         fig.add_trace(go.Bar(
             x=prior_df["date"], y=prior_df["impressions_total"],
             name="Impressions (prior week)", yaxis="y1",
-            marker_color="#1e3a5f", opacity=0.6,
+            marker_color="#27205e", opacity=0.6,
             hovertemplate="%{x}: %{y:,}<extra>Impressions (prior week)</extra>",
         ))
     if not current_df.empty:
@@ -172,7 +174,7 @@ def make_impressions_views_ctr_chart(current_df: pd.DataFrame, prior_df: pd.Data
             x=current_df["date"], y=current_df["views_total"],
             name="Views", yaxis="y2",
             mode="lines+markers",
-            line=dict(color="#4c9be8", width=2),
+            line=dict(color="#615fff", width=2),
             marker=dict(size=5),
             hovertemplate="%{x}: %{y:,}<extra>Views</extra>",
         ))
@@ -181,7 +183,7 @@ def make_impressions_views_ctr_chart(current_df: pd.DataFrame, prior_df: pd.Data
             x=prior_df["date"], y=prior_df["views_total"],
             name="Views (prior week)", yaxis="y2",
             mode="lines",
-            line=dict(color="#4c9be8", width=1.5, dash="dot"),
+            line=dict(color="#615fff", width=1.5, dash="dot"),
             hovertemplate="%{x}: %{y:,}<extra>Views (prior week)</extra>",
         ))
     if not current_df.empty:
@@ -225,7 +227,7 @@ def make_chart(metric: str, title: str, current_df: pd.DataFrame, prior_df: pd.D
             x=current_df["date"], y=current_df[metric],
             name="Current",
             mode="lines+markers",
-            line=dict(color="#4c9be8", width=2),
+            line=dict(color="#615fff", width=2),
             marker=dict(size=5),
             hovertemplate=f"%{{x}}: %{{y:{fmt}}}<extra></extra>" if fmt else None,
         ))
@@ -234,7 +236,7 @@ def make_chart(metric: str, title: str, current_df: pd.DataFrame, prior_df: pd.D
             x=prior_df["date"], y=prior_df[metric],
             name="Prior week",
             mode="lines",
-            line=dict(color="#4c9be8", width=1.5, dash="dot"),
+            line=dict(color="#615fff", width=1.5, dash="dot"),
             opacity=0.45,
             hovertemplate=f"%{{x}}: %{{y:{fmt}}}<extra>Prior week</extra>" if fmt else None,
         ))
@@ -247,6 +249,90 @@ def make_chart(metric: str, title: str, current_df: pd.DataFrame, prior_df: pd.D
     )
     fig.update_layout(**layout)
     return fig
+
+
+# ── Cost Entry data loaders ───────────────────────────────────────────────────
+
+@st.cache_data(ttl=30)
+def load_import_queue() -> pd.DataFrame:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, purchase_date, description, source_ref, quantity, unit_cost, total_cost, status
+                FROM import_queue
+                WHERE status != 'ignored'
+                ORDER BY purchase_date DESC
+            """)
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return pd.DataFrame(rows, columns=["id", "purchase_date", "description", "source_ref", "quantity", "unit_cost", "total_cost", "status"])
+
+
+@st.cache_data(ttl=300)
+def load_orders_for_allocation() -> pd.DataFrame:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT o.order_id, o.order_date, o.sale_price,
+                       COALESCE(lm.title, o.listing_id) AS title
+                FROM orders_raw o
+                LEFT JOIN listing_metadata lm USING (listing_id)
+                ORDER BY o.order_date DESC
+            """)
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return pd.DataFrame(rows, columns=["order_id", "order_date", "sale_price", "title"])
+
+
+def _update_queue_status(ids: list, status: str) -> None:
+    conn = get_connection()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE import_queue SET status = %s, reviewed_at = NOW() WHERE id = ANY(%s)",
+                (status, ids),
+            )
+    finally:
+        conn.close()
+
+
+def _save_allocation(queue_item_id: int, order_id: str, cost_allocated: float, notes: str) -> None:
+    conn = get_connection()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO purchase_allocations (queue_item_id, order_id, cost_allocated, notes)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (queue_item_id, order_id, cost_allocated, notes or None),
+            )
+            cur.execute(
+                "UPDATE import_queue SET status = 'allocated', reviewed_at = NOW() WHERE id = %s",
+                (queue_item_id,),
+            )
+    finally:
+        conn.close()
+
+
+def _add_manual_entry(purchase_date, description, source_ref, quantity, unit_cost, total_cost, notes) -> None:
+    conn = get_connection()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO import_queue
+                    (source, status, purchase_date, description, source_ref, quantity, unit_cost, total_cost, notes)
+                VALUES ('manual', 'pending', %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (purchase_date, description, source_ref or None, quantity, unit_cost, total_cost, notes or None),
+            )
+    finally:
+        conn.close()
 
 
 # ── App shell ─────────────────────────────────────────────────────────────────
@@ -263,7 +349,11 @@ last_week     = yesterday - timedelta(days=7)
 yesterday_lbl = yesterday.strftime("%-d %b %Y")
 last_week_lbl = last_week.strftime("%-d %b")
 
-tab_mc, tab_dive = st.tabs(["Mission Control", "Listing Deep Dive"])
+tab_mc, tab_dive, tab_cost = st.tabs([
+    ":material/query_stats: Mission Control",
+    ":material/inventory_2: Listing Deep Dive",
+    ":material/receipt_long: Cost Entry",
+])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -492,3 +582,154 @@ with tab_dive:
             display["date"] = display["date"].dt.date
             display["ctr"]  = display["ctr"].map(lambda x: f"{x:.2%}" if pd.notna(x) else "—")
             st.dataframe(display, use_container_width=True, hide_index=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 3 — Cost Entry
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab_cost:
+
+    # ── Import Queue ──────────────────────────────────────────────────────────
+    st.subheader("Import Queue")
+
+    queue_df = load_import_queue()
+
+    if queue_df.empty:
+        st.info("Queue is empty — all purchases have been reviewed.")
+    else:
+        display_queue = queue_df.copy()
+        display_queue.insert(0, "Select", False)
+
+        edited_queue = st.data_editor(
+            display_queue,
+            use_container_width=True,
+            hide_index=True,
+            key="queue_editor",
+            column_config={
+                "Select":        st.column_config.CheckboxColumn("", width="small"),
+                "id":            None,
+                "purchase_date": st.column_config.DateColumn("Date", width="small"),
+                "description":   st.column_config.TextColumn("Description", width="large"),
+                "source_ref":    st.column_config.TextColumn("Source", width="medium"),
+                "quantity":      st.column_config.NumberColumn("Qty", width="small"),
+                "unit_cost":     st.column_config.NumberColumn("Unit Cost", format="$%.2f", width="small"),
+                "total_cost":    st.column_config.NumberColumn("Total", format="$%.2f", width="small"),
+                "status":        st.column_config.TextColumn("Status", width="small"),
+            },
+            disabled=["purchase_date", "description", "source_ref", "quantity", "unit_cost", "total_cost", "status"],
+        )
+
+        selected_mask = edited_queue["Select"] == True
+        selected_ids  = queue_df.loc[selected_mask.values[:len(queue_df)], "id"].tolist()
+        n_selected    = len(selected_ids)
+
+        if n_selected > 0:
+            st.markdown(f"**{n_selected} item{'s' if n_selected != 1 else ''} selected**")
+            col_ign, col_rev, _ = st.columns([1, 1, 5])
+
+            with col_ign:
+                if st.button("Mark ignored", type="secondary"):
+                    try:
+                        _update_queue_status(selected_ids, "ignored")
+                        st.success(f"Marked {n_selected} item(s) as ignored.")
+                        if "queue_editor" in st.session_state:
+                            del st.session_state["queue_editor"]
+                        load_import_queue.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to save: {e}")
+
+            with col_rev:
+                if st.button("Mark reviewed", type="secondary"):
+                    try:
+                        _update_queue_status(selected_ids, "reviewed")
+                        st.success(f"Marked {n_selected} item(s) as reviewed.")
+                        if "queue_editor" in st.session_state:
+                            del st.session_state["queue_editor"]
+                        load_import_queue.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to save: {e}")
+
+        # Allocation form — only when exactly one row is selected
+        if n_selected == 1:
+            item_idx = list(selected_mask.values).index(True)
+            item     = queue_df.iloc[item_idx]
+
+            st.markdown("---")
+            with st.container(border=True):
+                st.markdown(f"**Allocate:** {item['description']} &nbsp;·&nbsp; ${item['total_cost'] or 0:.2f} &nbsp;·&nbsp; {item['purchase_date']}")
+
+                orders      = load_orders_for_allocation()
+                order_labels = [
+                    f"{row['order_date']}  —  {row['title']}  —  ${row['sale_price']:.2f}"
+                    for _, row in orders.iterrows()
+                ]
+                order_ids = orders["order_id"].tolist()
+
+                with st.form("allocation_form"):
+                    selected_order = st.selectbox("Link to order", order_labels)
+                    cost_allocated = st.number_input(
+                        "Cost to allocate ($)",
+                        min_value=0.0,
+                        value=float(item["total_cost"] or 0),
+                        step=0.01,
+                        format="%.2f",
+                    )
+                    alloc_notes = st.text_input("Notes (optional)")
+                    submitted   = st.form_submit_button("Save Allocation", type="primary")
+
+                    if submitted:
+                        try:
+                            order_id = order_ids[order_labels.index(selected_order)]
+                            _save_allocation(int(item["id"]), order_id, cost_allocated, alloc_notes)
+                            st.success("Allocation saved.")
+                            if "queue_editor" in st.session_state:
+                                del st.session_state["queue_editor"]
+                            load_import_queue.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to save: {e}")
+
+    st.divider()
+
+    # ── Manual Entry ──────────────────────────────────────────────────────────
+    st.subheader("Manual Entry")
+
+    with st.form("manual_entry_form", clear_on_submit=True):
+        col_date, col_src = st.columns(2)
+        with col_date:
+            entry_date = st.date_input("Date", value=date.today())
+        with col_src:
+            source_choice = st.selectbox("Source", ["Topps", "Target", "eBay", "Other"])
+
+        description = st.text_input("Description")
+
+        if source_choice == "Other":
+            source_ref = st.text_input("Source name")
+        else:
+            source_ref = source_choice
+
+        col_qty, col_unit, col_total = st.columns(3)
+        with col_qty:
+            quantity = st.number_input("Quantity", min_value=1, value=1, step=1)
+        with col_unit:
+            unit_cost = st.number_input("Unit Cost ($)", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+        with col_total:
+            st.metric("Total", f"${unit_cost * quantity:.2f}")
+
+        notes = st.text_area("Notes (optional)", height=80)
+
+        submitted_manual = st.form_submit_button("Add to Queue", type="primary")
+
+        if submitted_manual:
+            if not description.strip():
+                st.error("Description is required.")
+            else:
+                try:
+                    _add_manual_entry(entry_date, description.strip(), source_ref, quantity, unit_cost, unit_cost * quantity, notes)
+                    st.success("Entry added to queue.")
+                    load_import_queue.clear()
+                except Exception as e:
+                    st.error(f"Failed to save: {e}")
