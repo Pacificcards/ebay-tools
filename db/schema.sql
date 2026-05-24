@@ -141,6 +141,25 @@ CREATE TABLE IF NOT EXISTS operating_expenses (
 );
 
 -- ============================================================
+-- SALE BATCHES
+-- ============================================================
+
+-- Named groups of sales for aggregated P&L (e.g. cards from one hobby box).
+CREATE TABLE IF NOT EXISTS sale_batches (
+    id          SERIAL PRIMARY KEY,
+    name        TEXT NOT NULL,
+    notes       TEXT,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Many-to-many: sales assigned to a batch.
+CREATE TABLE IF NOT EXISTS batch_sales (
+    batch_id    INTEGER REFERENCES sale_batches(id) ON DELETE CASCADE,
+    order_id    TEXT REFERENCES orders_raw(order_id),
+    PRIMARY KEY (batch_id, order_id)
+);
+
+-- ============================================================
 -- LISTINGS LISTENER (scaffold — implement later)
 -- ============================================================
 -- listener_watchlist (search_query, max_price, category)
