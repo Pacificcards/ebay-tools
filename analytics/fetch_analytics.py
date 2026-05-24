@@ -2,9 +2,9 @@
 
 Runs daily. Each run:
   1. Fetches yesterday's data.
-  2. Fetches up to CATCHUP_DAYS_PER_RUN of the oldest missing dates in the
-     catch-up window [CATCHUP_START .. CATCHUP_END], defined as dates with
-     zero rows in listing_metrics_raw.
+  2. Fetches up to CATCHUP_DAYS_PER_RUN of the most-recent missing dates in a
+     rolling CATCHUP_WINDOW_DAYS window ending yesterday, working backwards
+     until the window is fully populated.
 """
 import os
 import time
@@ -31,8 +31,7 @@ METRICS = ",".join([
     "TRANSACTION",
 ])
 
-CATCHUP_START = date(2026, 3, 15)
-CATCHUP_END   = date(2026, 5, 21)
+CATCHUP_WINDOW_DAYS = 30
 CATCHUP_DAYS_PER_RUN = 5
 
 
@@ -50,11 +49,12 @@ def fetch_and_store() -> None:
         print("[fetch_analytics] WARNING: no active listings in listing_metadata — sync_listings may not have run yet. Fetching all listings.")
 
     yesterday = date.today() - timedelta(days=1)
-    catchup_dates = _get_missing_dates(CATCHUP_START, CATCHUP_END, CATCHUP_DAYS_PER_RUN)
+    catchup_start = yesterday - timedelta(days=CATCHUP_WINDOW_DAYS - 1)
+    catchup_dates = _get_missing_dates(catchup_start, yesterday, CATCHUP_DAYS_PER_RUN)
 
     windows = [yesterday] + catchup_dates
     if catchup_dates:
-        print(f"[fetch_analytics] catch-up: {len(catchup_dates)} dates queued ({catchup_dates[0]} .. {catchup_dates[-1]})")
+        print(f"[fetch_analytics] catch-up: {len(catchup_dates)} dates queued ({catchup_dates[-1]} .. {catchup_dates[0]})")
 
     total = 0
     skipped = []
@@ -96,7 +96,7 @@ def _get_missing_dates(start: date, end: date, limit: int) -> list[date]:
             fetched = {row[0] for row in cur.fetchall()}
     finally:
         conn.close()
-    missing = [d for d in all_dates if d not in fetched]
+    missing = sorted([d for d in all_dates if d not in fetched], reverse=True)
     return missing[:limit]
 
 
