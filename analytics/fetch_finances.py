@@ -36,7 +36,7 @@ def fetch_and_store() -> None:
     filter_str = (
         f"transactionDate:[{start_dt.strftime('%Y-%m-%dT%H:%M:%S.000Z')}"
         f"..{now.strftime('%Y-%m-%dT%H:%M:%S.000Z')}]"
-        ",transactionType:{SALE}"
+        ",transactionType:{SALE|NON_SALE_CHARGE|SHIPPING_LABEL|REFUND|CREDIT|ADJUSTMENT}"
     )
 
     rows = _paginate(token, filter_str)

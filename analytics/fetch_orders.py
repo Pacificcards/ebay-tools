@@ -68,9 +68,15 @@ def _paginate(token: str, filter_str: str) -> list[dict]:
 def _to_rows(order: dict) -> list[dict]:
     order_id = order.get("orderId")
     creation_date = order.get("creationDate", "")[:10]
+
+    pricing = order.get("pricingSummary", {})
+    delivery_cost = float(pricing.get("deliveryCost", {}).get("value") or 0)
+    price_subtotal = float(pricing.get("priceSubtotal", {}).get("value") or 0)
+
+    line_items = order.get("lineItems", [])
     rows = []
 
-    for item in order.get("lineItems", []):
+    for item in line_items:
         listing_id = item.get("legacyItemId") or item.get("lineItemId")
         quantity = item.get("quantity", 1)
         sale_price = item.get("lineItemCost", {}).get("value")
@@ -78,12 +84,22 @@ def _to_rows(order: dict) -> list[dict]:
         if not listing_id or sale_price is None:
             continue
 
+        item_price = float(sale_price)
+        if price_subtotal > 0:
+            shipping_portion = round(delivery_cost * item_price / price_subtotal, 2)
+        elif len(line_items) > 0:
+            shipping_portion = round(delivery_cost / len(line_items), 2)
+        else:
+            shipping_portion = 0.0
+
         rows.append({
-            "order_id":   f"{order_id}_{item.get('lineItemId', '')}",
-            "listing_id": str(listing_id),
-            "order_date": creation_date,
-            "quantity":   quantity,
-            "sale_price": float(sale_price),
+            "order_id":      f"{order_id}_{item.get('lineItemId', '')}",
+            "listing_id":    str(listing_id),
+            "order_date":    creation_date,
+            "quantity":      quantity,
+            "sale_price":    item_price,
+            "shipping_price": shipping_portion if shipping_portion > 0 else None,
+            "title":         item.get("title"),
         })
 
     return rows
@@ -102,12 +118,14 @@ def _upsert(rows: list[dict]) -> None:
             for row in rows:
                 cur.execute(
                     """
-                    INSERT INTO orders_raw (order_id, listing_id, order_date, quantity, sale_price)
-                    VALUES (%(order_id)s, %(listing_id)s, %(order_date)s, %(quantity)s, %(sale_price)s)
+                    INSERT INTO orders_raw (order_id, listing_id, order_date, quantity, sale_price, shipping_price, title)
+                    VALUES (%(order_id)s, %(listing_id)s, %(order_date)s, %(quantity)s, %(sale_price)s, %(shipping_price)s, %(title)s)
                     ON CONFLICT (order_id) DO UPDATE SET
-                        quantity   = EXCLUDED.quantity,
-                        sale_price = EXCLUDED.sale_price,
-                        fetched_at = NOW()
+                        quantity       = EXCLUDED.quantity,
+                        sale_price     = EXCLUDED.sale_price,
+                        shipping_price = EXCLUDED.shipping_price,
+                        title          = EXCLUDED.title,
+                        fetched_at     = NOW()
                     """,
                     row,
                 )

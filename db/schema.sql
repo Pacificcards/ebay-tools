@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS orders_raw (
     order_date      DATE NOT NULL,
     quantity        INTEGER,
     sale_price      NUMERIC(10,2),
+    shipping_price  NUMERIC(10,2),
+    title           TEXT,
     fetched_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
