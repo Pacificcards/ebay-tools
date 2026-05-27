@@ -27,6 +27,7 @@ Create a Google Sheet with two tabs:
 | Description | Luka Doncic 2018-19 Prizm Silver PSA 10 |
 | Category | sports |
 | Max Price ($) | 150 |
+| Min Price ($) | 50 (optional — listings below this are ignored) |
 | Hint URL(s) | https://www.ebay.com/itm/... (any existing listing for this card) |
 | EPID | *(auto-filled by the tool)* |
 | EPID Status | *(auto-filled: resolved / needs_review / not_found)* |

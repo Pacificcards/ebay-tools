@@ -9,7 +9,9 @@ def resolve_epid(row: dict, token: str) -> tuple[str, str]:
     hint_urls = row.get("Hint URL(s)", "").strip()
 
     if hint_urls:
-        for url in [u.strip() for u in hint_urls.splitlines() if u.strip()]:
+        # Support both comma-separated and newline-separated URLs
+        import re
+        for url in [u.strip() for u in re.split(r'[,\n]', hint_urls) if u.strip()]:
             epid = get_epid_from_listing(token, url)
             if epid:
                 return epid, "resolved"

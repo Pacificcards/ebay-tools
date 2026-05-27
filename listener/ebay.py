@@ -63,9 +63,9 @@ def _parse_items(response_json: dict) -> list[dict]:
             "title": item.get("title", ""),
             "price": float(price_val) if price_val else 0.0,
             "url": item.get("itemWebUrl", ""),
-            "seller_username": seller.get("username", ""),
             "seller_feedback_score": seller.get("feedbackScore", ""),
             "seller_feedback_pct": seller.get("feedbackPercentage", ""),
+            "item_creation_date": item.get("itemCreationDate", ""),
         })
     return results
 
