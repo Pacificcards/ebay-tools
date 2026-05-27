@@ -37,8 +37,8 @@ def run():
         except (ValueError, TypeError):
             min_price = 0.0
 
-        epid = row.get("EPID", "").strip()
-        epid_status = row.get("EPID Status", "").strip()
+        epid = str(row.get("EPID", "") or "").strip()
+        epid_status = str(row.get("EPID Status", "") or "").strip()
         row_index = row["_row_index"]
 
         # Resolve EPID on first encounter
