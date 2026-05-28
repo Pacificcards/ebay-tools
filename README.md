@@ -6,11 +6,13 @@ eBay seller automation and analytics for Pacific Cards Co.
 
 | Project | Directory | Status |
 |---|---|---|
-| Campaign scheduler | `scheduler/` | Active |
-| Analytics | `analytics/` | In Progress |
-| P&L | `pl/` | Not Started |
-| Listings listener | `listener/` | Not Started |
-| Listings publisher | `listings-publisher/` | Not Started |
+| Analytics pipeline | `analytics/` | Active — daily cron, 8am UTC |
+| Campaign scheduler | `scheduler/` | Active — pause/resume via cron-job.org |
+| eBay purchase import | `analytics/fetch_ebay_purchases.py` | Active — weekly cron, Mondays |
+| Underpriced card listener | `listener/` | Active — every 15 min via cron-job.org |
+| P&L Google Sheets sync | `pl/` | Active — run manually with `python pl/sync_to_sheets.py` |
+| Dashboard | `dashboard/` | Active — Streamlit |
+| Listings publisher | `listings-publisher/` | Not started |
 
 ## Setup
 
