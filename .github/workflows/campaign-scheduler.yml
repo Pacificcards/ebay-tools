@@ -1,8 +1,8 @@
 name: eBay Campaign Scheduler
 
 # Triggered externally by cron-job.org:
-#   Pause:  Mon–Thu at 12:30am PT (07:30 UTC)  → POST action=pause
-#   Resume: Mon–Wed, Fri at 2:00pm PT (21:00 UTC) → POST action=resume
+#   Pause:  Mon–Thu at 1:30am PT (08:30 UTC)   → POST action=pause
+#   Resume: Mon–Wed, Fri at 1:30pm PT (20:30 UTC) → POST action=resume
 
 on:
   workflow_dispatch:
