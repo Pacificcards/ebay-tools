@@ -1,11 +1,64 @@
-name: Campaign scheduler
+name: eBay Campaign Scheduler
+
+# Triggered externally by cron-job.org:
+#   Pause:  Mon–Thu at 12:30am PT (07:30 UTC)  → POST action=pause
+#   Resume: Mon–Wed, Fri at 2:00pm PT (21:00 UTC) → POST action=resume
 
 on:
   workflow_dispatch:
+    inputs:
+      action:
+        description: "pause or resume"
+        required: true
+        default: "resume"
+        type: choice
+        options:
+          - pause
+          - resume
 
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: echo "not yet implemented"
+
+      - name: Get timestamp
+        id: ts
+        run: echo "value=$(date -u '+%Y-%m-%d %H:%M UTC')" >> $GITHUB_OUTPUT
+
+      - name: Run campaign control
+        id: campaign
+        env:
+          EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
+          EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
+          EBAY_REFRESH_TOKEN: ${{ secrets.EBAY_REFRESH_TOKEN }}
+          EBAY_CAMPAIGN_ID: ${{ secrets.EBAY_CAMPAIGN_ID }}
+        run: |
+          set -o pipefail
+          python3 -m scheduler.campaign_control ${{ github.event.inputs.action }} 2>&1 | tee /tmp/output.txt
+
+      - name: Read output
+        id: output
+        if: always()
+        run: |
+          echo "result<<EOF" >> $GITHUB_OUTPUT
+          cat /tmp/output.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Send email notification
+        if: always()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.GMAIL_ADDRESS }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }}
+          to: ${{ secrets.GMAIL_ADDRESS }}
+          from: eBay Campaign Scheduler
+          subject: "[${{ steps.campaign.outcome == 'success' && 'SUCCESS' || 'FAILURE' }}] Campaigns ${{ github.event.inputs.action }}d — ${{ steps.ts.outputs.value }}"
+          body: |
+            eBay campaign ${{ github.event.inputs.action }} completed.
+
+            ${{ steps.output.outputs.result }}
+
+            Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
