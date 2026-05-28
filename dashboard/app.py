@@ -126,7 +126,7 @@ def add_derived(df: pd.DataFrame) -> pd.DataFrame:
         return df
     df = df.copy()
     df["view_rate"] = df.apply(
-        lambda r: r["views_total"] / r["impressions_total"]
+        lambda r: min(r["views_total"] / r["impressions_total"], 1.0)
         if r["impressions_total"] and r["impressions_total"] > 0 else None, axis=1
     )
     df["impressions_per_order"] = df.apply(
