@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS orders_raw (
     sale_price      NUMERIC(10,2),
     shipping_price  NUMERIC(10,2),
     title           TEXT,
+    group_name      TEXT,
     fetched_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -102,6 +103,7 @@ CREATE TABLE IF NOT EXISTS import_queue (
     notes           TEXT,
     vendor          TEXT,
     payment_method  TEXT,
+    group_name      TEXT,
     created_at      TIMESTAMPTZ DEFAULT NOW(),
     reviewed_at     TIMESTAMPTZ
 );

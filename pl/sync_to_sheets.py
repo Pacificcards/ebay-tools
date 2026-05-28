@@ -1,23 +1,28 @@
 """
 Pulls sales, purchases, and ad fees from Supabase and writes them into a Google Sheet.
+Also processes manually entered expenses from the "New Entries" tab.
 
-Tabs written:
+Tabs:
+  - New Entries  : user input for manual expenses; rows stamped after sync to Supabase
   - Sales        : all orders from orders_raw (with net_payout), editable 'group' column
   - Purchases    : all import_queue items (non-ignored), editable 'group' column
-  - Ad Fees      : NON_SALE_CHARGE transactions (priority ads, etc.) by date
+  - Ad Fees      : all non-SALE transactions by date
   - P&L by Group : formula-driven summary: gross | net | costs | profit per group
+
+Group assignments are persisted to Supabase on each sync so the Sheet is fully regenerable.
 
 Run:
   python pl/sync_to_sheets.py
 
 Required env vars (in .env or environment):
-  DATABASE_URL      — Supabase Postgres connection string
+  SUPABASE_DB_URL   — Supabase Postgres connection string
   SHEETS_DOC_ID     — Google Sheet document ID (from the URL)
   GOOGLE_CREDS_PATH — Path to service account JSON (default: pl/credentials/service_account.json)
 """
 
 import os
 import sys
+from datetime import date
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -32,6 +37,9 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
+
+# New Entries: date | description | amount | vendor | payment_method | group | status
+NEW_ENTRIES_HEADERS = ["date", "description", "amount", "vendor", "payment_method", "group", "status"]
 
 # Sales: order_date | title | gross_sale | net_payout | order_id | group
 SALES_HEADERS     = ["order_date", "title", "gross_sale", "net_payout", "order_id", "group"]
@@ -136,6 +144,176 @@ def fetch_ad_fees() -> list[list]:
         conn.close()
 
 
+# ── Group persistence ─────────────────────────────────────────────────────────
+
+def _read_sale_groups(doc: gspread.Spreadsheet) -> dict[str, str]:
+    """Read current group assignments from the Sales tab."""
+    try:
+        ws = doc.worksheet("Sales")
+    except gspread.WorksheetNotFound:
+        return {}
+    existing = ws.get_all_values()
+    groups: dict[str, str] = {}
+    if len(existing) > 1:
+        for row in existing[1:]:
+            order_id  = row[4] if len(row) > 4 else ""
+            group_val = row[5] if len(row) > 5 else ""
+            if order_id and group_val:
+                groups[order_id] = group_val
+    return groups
+
+
+def _read_purchase_groups(doc: gspread.Spreadsheet) -> dict[str, str]:
+    """Read current group assignments from the Purchases tab."""
+    try:
+        ws = doc.worksheet("Purchases")
+    except gspread.WorksheetNotFound:
+        return {}
+    existing = ws.get_all_values()
+    groups: dict[str, str] = {}
+    if len(existing) > 1:
+        for row in existing[1:]:
+            item_id   = row[4] if len(row) > 4 else ""
+            group_val = row[5] if len(row) > 5 else ""
+            if item_id and group_val:
+                groups[item_id] = group_val
+    return groups
+
+
+def save_sale_groups(groups: dict[str, str]) -> None:
+    """Persist group assignments from the Sales tab back to orders_raw."""
+    if not groups:
+        return
+    conn = get_connection()
+    try:
+        with conn, conn.cursor() as cur:
+            for order_id, group_name in groups.items():
+                cur.execute(
+                    "UPDATE orders_raw SET group_name = %s WHERE order_id = %s",
+                    (group_name, order_id),
+                )
+    finally:
+        conn.close()
+
+
+def save_purchase_groups(groups: dict[str, str]) -> None:
+    """Persist group assignments from the Purchases tab back to import_queue."""
+    if not groups:
+        return
+    conn = get_connection()
+    try:
+        with conn, conn.cursor() as cur:
+            for item_id, group_name in groups.items():
+                cur.execute(
+                    "UPDATE import_queue SET group_name = %s WHERE id = %s",
+                    (group_name, int(item_id)),
+                )
+    finally:
+        conn.close()
+
+
+# ── Manual entry processing ───────────────────────────────────────────────────
+
+def _ensure_new_entries_tab(doc: gspread.Spreadsheet) -> None:
+    """Create the New Entries input tab with headers if it doesn't exist yet."""
+    try:
+        doc.worksheet("New Entries")
+    except gspread.WorksheetNotFound:
+        ws = doc.add_worksheet(title="New Entries", rows=500, cols=10, index=0)
+        ws.update([NEW_ENTRIES_HEADERS], value_input_option="USER_ENTERED")
+        _reset_header_format(ws)
+
+
+def process_new_entries(doc: gspread.Spreadsheet) -> int:
+    """
+    Read blank-status rows from the New Entries tab, insert them into import_queue,
+    and stamp each successfully synced row with the sync date.
+    Returns the count of rows synced.
+    """
+    try:
+        ws = doc.worksheet("New Entries")
+    except gspread.WorksheetNotFound:
+        return 0
+
+    all_rows = ws.get_all_values()
+    if len(all_rows) <= 1:
+        return 0
+
+    today_str = date.today().isoformat()
+    entries: list[dict] = []
+    sheet_row_numbers: list[int] = []  # 1-indexed row numbers for cell stamping
+
+    for i, row in enumerate(all_rows[1:], start=2):
+        # Pad short rows to full header width
+        row = list(row) + [""] * (len(NEW_ENTRIES_HEADERS) - len(row))
+
+        status = row[6].strip()
+        if status:
+            continue  # already synced
+
+        date_val    = row[0].strip()
+        description = row[1].strip()
+        if not date_val or not description:
+            continue  # skip blank rows
+
+        entries.append({
+            "purchase_date":  date_val,
+            "description":    description,
+            "total_cost":     row[2].strip() or None,
+            "vendor":         row[3].strip() or None,
+            "payment_method": row[4].strip() or None,
+            "group_name":     row[5].strip() or None,
+        })
+        sheet_row_numbers.append(i)
+
+    if not entries:
+        return 0
+
+    synced_indices = _insert_manual_entries(entries)
+
+    status_col = len(NEW_ENTRIES_HEADERS)  # last column, 1-indexed
+    for idx in synced_indices:
+        ws.update_cell(sheet_row_numbers[idx], status_col, f"✓ Synced {today_str}")
+
+    return len(synced_indices)
+
+
+def _insert_manual_entries(entries: list[dict]) -> list[int]:
+    """
+    Insert manual entries into import_queue.
+    Returns list of successfully inserted indices (into the entries list).
+    """
+    conn = get_connection()
+    synced: list[int] = []
+    try:
+        with conn.cursor() as cur:
+            for i, entry in enumerate(entries):
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO import_queue (
+                            source, status, purchase_date, description,
+                            total_cost, vendor, payment_method, group_name
+                        ) VALUES ('manual', 'pending', %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            entry["purchase_date"],
+                            entry["description"],
+                            entry["total_cost"],
+                            entry["vendor"],
+                            entry["payment_method"],
+                            entry["group_name"],
+                        ),
+                    )
+                    synced.append(i)
+                except Exception as e:
+                    print(f"  [new_entries] failed to insert '{entry['description']}': {e}")
+        conn.commit()
+    finally:
+        conn.close()
+    return synced
+
+
 # ── Sheet writing ─────────────────────────────────────────────────────────────
 
 def _open_sheet(doc_id: str, creds_path: str) -> gspread.Spreadsheet:
@@ -159,7 +337,7 @@ def write_sales_tab(doc: gspread.Spreadsheet, rows: list[list]) -> None:
     ws = _get_or_create_tab(doc, "Sales", index=0)
     existing = ws.get_all_values()
 
-    # Preserve group values (column F, index 5); order_id is now column E (index 4)
+    # Preserve group values (column F, index 5); order_id is column E (index 4)
     group_by_order_id: dict[str, str] = {}
     if len(existing) > 1:
         for row in existing[1:]:
@@ -210,16 +388,6 @@ def write_pl_tab(doc: gspread.Spreadsheet, sales_row_count: int, purchases_row_c
     sales_end     = max(sales_row_count + 1, 2)
     purchases_end = max(purchases_row_count + 1, 2)
 
-    # Sales columns:     A=order_date B=title C=sale_price D=net_payout E=order_id F=group
-    # Purchases columns: A=date       B=desc  C=total_cost D=source     E=id       F=group
-    #
-    # P&L columns:
-    #   A: group name   — UNIQUE across Sales!F and Purchases!F
-    #   B: gross_revenue — SUMIF on Sales!F → Sales!C (sale_price)
-    #   C: net_revenue   — SUMIF on Sales!F → Sales!D (net_payout)
-    #   D: costs         — SUMIF on Purchases!F → Purchases!C (total_cost)
-    #   E: profit        — net_revenue - costs (C - D)
-
     headers = [["group", "gross_revenue", "net_revenue", "costs", "profit"]]
     data = [
         [
@@ -239,6 +407,25 @@ def write_pl_tab(doc: gspread.Spreadsheet, sales_row_count: int, purchases_row_c
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 
 def sync(doc_id: str, creds_path: str) -> None:
+    print(f"Opening Google Sheet {doc_id}...")
+    doc = _open_sheet(doc_id, creds_path)
+
+    # Ensure the New Entries input tab exists before anything else
+    _ensure_new_entries_tab(doc)
+
+    # Write any pending manual entries to Supabase and stamp them
+    print("Processing new manual entries...")
+    synced_count = process_new_entries(doc)
+    print(f"  {synced_count} new entr{'y' if synced_count == 1 else 'ies'} synced to Supabase")
+
+    # Persist current group assignments from Sheet back to Supabase
+    print("Saving group assignments to Supabase...")
+    sale_groups     = _read_sale_groups(doc)
+    purchase_groups = _read_purchase_groups(doc)
+    save_sale_groups(sale_groups)
+    save_purchase_groups(purchase_groups)
+    print(f"  {len(sale_groups)} sale groups, {len(purchase_groups)} purchase groups saved")
+
     print("Fetching sales from Supabase...")
     sales = fetch_sales()
     print(f"  {len(sales)} sales found")
@@ -250,9 +437,6 @@ def sync(doc_id: str, creds_path: str) -> None:
     print("Fetching ad fees from Supabase...")
     ad_fees = fetch_ad_fees()
     print(f"  {len(ad_fees)} ad fee records found")
-
-    print(f"Opening Google Sheet {doc_id}...")
-    doc = _open_sheet(doc_id, creds_path)
 
     print("Writing Sales tab...")
     write_sales_tab(doc, sales)

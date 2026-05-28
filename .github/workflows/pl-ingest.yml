@@ -1,11 +1,29 @@
 name: P&L ingest
 
 on:
+  workflow_run:
+    workflows: ["Analytics daily ingest"]
+    types: [completed]
   workflow_dispatch:
 
 jobs:
   run:
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v4
-      - run: echo "not yet implemented"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+
+      - name: Write Google credentials
+        run: |
+          mkdir -p pl/credentials
+          echo '${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}' > pl/credentials/service_account.json
+
+      - name: Sync to Google Sheets
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SHEETS_DOC_ID: ${{ secrets.PL_SHEETS_DOC_ID }}
+        run: python pl/sync_to_sheets.py
