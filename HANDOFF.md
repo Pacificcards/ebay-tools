@@ -12,15 +12,17 @@ Supports both **sports cards and Pokémon cards**. Uses EPID (eBay Product ID) f
 ### Setup checklist
 
 - [x] **Supabase:** `listener_seen_items` table created
-- [x] **Google Sheets:** Sheet created, ID: `1T_ydHG5eWwNIiS79Fni04fy-U8fd_4d_7tbUahrMWec`, named `ebay_listener`
+- [x] **Google Sheets:** Sheet created (ID stored in `GOOGLE_SHEET_ID` secret), named `ebay_listener`
   - `Watchlist` tab: `Description | Category | Max Price ($) | Hint URL(s) | EPID | EPID Status | Active (Y/N)`
   - `Observed Listings` tab: `Timestamp | Watchlist Description | Title | Price | % Below Target | Item ID | URL`
-- [x] **Google Cloud:** Reusing existing service account `ebay-tools-sheets@pcc-accounting.iam.gserviceaccount.com` (project: `pcc-accounting`). Credentials at `pl/credentials/service_account.json`. Sheet shared with service account.
+- [x] **Google Cloud:** Reusing existing Google Cloud service account. Credentials at `pl/credentials/service_account.json` (gitignored). Sheet shared with service account.
 - [x] **Discord:** Webhook created and set as GitHub secret
 - [x] **GitHub Secrets:** All 3 added (`GOOGLE_SHEETS_CREDENTIALS`, `GOOGLE_SHEET_ID`, `DISCORD_WEBHOOK_URL`)
-- [ ] **EPID investigation (next step — pick up here):** See notes below. Need to check eBay developer console for correct Catalog API OAuth scope.
-- [ ] **Local test:** Run `python -m listener.main` end-to-end once EPID strategy is resolved
-- [ ] **Push + manual trigger:** `gh workflow run listener.yml --repo Pacificcards/ebay-tools`
+- [x] **EPID investigation:** Resolved — Catalog API requires user OAuth (not available via client credentials). Coverage also inconsistent (graded cards sometimes have EPIDs, raw cards rarely do). Decision: keyword search is primary method; EPID used as bonus when hint URL returns one.
+- [x] **Local test:** Passed end-to-end — finds listings, writes to sheet, fires Discord alerts
+- [x] **Code pushed:** All listener code on `main` (latest commit: `c98e3c2`)
+- [ ] **Manual workflow trigger (next step):** `gh workflow run listener.yml --repo Pacificcards/ebay-tools` — verify it runs clean in GitHub Actions before relying on cron
+- [ ] **Add real watchlist entries:** Replace the Psyduck test row with actual cards to monitor
 
 ### EPID investigation notes (2026-05-27)
 - `get_item_by_legacy_id` on listing `377213102243` (Psyduck 226/217 Ascended Heroes) → `epid: None` — card not cataloged by eBay
@@ -28,8 +30,9 @@ Supports both **sports cards and Pokémon cards**. Uses EPID (eBay Product ID) f
 - Catalog API PDFs reviewed — docs don't specify the required OAuth scope
 - Suspected required scope: `https://api.ebay.com/oauth/api_scope/commerce.catalog.readonly` (unconfirmed)
 - Two problems to resolve before EPID via Catalog API is viable:
-  1. **Scope fix:** Check eBay developer console → My Account → Application Access Keys → production app → OAuth scopes. Look for catalog scope and enable it, or download the auth/scope doc page as PDF and drop in `/Users/eastcoastlimited/ClaudeCode/ebay_dev_docs/`
-  2. **Coverage check:** Even with correct scope, newer Pokémon sets may not be cataloged. Should test on a well-known card (e.g. vintage Charizard or PSA graded sports card) to gauge real coverage before committing to EPID approach
+  1. **Scope fix:** Check eBay developer console → My Account → Application Access Keys → production app → OAuth scopes. Look for catalog scope and enable it, or download the auth/scope doc page as PDF and drop in `the ebay_dev_docs directory`
+  2. **Coverage check:** Even with correct scope, newer Pokémon sets may not be cataloged. Should test on a well-known card (e.g. vintage Charizard or PSA graded sports card) to gauge real coverage before committing to EPID approach.
+
 - Keyword search fallback already built in `listener/ebay.py` (`search_listings_by_keyword`) — ready to use if EPID proves unreliable
 
 ### Key files
@@ -51,8 +54,7 @@ Supports both **sports cards and Pokémon cards**. Uses EPID (eBay Product ID) f
 
 
 **Project:** `ebay-tools` monorepo for Pacific Cards Co.
-**GitHub:** https://github.com/Pacificcards/ebay-tools (private)
-**Local path:** `/Users/eastcoastlimited/ClaudeCode/ebay-tools`
+**GitHub:** https://github.com/Pacificcards/ebay-tools
 
 ---
 
@@ -98,7 +100,6 @@ Note: `category` column was intentionally dropped — Trading API doesn't return
 ### 1. Test sync_listings + filtered analytics run
 The code is written but hasn't been run yet against the live API. Trigger a manual test:
 ```bash
-cd /Users/eastcoastlimited/ClaudeCode/ebay-tools
 gh workflow run analytics-ingest.yml --repo Pacificcards/ebay-tools
 ```
 Then check Supabase `listing_metadata` table to confirm listings populated with correct status.
@@ -143,5 +144,5 @@ This will overwrite existing rows via `ON CONFLICT` — safe to re-run.
 ## Important constraints
 
 - **Do not fetch eBay developer docs from the web.** Point user to the URL; they download and share the PDF manually.
-- Refresh token was regenerated this session. It's valid for 18 months (expires ~Nov 2027). File to re-run if needed: `/Users/eastcoastlimited/ClaudeCode/ebay_campaign_scheduler/get_refresh_token.py`
-- The old repo at `/Users/eastcoastlimited/ClaudeCode/ebay_campaign_scheduler` is legacy — do not make changes there unless explicitly asked.
+- Refresh token was regenerated this session. It's valid for 18 months (expires ~Nov 2027). Re-run `get_refresh_token.py` in the legacy campaign scheduler repo if needed.
+- The legacy `ebay_campaign_scheduler` repo is superseded by `scheduler/` in this monorepo — do not make changes there unless explicitly asked.
