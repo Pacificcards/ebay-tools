@@ -29,9 +29,11 @@ def send_alert(description: str, listing: dict, max_price: float, pct_below: flo
     listed_line = f"Listed: {_relative_time(listing['item_creation_date'])}"
 
     if market_price:
-        price_line = f"${listing['price']:.2f} — {pct_below}% below market (${market_price:.2f})"
+        direction = "below" if pct_below >= 0 else "above"
+        price_line = f"${listing['price']:.2f} — {abs(pct_below)}% {direction} market (${market_price:.2f})"
     else:
-        price_line = f"${listing['price']:.2f} — {pct_below}% below your ${max_price:.2f} target"
+        direction = "below" if pct_below >= 0 else "above"
+        price_line = f"${listing['price']:.2f} — {abs(pct_below)}% {direction} your ${max_price:.2f} target"
 
     message = (
         f"**{description}**\n"
