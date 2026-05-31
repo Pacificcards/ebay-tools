@@ -14,7 +14,7 @@ def _relative_time(iso_date_str: str) -> str:
     return f"{hours}h {mins}m ago" if mins else f"{hours}h ago"
 
 
-def send_alert(description: str, listing: dict, max_price: float, pct_below: float):
+def send_alert(description: str, listing: dict, max_price: float, pct_below: float, market_price: float | None = None):
     webhook_url = os.environ["DISCORD_WEBHOOK_URL"]
 
     feedback_score = listing["seller_feedback_score"]
@@ -28,9 +28,14 @@ def send_alert(description: str, listing: dict, max_price: float, pct_below: flo
 
     listed_line = f"Listed: {_relative_time(listing['item_creation_date'])}"
 
+    if market_price:
+        price_line = f"${listing['price']:.2f} — {pct_below}% below market (${market_price:.2f})"
+    else:
+        price_line = f"${listing['price']:.2f} — {pct_below}% below your ${max_price:.2f} target"
+
     message = (
         f"**{description}**\n"
-        f"${listing['price']:.2f} — {pct_below}% below your ${max_price:.2f} target\n"
+        f"{price_line}\n"
         f"{listed_line} · {seller_line}\n"
         f"{listing['url']}"
     )

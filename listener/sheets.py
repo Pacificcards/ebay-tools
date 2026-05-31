@@ -12,9 +12,9 @@ WATCHLIST_TAB = "Watchlist"
 OBSERVED_TAB = "Observed Listings"
 
 # 1-based column positions in the Watchlist tab
-# A=Description, B=Category, C=Max Price, D=Min Price, E=Hint URL(s), F=EPID, G=EPID Status, H=Active
-COL_EPID = 6
-COL_EPID_STATUS = 7
+# A=Active, B=Description, C=Category, D=Market Price, E=Max Price, F=Min Price, G=Hint URL(s), H=EPID, I=EPID Status
+COL_EPID = 8
+COL_EPID_STATUS = 9
 
 _spreadsheet_cache: dict = {}
 

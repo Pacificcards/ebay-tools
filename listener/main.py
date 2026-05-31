@@ -37,6 +37,11 @@ def run():
         except (ValueError, TypeError):
             min_price = 0.0
 
+        try:
+            market_price = float(row.get("Market Price", "") or "") if row.get("Market Price", "") else None
+        except (ValueError, TypeError):
+            market_price = None
+
         epid = str(row.get("EPID", "") or "").strip()
         epid_status = str(row.get("EPID Status", "") or "").strip()
         row_index = row["_row_index"]
@@ -70,7 +75,8 @@ def run():
                 )
             conn.commit()
 
-            pct_below = round((max_price - listing["price"]) / max_price * 100, 1)
+            ref_price = market_price if market_price else max_price
+            pct_below = round((ref_price - listing["price"]) / ref_price * 100, 1)
             timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
             append_observed_listing(sheet_id, {
@@ -82,7 +88,7 @@ def run():
                 "item_id": item_id,
                 "url": listing["url"],
             })
-            send_alert(description, listing, max_price, pct_below)
+            send_alert(description, listing, max_price, pct_below, market_price=market_price)
             print(f"  ✓ New: {listing['title']} @ ${listing['price']:.2f}")
 
     conn.close()
