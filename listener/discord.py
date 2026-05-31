@@ -30,7 +30,8 @@ def send_alert(description: str, listing: dict, max_price: float, pct_below: flo
 
     if market_price:
         direction = "below" if pct_below >= 0 else "above"
-        price_line = f"${listing['price']:.2f} — {abs(pct_below)}% {direction} market (${market_price:.2f})"
+        emoji = "🟢" if pct_below >= 0 else "🔴"
+        price_line = f"${listing['price']:.2f} — {emoji} {abs(pct_below)}% {direction} market (${market_price:.2f})"
     else:
         direction = "below" if pct_below >= 0 else "above"
         price_line = f"${listing['price']:.2f} — {abs(pct_below)}% {direction} your ${max_price:.2f} target"
