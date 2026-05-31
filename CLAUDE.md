@@ -41,7 +41,8 @@ Scans eBay every 15 minutes for underpriced cards on a watchlist. Fires Discord 
 #### Key listener behavior
 - Alert trigger is based on **Max Price**, not Market Price
 - % calculation uses Market Price when set, falls back to Max Price
-- Discord alert: `X% below market ($Y)` if Market Price set; `X% below your $Y target` if blank
+- Discord alert: `🟢/🔴 X% below/above market ($Y)` if Market Price set; `X% below/above your $Y target` if blank
+- Emoji inline with the % figure: 🟢 = below market, 🔴 = above market; only shown when Market Price is set
 - EPID lookup: uses Hint URL → Browse API → Catalog API fallback → keyword search
 - `COL_EPID = 8`, `COL_EPID_STATUS = 9` (1-based, in `listener/sheets.py`)
 
@@ -79,7 +80,7 @@ Scans eBay every 15 minutes for underpriced cards on a watchlist. Fires Discord 
 ## Open TODOs
 
 ### Listener
-- No open items — fully operational as of 2026-05-30
+- No open items — fully operational as of 2026-05-31
 
 ### P&L
 1. Handle refunds — 14 refunded orders ($123.27) show as positive revenue in Sales tab
@@ -93,6 +94,10 @@ Scans eBay every 15 minutes for underpriced cards on a watchlist. Fires Discord 
 4. Tag-based filtering — `listing_tags` table exists in schema but is never read
 
 ## Session Log
+
+### 2026-05-31
+- Discord alert: added 🟢/🔴 emoji inline with the % figure (e.g. `🟢 18% below market`) — only when Market Price is set
+- Confirmed emoji commit was not pushed to GitHub (was 1 commit ahead of origin); pushed manually after a real alert fired without emojis
 
 ### 2026-05-30
 - Listener Watchlist columns restructured: Active moved to col A, Market Price inserted after Category (col D)

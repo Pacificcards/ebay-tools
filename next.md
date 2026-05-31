@@ -1,7 +1,7 @@
 # Next Steps
 
 ## Listener
-1. **Test Market Price alert in production** — confirm a new Discord alert fires with the "below market" text once a matching listing is found. Nothing to build; just observe the next real alert.
+1. **Confirm emoji alert in production** — emoji commit has now been pushed; observe the next real Discord alert to verify 🟢/🔴 renders correctly inline with the % figure.
 
 ## P&L
 2. **Handle refunds** — 14 refunded orders ($123.27) currently show as positive revenue in the Sales tab. All have order_ids that link to REFUND rows in `order_fees`. Fix: offset or exclude these in `sync_to_sheets.py`.
