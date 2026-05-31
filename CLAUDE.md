@@ -78,6 +78,9 @@ Scans eBay every 15 minutes for underpriced cards on a watchlist. Fires Discord 
 
 ## Open TODOs
 
+### Listener
+- No open items — fully operational as of 2026-05-30
+
 ### P&L
 1. Handle refunds — 14 refunded orders ($123.27) show as positive revenue in Sales tab
 2. Categorize Ad Fees tab — unlabeled mix of postage, ad fees, store subscription, refunds, credits
@@ -88,3 +91,13 @@ Scans eBay every 15 minutes for underpriced cards on a watchlist. Fires Discord 
 2. Surface conversion rate in Deep Dive (`listing_metrics_computed` has it, dashboard never reads it)
 3. Mission Control trend view — currently shows only yesterday; add 7–30 day aggregate chart
 4. Tag-based filtering — `listing_tags` table exists in schema but is never read
+
+## Session Log
+
+### 2026-05-30
+- Listener Watchlist columns restructured: Active moved to col A, Market Price inserted after Category (col D)
+- Discord alert updated: shows `X% below market ($Y)` when Market Price set; falls back to max price text when blank
+- % calculation now uses Market Price when available, Max Price otherwise; alert trigger still based on Max Price
+- Cron schedule shifted from :00/:15/:30/:45 to :03/:18/:33/:48 (via cron-job.org API)
+- CLAUDE.md created and committed
+- `save-progress` skill created at `~/.claude/skills/save-progress/SKILL.md`
