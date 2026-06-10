@@ -6,6 +6,7 @@ from listener.ebay import get_app_token, search_listings_by_epid, search_listing
 from listener.epid_resolver import resolve_epid
 from listener.sheets import load_watchlist, update_epid_in_sheet, append_observed_listing
 from listener.discord import send_alert, send_stale_alert
+from listener.discord_ingest import run_ingest
 
 
 def _should_run_stale_check() -> bool:
@@ -123,6 +124,12 @@ def run():
     if _should_run_stale_check():
         print("Running stale market price check...")
         _check_stale(watchlist)
+
+    bot_token = os.environ.get("DISCORD_BOT_TOKEN", "")
+    channel_id = os.environ.get("DISCORD_WATCHLIST_CHANNEL_ID", "")
+    if bot_token and channel_id:
+        print("Checking Discord for new watchlist entries...")
+        run_ingest(sheet_id, bot_token, channel_id, conn)
 
     conn.close()
 

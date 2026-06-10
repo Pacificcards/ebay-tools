@@ -43,6 +43,24 @@ def update_epid_in_sheet(sheet_id: str, row_index: int, epid: str, status: str):
     ws.update_cell(row_index, COL_EPID_STATUS, status)
 
 
+def append_watchlist_row(sheet_id: str, entry: dict) -> None:
+    """Append a new row to the Watchlist tab. Active defaults to Y."""
+    ws = _get_spreadsheet(sheet_id).worksheet(WATCHLIST_TAB)
+    # Column order: Active | Description | Category | Market Price | Max Price | Min Price | Hint URL | EPID | EPID Status | Last Hit
+    ws.append_row([
+        "Y",
+        entry.get("description", ""),
+        entry.get("category", ""),
+        entry.get("market_price", ""),
+        entry.get("max_price", ""),
+        entry.get("min_price", ""),
+        "",  # Hint URL
+        "",  # EPID
+        "",  # EPID Status
+        "",  # Last Hit
+    ], value_input_option="USER_ENTERED")
+
+
 def append_observed_listing(sheet_id: str, data: dict):
     ws = _get_spreadsheet(sheet_id).worksheet(OBSERVED_TAB)
     ws.append_row([
