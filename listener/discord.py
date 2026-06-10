@@ -48,3 +48,14 @@ def send_alert(description: str, listing: dict, max_price: float, pct_below: flo
         f"{listing['url']}"
     )
     requests.post(webhook_url, json={"content": message})
+
+
+def send_stale_alert(stale_items: list[str]) -> None:
+    webhook_url = os.environ["DISCORD_WEBHOOK_URL"]
+    lines = "\n".join(f"• {item}" for item in stale_items)
+    message = (
+        f"**⚠️ Stale price targets — no new listings in 3+ days**\n"
+        f"{lines}\n\n"
+        f"Review market price or adjust your trigger price for each."
+    )
+    requests.post(webhook_url, json={"content": message})

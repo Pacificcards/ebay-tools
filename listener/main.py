@@ -1,11 +1,40 @@
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from shared.db import get_connection
 from listener.ebay import get_app_token, search_listings_by_epid, search_listings_by_keyword
 from listener.epid_resolver import resolve_epid
 from listener.sheets import load_watchlist, update_epid_in_sheet, append_observed_listing
-from listener.discord import send_alert
+from listener.discord import send_alert, send_stale_alert
+
+
+def _should_run_stale_check() -> bool:
+    now = datetime.now(timezone.utc)
+    return now.hour == 16 and now.minute < 15
+
+
+def _check_stale(watchlist: list[dict]) -> None:
+    stale_threshold = datetime.now(timezone.utc).date() - timedelta(days=3)
+    stale = []
+    for row in watchlist:
+        if row.get("Active (Y/N)", "Y").strip().upper() != "Y":
+            continue
+        description = row.get("Description", "").strip()
+        if not description:
+            continue
+        last_hit = str(row.get("Last Hit", "") or "").strip()
+        if not last_hit:
+            stale.append(description)
+            continue
+        try:
+            last_hit_date = datetime.strptime(last_hit, "%Y-%m-%d").date()
+            if last_hit_date < stale_threshold:
+                stale.append(description)
+        except ValueError:
+            stale.append(description)
+    if stale:
+        send_stale_alert(stale)
+        print(f"Stale alert sent for {len(stale)} card(s)")
 
 
 def run():
@@ -77,7 +106,7 @@ def run():
 
             ref_price = market_price if market_price else max_price
             pct_below = round((ref_price - listing["price"]) / ref_price * 100, 1)
-            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
             append_observed_listing(sheet_id, {
                 "timestamp": timestamp,
@@ -90,6 +119,10 @@ def run():
             })
             send_alert(description, listing, max_price, pct_below, market_price=market_price)
             print(f"  ✓ New: {listing['title']} @ ${listing['price']:.2f}")
+
+    if _should_run_stale_check():
+        print("Running stale market price check...")
+        _check_stale(watchlist)
 
     conn.close()
 

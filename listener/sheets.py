@@ -53,4 +53,4 @@ def append_observed_listing(sheet_id: str, data: dict):
         f"{data['pct_below']}%",
         data["item_id"],
         data["url"],
-    ])
+    ], value_input_option="USER_ENTERED")
