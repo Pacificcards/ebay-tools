@@ -22,7 +22,7 @@ Required env vars (in .env or environment):
 
 import os
 import sys
-from datetime import date
+from datetime import date, datetime
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -114,7 +114,7 @@ def fetch_purchases() -> list[list]:
                     CAST(total_cost AS text),
                     source,
                     id::text,
-                    ''
+                    COALESCE(group_name, '')
                 FROM import_queue
                 WHERE status != 'ignored'
                 ORDER BY purchase_date DESC
@@ -214,6 +214,19 @@ def save_purchase_groups(groups: dict[str, str]) -> None:
 
 # ── Manual entry processing ───────────────────────────────────────────────────
 
+def _normalize_date(val: str) -> str:
+    """Convert common date formats to ISO (YYYY-MM-DD). Raises ValueError if unrecognised."""
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%m/%d"):
+        try:
+            d = datetime.strptime(val, fmt)
+            if fmt == "%m/%d":
+                d = d.replace(year=date.today().year)
+            return d.strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    raise ValueError(f"Unrecognised date format: '{val}'")
+
+
 def _ensure_new_entries_tab(doc: gspread.Spreadsheet) -> None:
     """Create the New Entries input tab with headers if it doesn't exist yet."""
     try:
@@ -251,10 +264,16 @@ def process_new_entries(doc: gspread.Spreadsheet) -> int:
         if status:
             continue  # already synced
 
-        date_val    = row[0].strip()
+        raw_date    = row[0].strip()
         description = row[1].strip()
-        if not date_val or not description:
+        if not raw_date or not description:
             continue  # skip blank rows
+
+        try:
+            date_val = _normalize_date(raw_date)
+        except ValueError as e:
+            print(f"  [new_entries] skipping '{description}': {e}")
+            continue
 
         entries.append({
             "purchase_date":  date_val,

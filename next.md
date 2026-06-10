@@ -7,6 +7,7 @@
 2. **Handle refunds** — 14 refunded orders ($123.27) currently show as positive revenue in the Sales tab. All have order_ids that link to REFUND rows in `order_fees`. Fix: offset or exclude these in `sync_to_sheets.py`.
 3. **Categorize Ad Fees tab** — 904 rows are an unlabeled mix of postage, ad/listing fees, store subscription, refunds, and credits. Add a `category` column with auto-classification logic. (suggested)
 4. **Surface postage in P&L by Group** — $1,306 in SHIPPING_LABEL spend is captured in `order_fees` but never flows into the P&L by Group costs column. (suggested)
+5. **Manual entry UI** — the New Entries Google Sheet tab works but is clunky. Build a dedicated local UI (Flask, Streamlit tab, or other — TBD) that submits directly to Supabase and triggers a sheet sync. Decision between approaches still open.
 
 ## Analytics Dashboard
 5. **Add revenue to Mission Control** — `orders_raw` has `sale_price` but it's never surfaced. Add a revenue column to the table and a trend line to Listing Deep Dive. (suggested)
