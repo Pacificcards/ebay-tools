@@ -10,7 +10,7 @@ def _listed_time_pt(iso_date_str: str) -> str:
     if not iso_date_str:
         return "unknown"
     dt = datetime.fromisoformat(iso_date_str.replace("Z", "+00:00")).astimezone(_PT)
-    return dt.strftime("%m/%d %-I:%M %p PT")
+    return dt.strftime("%-I:%M %p")
 
 
 def send_alert(description: str, listing: dict, max_price: float, pct_below: float, market_price: float | None = None):
