@@ -36,15 +36,36 @@ Scans eBay every 15 minutes for underpriced cards on a watchlist. Fires Discord 
 - Results logged to Google Sheet (Watchlist + Observed Listings tabs)
 
 #### Watchlist tab columns (in order)
-`Active (Y/N)` | `Description` | `Category` | `Market Price` | `Max Price ($)` | `Min Price ($)` | `Hint URL(s)` | `EPID` | `EPID Status`
+`Active (Y/N)` | `Description` | `Category` | `Market Price` | `Max Price ($)` | `Min Price ($)` | `Hint URL(s)` | `EPID` | `EPID Status` | `Last Hit` (col J — MAXIFS formula reading Observed Listings tab)
 
 #### Key listener behavior
 - Alert trigger is based on **Max Price**, not Market Price
 - % calculation uses Market Price when set, falls back to Max Price
-- Discord alert: `🟢/🔴 X% below/above market ($Y)` if Market Price set; `X% below/above your $Y target` if blank
-- Emoji inline with the % figure: 🟢 = below market, 🔴 = above market; only shown when Market Price is set
+- Discord alert: 3-tier emoji 🟢 >5% below / 🟡 within ±5% / 🔴 >5% above market; only when Market Price is set
+- Listing time shown as time-only in PT (e.g. `Listed: 2:32 PM`)
+- Sellers with 0 feedback score or 0% positive rating are silently skipped — no sheet write, no alert
+- Stale alert: daily ~8am PST (16:03 UTC), consolidated Discord message for active rows with no new listings in 3+ days
+- Discord ingestion: post natural language in `#watchlist-add` → Claude Haiku parses → new Watchlist row + bot reply
 - EPID lookup: uses Hint URL → Browse API → Catalog API fallback → keyword search
 - `COL_EPID = 8`, `COL_EPID_STATUS = 9` (1-based, in `listener/sheets.py`)
+- Discord bot requires Message Content Intent enabled in Discord developer portal
+
+### 4. Campaign Scheduler (`scheduler/`)
+Pauses/resumes eBay Promoted Listings campaigns on a schedule. Triggered by cron-job.org → `workflow_dispatch` on `campaign-scheduler.yml`.
+
+- Campaigns defined in `scheduler/campaigns.json` (id + name — edit here to add/remove/rename)
+- Schedule: Pause Mon–Thu 1:30am PT (08:30 UTC), Resume Mon–Wed+Fri 1:30pm PT (20:30 UTC)
+- Email notification sent on every run (success or failure) via Gmail secrets
+- `EBAY_CAMPAIGN_ID` secret is no longer used — campaigns.json is the source of truth
+
+#### Current campaigns (as of 2026-06-15)
+| Name | ID |
+|------|----|
+| Pokemon Packs | 163073689018 |
+| Football Packs | 161285779018 |
+| 15 Pokemon Packs | 159727416018 |
+| JB Topps Now | 163743927018 |
+| Sealed Boxes | 163206658018 |
 
 ## Key Commands
 
@@ -69,7 +90,7 @@ Scans eBay every 15 minutes for underpriced cards on a watchlist. Fires Discord 
 - `pl/credentials/` is gitignored — never commit
 
 ## GitHub Secrets (org: Pacificcards)
-`EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_REFRESH_TOKEN`, `SUPABASE_DB_URL`, `GOOGLE_SHEETS_CREDENTIALS`, `LISTENER_SHEET_ID`, `PL_SHEETS_DOC_ID`, `DISCORD_WEBHOOK_URL`
+`EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_REFRESH_TOKEN`, `SUPABASE_DB_URL`, `GOOGLE_SHEETS_CREDENTIALS`, `LISTENER_SHEET_ID`, `PL_SHEETS_DOC_ID`, `DISCORD_WEBHOOK_URL`, `DISCORD_BOT_TOKEN`, `DISCORD_WATCHLIST_CHANNEL_ID`, `ANTHROPIC_API_KEY`, `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`
 
 ## Constraints
 - Do NOT fetch eBay developer docs from the web — user downloads PDFs and places in `/Users/eastcoastlimited/ClaudeCode/ebay_dev_docs/`
@@ -80,12 +101,16 @@ Scans eBay every 15 minutes for underpriced cards on a watchlist. Fires Discord 
 ## Open TODOs
 
 ### Listener
-- No open items — fully operational as of 2026-05-31
+- No open items — fully operational as of 2026-06-15
+
+### Campaign Scheduler
+- No open items — campaigns.json migration complete and tested 2026-06-15
 
 ### P&L
 1. Handle refunds — 14 refunded orders ($123.27) show as positive revenue in Sales tab
 2. Categorize Ad Fees tab — unlabeled mix of postage, ad fees, store subscription, refunds, credits
 3. Surface postage in P&L — $1,306 in SHIPPING_LABEL spend not flowing into P&L by Group costs
+4. Manual entry UI — New Entries Google Sheet tab is functional but clunky; approach (Flask/Streamlit/other) TBD
 
 ### Analytics Dashboard
 1. Add revenue column to Mission Control + revenue trend to Deep Dive
@@ -95,14 +120,18 @@ Scans eBay every 15 minutes for underpriced cards on a watchlist. Fires Discord 
 
 ## Session Log
 
-### 2026-05-31
-- Discord alert: added 🟢/🔴 emoji inline with the % figure (e.g. `🟢 18% below market`) — only when Market Price is set
-- Confirmed emoji commit was not pushed to GitHub (was 1 commit ahead of origin); pushed manually after a real alert fired without emojis
+### 2026-06-15
+- Listener: fixed stale alert date parsing (gspread returns dates in locale format, not YYYY-MM-DD — now handles multiple formats + serial numbers)
+- Listener: replaced relative "X min ago" timestamp with listing posted time in PT (time-only, e.g. `2:32 PM`)
+- Listener: added seller filter — 0 feedback score or 0% positive rating silently skipped
+- Campaign scheduler: discovered active code lives in `scheduler/` within this repo (not the legacy `ebay_campaign_scheduler` repo)
+- Campaign scheduler: moved campaign IDs from `EBAY_CAMPAIGN_ID` secret to `scheduler/campaigns.json` with human-readable names; tested pause — all 5 campaigns SUCCESS
 
-### 2026-05-30
-- Listener Watchlist columns restructured: Active moved to col A, Market Price inserted after Category (col D)
-- Discord alert updated: shows `X% below market ($Y)` when Market Price set; falls back to max price text when blank
-- % calculation now uses Market Price when available, Max Price otherwise; alert trigger still based on Max Price
-- Cron schedule shifted from :00/:15/:30/:45 to :03/:18/:33/:48 (via cron-job.org API)
-- CLAUDE.md created and committed
-- `save-progress` skill created at `~/.claude/skills/save-progress/SKILL.md`
+### 2026-06-10
+- Listener: stale market price alert shipped (daily 8am PST, reads Last Hit col J from Watchlist)
+- Listener: Discord watchlist ingestion shipped (`#watchlist-add` → Claude Haiku → Watchlist row + bot reply)
+- Listener: emoji updated to 3-tier (🟢/🟡/🔴)
+- P&L: date format fix for New Entries tab, group label persistence fix
+
+### 2026-05-31
+- Discord alert: added 🟢/🔴 emoji inline with the % figure — only when Market Price is set

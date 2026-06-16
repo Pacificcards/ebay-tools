@@ -1,9 +1,13 @@
 # Next Steps
 
 ## Listener
-1. ~~**Confirm emoji alert in production**~~ — confirmed working. Emoji logic updated to 3-tier: 🟢 >5% below, 🟡 within ±5%, 🔴 >5% above (shipped 2026-06-10).
-2. ~~**Stale market price alert**~~ — shipped 2026-06-10. Daily ~8am PST consolidated Discord alert for active watchlist cards with no new listings in 3+ days. Reads `Last Hit` column J (MAXIFS formula in sheet). User must have added header + formula to Watchlist tab col J.
-3. ~~**Discord watchlist ingestion**~~ — shipped 2026-06-10. Post natural language in `#watchlist-add` → Claude Haiku parses → new row in Watchlist tab → bot replies confirming. Dedup via `discord_processed_messages` Supabase table. Requires Message Content Intent enabled on bot.
+1. ~~**Confirm emoji alert in production**~~ — confirmed working (shipped 2026-06-10).
+2. ~~**Stale market price alert**~~ — shipped 2026-06-10; date parsing bug fixed 2026-06-15.
+3. ~~**Discord watchlist ingestion**~~ — shipped 2026-06-10.
+4. ~~**Listener bug fixes**~~ — shipped 2026-06-15: stale date parsing, PT timestamp (time-only), 0-feedback seller filter.
+
+## Campaign Scheduler
+5. ~~**Move campaign IDs to campaigns.json**~~ — shipped 2026-06-15. Edit `scheduler/campaigns.json` to add/remove/rename campaigns. Tested pause successfully.
 
 ## P&L
 2. **Handle refunds** — 14 refunded orders ($123.27) currently show as positive revenue in the Sales tab. All have order_ids that link to REFUND rows in `order_fees`. Fix: offset or exclude these in `sync_to_sheets.py`.
