@@ -6,11 +6,12 @@ Usage:
     python3 -m scheduler.campaign_control pause
     python3 -m scheduler.campaign_control resume
 
+Campaigns are defined in scheduler/campaigns.json.
+
 Required environment variables:
     EBAY_CLIENT_ID
     EBAY_CLIENT_SECRET
     EBAY_REFRESH_TOKEN
-    EBAY_CAMPAIGN_ID   — single ID or comma-separated list of IDs
 """
 
 import base64
@@ -96,6 +97,20 @@ def call_campaign_api(action: str, campaign_id: str, access_token: str) -> bool:
         return False
 
 
+def load_campaigns() -> list[dict]:
+    config_path = os.path.join(os.path.dirname(__file__), "campaigns.json")
+    try:
+        with open(config_path) as f:
+            campaigns = json.load(f)
+    except FileNotFoundError:
+        print(f"ERROR: campaigns.json not found at {config_path}")
+        sys.exit(1)
+    if not campaigns:
+        print("ERROR: campaigns.json is empty")
+        sys.exit(1)
+    return campaigns
+
+
 def main():
     if len(sys.argv) != 2 or sys.argv[1] not in ("pause", "resume"):
         print("Usage: python3 -m scheduler.campaign_control [pause|resume]")
@@ -106,26 +121,24 @@ def main():
     client_id = require_env("EBAY_CLIENT_ID")
     client_secret = require_env("EBAY_CLIENT_SECRET")
     refresh_token = require_env("EBAY_REFRESH_TOKEN")
-    campaign_ids = [cid.strip() for cid in require_env("EBAY_CAMPAIGN_ID").split(",") if cid.strip()]
-
-    if not campaign_ids:
-        print("ERROR: EBAY_CAMPAIGN_ID is empty")
-        sys.exit(1)
+    campaigns = load_campaigns()
 
     print(f"Refreshing access token...")
     access_token = get_access_token(client_id, client_secret, refresh_token)
     print(f"Access token obtained.\n")
 
     results = {}
-    for campaign_id in campaign_ids:
-        print(f"Campaign {campaign_id} — {action}...")
-        results[campaign_id] = call_campaign_api(action, campaign_id, access_token)
+    for campaign in campaigns:
+        campaign_id = campaign["id"]
+        name = campaign.get("name", campaign_id)
+        print(f"{name} ({campaign_id}) — {action}...")
+        results[name] = call_campaign_api(action, campaign_id, access_token)
 
     print("\n--- Summary ---")
     any_failed = False
-    for campaign_id, success in results.items():
+    for name, success in results.items():
         status = "SUCCESS" if success else "FAILED"
-        print(f"  Campaign {campaign_id}: {status}")
+        print(f"  {name}: {status}")
         if not success:
             any_failed = True
 
