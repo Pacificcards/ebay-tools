@@ -1,17 +1,16 @@
 import os
 import requests
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+_PT = ZoneInfo("America/Los_Angeles")
 
 
-def _relative_time(iso_date_str: str) -> str:
+def _listed_time_pt(iso_date_str: str) -> str:
     if not iso_date_str:
         return "unknown"
-    dt = datetime.fromisoformat(iso_date_str.replace("Z", "+00:00"))
-    minutes = int((datetime.now(timezone.utc) - dt).total_seconds() / 60)
-    if minutes < 60:
-        return f"{minutes}m ago"
-    hours, mins = divmod(minutes, 60)
-    return f"{hours}h {mins}m ago" if mins else f"{hours}h ago"
+    dt = datetime.fromisoformat(iso_date_str.replace("Z", "+00:00")).astimezone(_PT)
+    return dt.strftime("%m/%d %-I:%M %p PT")
 
 
 def send_alert(description: str, listing: dict, max_price: float, pct_below: float, market_price: float | None = None):
@@ -26,7 +25,7 @@ def send_alert(description: str, listing: dict, max_price: float, pct_below: flo
     else:
         seller_line = "Seller: no feedback data"
 
-    listed_line = f"Listed: {_relative_time(listing['item_creation_date'])}"
+    listed_line = f"Listed: {_listed_time_pt(listing['item_creation_date'])}"
 
     if market_price:
         direction = "below" if pct_below >= 0 else "above"

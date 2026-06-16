@@ -14,6 +14,27 @@ def _should_run_stale_check() -> bool:
     return now.hour == 16 and now.minute < 15
 
 
+_DATE_FORMATS = ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%-m/%-d/%Y", "%-m/%-d/%y")
+
+
+def _parse_last_hit(val: str):
+    """Parse a Last Hit date string in any common format. Returns date or None."""
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(val, fmt).date()
+        except ValueError:
+            continue
+    # gspread may return a Google Sheets serial number as a string
+    try:
+        serial = float(val)
+        # Google Sheets epoch is Dec 30 1899
+        from datetime import date as date_cls
+        return (date_cls(1899, 12, 30) + timedelta(days=int(serial)))
+    except (ValueError, TypeError):
+        pass
+    return None
+
+
 def _check_stale(watchlist: list[dict]) -> None:
     stale_threshold = datetime.now(timezone.utc).date() - timedelta(days=3)
     stale = []
@@ -27,11 +48,11 @@ def _check_stale(watchlist: list[dict]) -> None:
         if not last_hit:
             stale.append(description)
             continue
-        try:
-            last_hit_date = datetime.strptime(last_hit, "%Y-%m-%d").date()
-            if last_hit_date < stale_threshold:
-                stale.append(description)
-        except ValueError:
+        last_hit_date = _parse_last_hit(last_hit)
+        if last_hit_date is None:
+            print(f"  [stale] unrecognised Last Hit format for '{description}': {last_hit!r} — skipping")
+            continue
+        if last_hit_date < stale_threshold:
             stale.append(description)
     if stale:
         send_stale_alert(stale)
@@ -93,6 +114,17 @@ def run():
             print(f"{description}: {len(listings)} listing(s) by keyword (${min_price}–${max_price}, US, BIN, last 12h)")
 
         for listing in listings:
+            # Skip zero-feedback and 0% positive sellers
+            try:
+                feedback_score = listing.get("seller_feedback_score")
+                feedback_pct = listing.get("seller_feedback_pct")
+                if (feedback_score != "" and int(float(str(feedback_score))) == 0) or \
+                   (feedback_pct != "" and float(str(feedback_pct)) == 0.0):
+                    print(f"  Skipping {listing['item_id']}: seller has 0 feedback or 0% positive")
+                    continue
+            except (ValueError, TypeError):
+                pass
+
             item_id = listing["item_id"]
 
             with conn.cursor() as cur:
