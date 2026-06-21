@@ -43,8 +43,8 @@ NEW_ENTRIES_HEADERS = ["date", "description", "amount", "vendor", "payment_metho
 
 # Sales: order_date | title | gross_sale | net_payout | order_id | group
 SALES_HEADERS     = ["order_date", "title", "gross_sale", "net_payout", "order_id", "group"]
-PURCHASES_HEADERS = ["purchase_date", "description", "total_cost", "source", "id", "group"]
-AD_FEES_HEADERS   = ["date", "fee_type", "amount", "transaction_id"]
+PURCHASES_HEADERS = ["purchase_date", "description", "vendor", "total_cost", "source", "id", "group"]
+AD_FEES_HEADERS   = ["date", "fee_type", "amount", "transaction_id", "group"]
 
 PLAIN_FORMAT = {
     "backgroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
@@ -111,6 +111,7 @@ def fetch_purchases() -> list[list]:
                 SELECT
                     purchase_date::text,
                     description,
+                    CASE WHEN source = 'ebay_purchase' THEN 'eBay' ELSE COALESCE(vendor, '') END,
                     CAST(total_cost AS text),
                     source,
                     id::text,
@@ -125,7 +126,6 @@ def fetch_purchases() -> list[list]:
 
 
 def fetch_ad_fees() -> list[list]:
-    """Fetch NON_SALE_CHARGE transactions (priority ads, etc.)."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -134,7 +134,8 @@ def fetch_ad_fees() -> list[list]:
                     transaction_date::text,
                     COALESCE(fee_type, 'Unknown'),
                     CAST(amount AS text),
-                    billing_transaction_id
+                    billing_transaction_id,
+                    COALESCE(group_name, '')
                 FROM order_fees
                 WHERE fee_type != 'SALE'
                 ORDER BY transaction_date DESC
@@ -173,8 +174,8 @@ def _read_purchase_groups(doc: gspread.Spreadsheet) -> dict[str, str]:
     groups: dict[str, str] = {}
     if len(existing) > 1:
         for row in existing[1:]:
-            item_id   = row[4] if len(row) > 4 else ""
-            group_val = row[5] if len(row) > 5 else ""
+            item_id   = row[5] if len(row) > 5 else ""
+            group_val = row[6] if len(row) > 6 else ""
             if item_id and group_val:
                 groups[item_id] = group_val
     return groups
@@ -207,6 +208,39 @@ def save_purchase_groups(groups: dict[str, str]) -> None:
                 cur.execute(
                     "UPDATE import_queue SET group_name = %s WHERE id = %s",
                     (group_name, int(item_id)),
+                )
+    finally:
+        conn.close()
+
+
+def _read_ad_fee_groups(doc: gspread.Spreadsheet) -> dict[str, str]:
+    """Read current group assignments from the Ad Fees tab."""
+    try:
+        ws = doc.worksheet("Ad Fees")
+    except gspread.WorksheetNotFound:
+        return {}
+    existing = ws.get_all_values()
+    groups: dict[str, str] = {}
+    if len(existing) > 1:
+        for row in existing[1:]:
+            txn_id    = row[3] if len(row) > 3 else ""
+            group_val = row[4] if len(row) > 4 else ""
+            if txn_id and group_val:
+                groups[txn_id] = group_val
+    return groups
+
+
+def save_ad_fee_groups(groups: dict[str, str]) -> None:
+    """Persist group assignments from the Ad Fees tab back to order_fees."""
+    if not groups:
+        return
+    conn = get_connection()
+    try:
+        with conn, conn.cursor() as cur:
+            for txn_id, group_name in groups.items():
+                cur.execute(
+                    "UPDATE order_fees SET group_name = %s WHERE billing_transaction_id = %s",
+                    (group_name, txn_id),
                 )
     finally:
         conn.close()
@@ -275,10 +309,11 @@ def process_new_entries(doc: gspread.Spreadsheet) -> int:
             print(f"  [new_entries] skipping '{description}': {e}")
             continue
 
+        raw_amount = row[2].strip().lstrip("$").replace(",", "") or None
         entries.append({
             "purchase_date":  date_val,
             "description":    description,
-            "total_cost":     row[2].strip() or None,
+            "total_cost":     raw_amount,
             "vendor":         row[3].strip() or None,
             "payment_method": row[4].strip() or None,
             "group_name":     row[5].strip() or None,
@@ -308,6 +343,7 @@ def _insert_manual_entries(entries: list[dict]) -> list[int]:
         with conn.cursor() as cur:
             for i, entry in enumerate(entries):
                 try:
+                    cur.execute("SAVEPOINT sp")
                     cur.execute(
                         """
                         INSERT INTO import_queue (
@@ -324,8 +360,10 @@ def _insert_manual_entries(entries: list[dict]) -> list[int]:
                             entry["group_name"],
                         ),
                     )
+                    cur.execute("RELEASE SAVEPOINT sp")
                     synced.append(i)
                 except Exception as e:
+                    cur.execute("ROLLBACK TO SAVEPOINT sp")
                     print(f"  [new_entries] failed to insert '{entry['description']}': {e}")
         conn.commit()
     finally:
@@ -377,17 +415,18 @@ def write_purchases_tab(doc: gspread.Spreadsheet, rows: list[list]) -> None:
     ws = _get_or_create_tab(doc, "Purchases", index=1)
     existing = ws.get_all_values()
 
-    # Preserve group values (column F, index 5); id is column E (index 4)
+    # Preserve group values (column G, index 6); id is column F (index 5)
     group_by_id: dict[str, str] = {}
     if len(existing) > 1:
         for row in existing[1:]:
-            item_id   = row[4] if len(row) > 4 else ""
-            group_val = row[5] if len(row) > 5 else ""
+            item_id   = row[5] if len(row) > 5 else ""
+            group_val = row[6] if len(row) > 6 else ""
             if item_id and group_val:
                 group_by_id[item_id] = group_val
 
     for row in rows:
-        row[5] = group_by_id.get(row[4], "")
+        sheet_group = group_by_id.get(row[5], "")
+        row[6] = sheet_group if sheet_group else row[6]
 
     ws.clear()
     ws.update([PURCHASES_HEADERS] + rows, value_input_option="USER_ENTERED")
@@ -396,24 +435,48 @@ def write_purchases_tab(doc: gspread.Spreadsheet, rows: list[list]) -> None:
 
 def write_ad_fees_tab(doc: gspread.Spreadsheet, rows: list[list]) -> None:
     ws = _get_or_create_tab(doc, "Ad Fees", index=2)
+    existing = ws.get_all_values()
+
+    # Preserve group values (column E, index 4); billing_transaction_id is column D (index 3)
+    group_by_txn_id: dict[str, str] = {}
+    if len(existing) > 1:
+        for row in existing[1:]:
+            txn_id    = row[3] if len(row) > 3 else ""
+            group_val = row[4] if len(row) > 4 else ""
+            if txn_id and group_val:
+                group_by_txn_id[txn_id] = group_val
+
+    for row in rows:
+        sheet_group = group_by_txn_id.get(row[3], "")
+        row[4] = sheet_group if sheet_group else row[4]
+
     ws.clear()
     ws.update([AD_FEES_HEADERS] + rows, value_input_option="USER_ENTERED")
     _reset_header_format(ws)
 
 
-def write_pl_tab(doc: gspread.Spreadsheet, sales_row_count: int, purchases_row_count: int) -> None:
+def write_pl_tab(doc: gspread.Spreadsheet, sales_row_count: int, purchases_row_count: int, ad_fees_row_count: int) -> None:
     ws = _get_or_create_tab(doc, "P&L by Group", index=3)
 
     sales_end     = max(sales_row_count + 1, 2)
     purchases_end = max(purchases_row_count + 1, 2)
+    ad_fees_end   = max(ad_fees_row_count + 1, 2)
+
+    sg  = f"Sales!F2:F{sales_end}"
+    pg  = f"Purchases!G2:G{purchases_end}"
+    ag  = f"'Ad Fees'!E2:E{ad_fees_end}"
+    sc  = f"Sales!C2:C{sales_end}"
+    sd  = f"Sales!D2:D{sales_end}"
+    pc  = f"Purchases!D2:D{purchases_end}"
+    ac  = f"'Ad Fees'!C2:C{ad_fees_end}"
 
     headers = [["group", "gross_revenue", "net_revenue", "costs", "profit"]]
     data = [
         [
-            f'=IFERROR(UNIQUE(FILTER({{Sales!F2:F{sales_end};Purchases!F2:F{purchases_end}}},{{Sales!F2:F{sales_end};Purchases!F2:F{purchases_end}}}<>"")),"")',
-            f'=IFERROR(ARRAYFORMULA(SUMIF(Sales!F2:F{sales_end},A2:A,Sales!C2:C{sales_end})),"")',
-            f'=IFERROR(ARRAYFORMULA(SUMIF(Sales!F2:F{sales_end},A2:A,Sales!D2:D{sales_end})),"")',
-            f'=IFERROR(ARRAYFORMULA(SUMIF(Purchases!F2:F{purchases_end},A2:A,Purchases!C2:C{purchases_end})),"")',
+            f'=IFERROR(UNIQUE(FILTER({{{sg};{pg};{ag}}},{{{sg};{pg};{ag}}}<>"")),"")',
+            f'=IFERROR(ARRAYFORMULA(SUMIF({sg},A2:A,{sc})),"")',
+            f'=IFERROR(ARRAYFORMULA(SUMIF({sg},A2:A,{sd})),"")',
+            f'=IFERROR(ARRAYFORMULA(SUMIF({pg},A2:A,{pc})+SUMIF({ag},A2:A,{ac})),"")',
             '=IFERROR(C2:C-D2:D,"")',
         ]
     ]
@@ -441,9 +504,11 @@ def sync(doc_id: str, creds_path: str) -> None:
     print("Saving group assignments to Supabase...")
     sale_groups     = _read_sale_groups(doc)
     purchase_groups = _read_purchase_groups(doc)
+    ad_fee_groups   = _read_ad_fee_groups(doc)
     save_sale_groups(sale_groups)
     save_purchase_groups(purchase_groups)
-    print(f"  {len(sale_groups)} sale groups, {len(purchase_groups)} purchase groups saved")
+    save_ad_fee_groups(ad_fee_groups)
+    print(f"  {len(sale_groups)} sale groups, {len(purchase_groups)} purchase groups, {len(ad_fee_groups)} ad fee groups saved")
 
     print("Fetching sales from Supabase...")
     sales = fetch_sales()
@@ -467,7 +532,7 @@ def sync(doc_id: str, creds_path: str) -> None:
     write_ad_fees_tab(doc, ad_fees)
 
     print("Writing P&L by Group tab...")
-    write_pl_tab(doc, len(sales), len(purchases))
+    write_pl_tab(doc, len(sales), len(purchases), len(ad_fees))
 
     print(f"Done. Open: https://docs.google.com/spreadsheets/d/{doc_id}")
 

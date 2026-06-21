@@ -23,15 +23,23 @@ Steps in order:
 - No Streamlit dashboard — email replaced it (2026-06-20)
 
 ### 2. P&L Accounting (`pl/`)
-Google Sheets-based P&L. Script: `pl/sync_to_sheets.py`. Runs daily via `pl-ingest.yml` (triggers after analytics ingest).
+Google Sheets-based P&L. Script: `pl/sync_to_sheets.py`. Runs daily via `pl-ingest.yml` (triggers after analytics ingest). GitHub Action name: **"P&L ingest"** (triggerable manually from Actions tab).
 
 Sheet tabs: **Sales**, **Purchases**, **Ad Fees**, **P&L by Group**, **New Entries**
 
 - `gross_sale` = item price + buyer-paid shipping
 - `net_payout` = eBay SALE CREDIT after fees, proportionally split for multi-line orders
-- `group` column is user-editable and preserved across syncs
+- `group` column is user-editable on Sales, Purchases, and Ad Fees tabs — preserved across syncs via Supabase
+- Ad Fees `group` assignments flow into P&L by Group costs (alongside Purchases costs)
+- Purchases tab columns: `purchase_date | description | vendor | total_cost | source | id | group`
+  - eBay purchases show vendor = "eBay"; manual entries show vendor from New Entries tab
+- New Entries amounts can include `$` sign — stripped automatically on sync
+- New Entries processing uses savepoints — one bad row won't abort the whole batch
 - Credentials: `pl/credentials/service_account.json` (gitignored)
 - Service account: `ebay-tools-sheets@pcc-accounting.iam.gserviceaccount.com`
+
+#### Known data integrity issue
+The `pl-ingest.yml` GitHub Action is running **old code** (local changes not yet committed/pushed). Triggering it manually will fail with `ValueError: invalid literal for int() with base 10: 'manual'` on `save_purchase_groups`. Run the sync locally until the changes are pushed.
 
 ### 3. Listener (`listener/`)
 Scans eBay every 15 minutes for underpriced cards on a watchlist. Fires Discord alerts on new finds.
@@ -82,8 +90,11 @@ Pauses/resumes eBay Promoted Listings campaigns on a schedule. Triggered by cron
 # Custom date range
 ./refresh.sh 2026-01-01
 
-# Sync P&L to Google Sheets
+# Sync P&L to Google Sheets (local)
 .venv/bin/python pl/sync_to_sheets.py
+
+# Sync P&L to Google Sheets (via GitHub Action — same result, runs in CI)
+gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 
 # Run tests
 .venv/bin/python -m pytest tests/ -q
@@ -113,10 +124,8 @@ Pauses/resumes eBay Promoted Listings campaigns on a schedule. Triggered by cron
 - No open items — campaigns.json migration complete and tested 2026-06-15
 
 ### P&L
-1. Handle refunds — 14 refunded orders ($123.27) show as positive revenue in Sales tab
-2. Categorize Ad Fees tab — unlabeled mix of postage, ad fees, store subscription, refunds, credits
-3. Surface postage in P&L — $1,306 in SHIPPING_LABEL spend not flowing into P&L by Group costs
-4. Manual entry UI — New Entries Google Sheet tab is functional but clunky; approach (Flask/Streamlit/other) TBD
+1. Handle refunds — refunded orders show as positive revenue in Sales tab
+2. Manual entry UI — New Entries Google Sheet tab is functional but clunky; approach (Flask/Streamlit/other) TBD
 
 ### Traffic Analytics
 1. ~~Add more listings to `report_listings.json`~~ — now has 4 listings (Pokemon 15 Card Lot, NBA Hoops Hobby Box, TAG 10 Mewtwo, TAG 10 Mienfoo)
@@ -145,7 +154,18 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 
 ## Session Log
 
-### 2026-06-21
+### 2026-06-21 (session 2)
+- P&L: added `group` column to Ad Fees tab — user assigns groups manually; assignments persisted to `order_fees.group_name` in Supabase
+- P&L: Ad Fees group costs now flow into P&L by Group formula (alongside Purchases)
+- P&L: added `vendor` column to Purchases tab — manual entries show vendor, eBay entries show "eBay"
+- P&L: fixed New Entries → Purchases group carry-through (group was being wiped for new entries)
+- P&L: fixed cascading transaction abort — bad New Entries row no longer kills the whole batch (savepoints)
+- P&L: fixed dollar sign in amount field (`$77.00` → stripped to `77.00` automatically)
+- P&L: data cleanup — found 28 entries stamped-but-not-in-DB (old rollback bug), cleared stamps and re-synced; deleted 17 duplicate rows from import_queue
+- P&L: local changes NOT yet committed/pushed — GitHub Action will fail until pushed
+- Listener: discussed reducing cron-job.org frequency from every 15 min to hourly to cut GHA costs ~75% — user agreed, pending cron-job.org update (needs API key or manual change)
+
+### 2026-06-21 (session 1)
 - Traffic Analytics: fixed trailing comma in `report_listings.json` (user edited on GitHub, invalid JSON caused pipeline failure)
 - Traffic Analytics: `report_listings.json` now has 4 listings
 - Price Check: designed and tested concept — live eBay search confirmed feasibility; plan file written at `/Users/eastcoastlimited/.claude/plans/fancy-skipping-teapot.md`

@@ -1,28 +1,20 @@
 # Next Steps
 
-## Listener
-1. ~~**Confirm emoji alert in production**~~ — confirmed working (shipped 2026-06-10).
-2. ~~**Stale market price alert**~~ — shipped 2026-06-10; date parsing bug fixed 2026-06-15.
-3. ~~**Discord watchlist ingestion**~~ — shipped 2026-06-10.
-4. ~~**Listener bug fixes**~~ — shipped 2026-06-15: stale date parsing, PT timestamp (time-only), 0-feedback seller filter.
-
-## Campaign Scheduler
-5. ~~**Move campaign IDs to campaigns.json**~~ — shipped 2026-06-15. Edit `scheduler/campaigns.json` to add/remove/rename campaigns. Tested pause successfully.
+## Immediate / Unblocked
+1. **Push local P&L changes to repo** — `pl/sync_to_sheets.py` and `CLAUDE.md` have uncommitted changes; the GitHub Action ("P&L ingest") will fail until pushed.
+2. **Update listener cron-job.org from every 15 min to hourly** — agreed this session; reduces GHA spend ~75%. Job ID: 7684877. Needs cron-job.org API key or manual update in the dashboard.
 
 ## P&L
-2. **Handle refunds** — 14 refunded orders ($123.27) currently show as positive revenue in the Sales tab. All have order_ids that link to REFUND rows in `order_fees`. Fix: offset or exclude these in `sync_to_sheets.py`.
-3. **Categorize Ad Fees tab** — 904 rows are an unlabeled mix of postage, ad/listing fees, store subscription, refunds, and credits. Add a `category` column with auto-classification logic. (suggested)
-4. **Surface postage in P&L by Group** — $1,306 in SHIPPING_LABEL spend is captured in `order_fees` but never flows into the P&L by Group costs column. (suggested)
-5. **Manual entry UI** — the New Entries Google Sheet tab works but is clunky. Build a dedicated local UI (Flask, Streamlit tab, or other — TBD) that submits directly to Supabase and triggers a sheet sync. Decision between approaches still open.
-
-## Traffic Analytics
-6. ~~**Add listings to report config**~~ — done, 4 listings now configured.
-7. **Revenue metric in email** — `orders_raw.sale_price` is available but not in the report yet; add a Revenue row if useful. (suggested)
-8. **Weekly summary email** — a separate Monday morning email aggregating the full prior week per listing, for higher-level trend review. (suggested)
+3. **Handle refunds** — refunded orders show as positive revenue in Sales tab. Fix: offset or exclude REFUND rows from `order_fees` in the sales query in `sync_to_sheets.py`.
+4. **Manual entry UI** — New Entries tab works but is clunky. Approach (Flask/Streamlit/other) still TBD.
 
 ## Price Check (ready to build — plan fully designed)
-9. **Build `listener/price_check.py`** — core script: reads "Price Check" tab from Listener sheet, calls Claude to simplify query, searches eBay Browse API, applies IQR + grade filter, writes Clearing/Holding prices back to sheet.
-10. **Add `search_listings_for_price()` to `listener/ebay.py`** — new Browse API function without price/time filters, returns `{price, title}` list, limit 200.
-11. **Add sheet helpers to `listener/sheets.py`** — `read_price_check()` and `write_price_check_row()`.
-12. **Create `.github/workflows/price-check.yml`** — `workflow_dispatch` only; needs `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `LISTENER_SHEET_ID`, `GOOGLE_SHEETS_CREDENTIALS`, `ANTHROPIC_API_KEY`.
-13. **User setup** — create "Price Check" tab in Listener sheet with headers: Description | Hint URL | EPID | Clearing Price | Holding Price | # Listings | Last Checked.
+5. **Build `listener/price_check.py`** — reads "Price Check" tab, calls Claude to simplify query, searches eBay Browse API, applies IQR + grade filter, writes Clearing/Holding prices back. Full plan at `/Users/eastcoastlimited/.claude/plans/fancy-skipping-teapot.md`.
+6. **Add `search_listings_for_price()` to `listener/ebay.py`** — Browse API call, no price/time filters, returns `{price, title}` list, limit 200.
+7. **Add sheet helpers to `listener/sheets.py`** — `read_price_check()` and `write_price_check_row()`.
+8. **Create `.github/workflows/price-check.yml`** — `workflow_dispatch` only; needs `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `LISTENER_SHEET_ID`, `GOOGLE_SHEETS_CREDENTIALS`, `ANTHROPIC_API_KEY`.
+9. **User setup** — create "Price Check" tab in Listener sheet with headers: Description | Hint URL | EPID | Clearing Price | Holding Price | # Listings | Last Checked.
+
+## Traffic Analytics (suggested)
+10. **Revenue metric in daily email** — `orders_raw.sale_price` is available; add a Revenue row to the report. (suggested)
+11. **Weekly summary email** — Monday morning email aggregating the full prior week per listing. (suggested)
