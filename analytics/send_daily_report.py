@@ -91,6 +91,19 @@ def ctr_row(r0: dict, r1: dict, r7: dict) -> str:
     return _tr("CTR", v0_str, dod_str, dod_color, wow_str, wow_color)
 
 
+def ord_imp_row(r0: dict, r1: dict, r7: dict) -> str:
+    def rate(r):
+        if not r.get("impressions"):
+            return None
+        return (r.get("orders") or 0) / r["impressions"]
+
+    c0, c1, c7 = rate(r0), rate(r1), rate(r7)
+    v0_str = f"{c0:.2%}" if c0 is not None else "—"
+    dod_str, dod_color = fmt_pct(pct_change(c0, c1))
+    wow_str, wow_color = fmt_pct(pct_change(c0, c7))
+    return _tr("Ord/Imp", v0_str, dod_str, dod_color, wow_str, wow_color)
+
+
 def _tr(label, v0_str, dod_str, dod_color, wow_str, wow_color) -> str:
     cell = "padding:8px 12px;border-bottom:1px solid #e5e7eb"
     return f"""
@@ -113,7 +126,8 @@ def listing_section(name: str, data: dict, d0: date, d1: date, d7: date) -> str:
         metric_row("Clicks",      r0.get("clicks"),      r1.get("clicks"),      r7.get("clicks")) +
         ctr_row(r0, r1, r7) +
         metric_row("Orders",      r0.get("orders"),      r1.get("orders"),      r7.get("orders")) +
-        metric_row("Qty Sold",    r0.get("qty"),         r1.get("qty"),         r7.get("qty"))
+        metric_row("Qty Sold",    r0.get("qty"),         r1.get("qty"),         r7.get("qty")) +
+        ord_imp_row(r0, r1, r7)
     )
 
     return f"""
