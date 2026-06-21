@@ -3,10 +3,10 @@
 Daily analytics report — emails traffic + sales data for configured listings.
 
 Usage:
-    python -m analytics.send_daily_report
+    python -m traffic_analytics.send_daily_report
 
 Required env vars: SUPABASE_DB_URL, GMAIL_ADDRESS, GMAIL_APP_PASSWORD
-Listings configured in: analytics/report_listings.json
+Listings configured in: traffic_analytics/report_listings.json
 """
 
 import json

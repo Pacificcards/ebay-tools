@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'analytics/**'
+      - 'traffic_analytics/**'
       - 'shared/**'
 
 jobs:
@@ -25,7 +25,7 @@ jobs:
           EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
           EBAY_REFRESH_TOKEN: ${{ secrets.EBAY_REFRESH_TOKEN_READ }}
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: python -m analytics.run_ingest
+        run: python -m traffic_analytics.run_ingest
 
       - name: Fetch billing activity (fees)
         env:
@@ -33,16 +33,16 @@ jobs:
           EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
           EBAY_REFRESH_TOKEN: ${{ secrets.EBAY_REFRESH_TOKEN_READ }}
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: python -m analytics.fetch_finances
+        run: python -m traffic_analytics.fetch_finances
 
       - name: Compute metrics
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: python -m analytics.compute_metrics
+        run: python -m traffic_analytics.compute_metrics
 
       - name: Send daily report
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-        run: python -m analytics.send_daily_report
+        run: python -m traffic_analytics.send_daily_report

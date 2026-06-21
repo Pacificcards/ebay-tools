@@ -4,8 +4,8 @@ Upserts into ebay_purchases_raw, then inserts any new records into import_queue
 as 'pending' items for reconciliation.
 
 Usage:
-  python -m analytics.fetch_ebay_purchases            # 14-day window (weekly runs)
-  python -m analytics.fetch_ebay_purchases --backfill  # 60-day window (one-time historical pull)
+  python -m traffic_analytics.fetch_ebay_purchases            # 14-day window (weekly runs)
+  python -m traffic_analytics.fetch_ebay_purchases --backfill  # 60-day window (one-time historical pull)
 """
 import os
 import sys

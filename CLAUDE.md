@@ -4,7 +4,7 @@ Monorepo for Pacific Cards Co. eBay operations. Three independent subprojects sh
 
 ## Subprojects
 
-### 1. Analytics Pipeline (`analytics/`)
+### 1. Analytics Pipeline (`traffic_analytics/`)
 Daily pipeline fetching eBay data into Supabase. Runs via `analytics-ingest.yml` at 8am UTC.
 
 Steps in order:

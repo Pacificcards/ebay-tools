@@ -15,14 +15,14 @@ echo ""
 echo "--- Step 1/3: Fetching orders ---"
 BACKFILL=1 BACKFILL_START="$START" .venv/bin/python -c "
 from dotenv import load_dotenv; load_dotenv('.env')
-from analytics.fetch_orders import fetch_and_store; fetch_and_store()
+from traffic_analytics.fetch_orders import fetch_and_store; fetch_and_store()
 "
 
 echo ""
 echo "--- Step 2/3: Fetching finances ---"
 BACKFILL=1 BACKFILL_START="$START" .venv/bin/python -c "
 from dotenv import load_dotenv; load_dotenv('.env')
-from analytics.fetch_finances import fetch_and_store; fetch_and_store()
+from traffic_analytics.fetch_finances import fetch_and_store; fetch_and_store()
 "
 
 echo ""
