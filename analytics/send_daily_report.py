@@ -98,10 +98,10 @@ def ord_imp_row(r0: dict, r1: dict, r7: dict) -> str:
         return (r.get("orders") or 0) / r["impressions"]
 
     c0, c1, c7 = rate(r0), rate(r1), rate(r7)
-    v0_str = f"{c0:.2%}" if c0 is not None else "—"
+    v0_str = f"{c0 * 1000:.2f}" if c0 is not None else "—"
     dod_str, dod_color = fmt_pct(pct_change(c0, c1))
     wow_str, wow_color = fmt_pct(pct_change(c0, c7))
-    return _tr("Ord/Imp", v0_str, dod_str, dod_color, wow_str, wow_color)
+    return _tr("Ord/1k", v0_str, dod_str, dod_color, wow_str, wow_color)
 
 
 def _tr(label, v0_str, dod_str, dod_color, wow_str, wow_color) -> str:
