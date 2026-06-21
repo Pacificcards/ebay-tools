@@ -123,7 +123,7 @@ def listing_section(name: str, data: dict, d0: date, d1: date, d7: date) -> str:
     hcell = "padding:8px 12px;color:#6b7280;font-weight:600;border-bottom:2px solid #e5e7eb;font-size:13px"
     rows = (
         metric_row("Impressions", r0.get("impressions"), r1.get("impressions"), r7.get("impressions")) +
-        metric_row("Clicks",      r0.get("clicks"),      r1.get("clicks"),      r7.get("clicks")) +
+        metric_row("Views",        r0.get("clicks"),      r1.get("clicks"),      r7.get("clicks")) +
         ctr_row(r0, r1, r7) +
         metric_row("Orders",      r0.get("orders"),      r1.get("orders"),      r7.get("orders")) +
         metric_row("Qty Sold",    r0.get("qty"),         r1.get("qty"),         r7.get("qty")) +
