@@ -119,10 +119,38 @@ Pauses/resumes eBay Promoted Listings campaigns on a schedule. Triggered by cron
 4. Manual entry UI — New Entries Google Sheet tab is functional but clunky; approach (Flask/Streamlit/other) TBD
 
 ### Traffic Analytics
-1. Add more listings to `traffic_analytics/report_listings.json` — currently only 1 listing configured
+1. ~~Add more listings to `report_listings.json`~~ — now has 4 listings (Pokemon 15 Card Lot, NBA Hoops Hobby Box, TAG 10 Mewtwo, TAG 10 Mienfoo)
 2. ~~Streamlit dashboard~~ — dropped in favour of daily email (2026-06-20)
 
+### Price Check (planned, not yet built)
+New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy-skipping-teapot.md`
+
+**Concept:** User fills a "Price Check" tab in the Listener Google Sheet with card descriptions; runs a GitHub Action (`Price Check`) to fetch active eBay listings and write back Clearing Price + Holding Price per card.
+
+**Key design decisions locked in:**
+- Clearing Price = p30 of filtered distribution ("sell fast")
+- Holding Price = p75 of filtered distribution ("wait for right buyer")
+- Outlier removal: IQR filter (statistical) + grade/accessory title filter (removes PSA/CGC graded copies and cases from raw card searches)
+- Search query: Claude parses the user's description → clean keyword query (full description is too strict, e.g. returns 1 result vs. 60+ for simplified query)
+- Results write back to same row in sheet: Clearing Price | Holding Price | # Listings | Last Checked
+- Triggered via GitHub Action (`price-check.yml`) — manual `workflow_dispatch`
+- Uses existing Listener Sheet (`LISTENER_SHEET_ID`) — new "Price Check" tab
+- No new secrets needed
+
+**Tested live:** "Eevee ex 174 Prismatic Evolutions Promo" → 60 clean listings → Clearing $34.99 / Holding $50.00
+
+**Still to decide before building:**
+- Exact Claude prompt for query simplification
+- Whether to expose raw price range alongside the two recommendations
+
 ## Session Log
+
+### 2026-06-21
+- Traffic Analytics: fixed trailing comma in `report_listings.json` (user edited on GitHub, invalid JSON caused pipeline failure)
+- Traffic Analytics: `report_listings.json` now has 4 listings
+- Price Check: designed and tested concept — live eBay search confirmed feasibility; plan file written at `/Users/eastcoastlimited/.claude/plans/fancy-skipping-teapot.md`
+- Price Check: validated that full description → 1 result; simplified query → 60+ results; Claude query parsing is the right approach
+- Price Check: two-pass filter (IQR + grade/accessory title filter) confirmed working on live data
 
 ### 2026-06-20
 - Traffic Analytics: renamed subproject from `analytics/` to `traffic_analytics/` throughout repo

@@ -16,6 +16,13 @@
 5. **Manual entry UI** — the New Entries Google Sheet tab works but is clunky. Build a dedicated local UI (Flask, Streamlit tab, or other — TBD) that submits directly to Supabase and triggers a sheet sync. Decision between approaches still open.
 
 ## Traffic Analytics
-6. **Add listings to report config** — `traffic_analytics/report_listings.json` currently only has 1 listing. Edit on GitHub to add the listings you want in the daily email.
+6. ~~**Add listings to report config**~~ — done, 4 listings now configured.
 7. **Revenue metric in email** — `orders_raw.sale_price` is available but not in the report yet; add a Revenue row if useful. (suggested)
 8. **Weekly summary email** — a separate Monday morning email aggregating the full prior week per listing, for higher-level trend review. (suggested)
+
+## Price Check (ready to build — plan fully designed)
+9. **Build `listener/price_check.py`** — core script: reads "Price Check" tab from Listener sheet, calls Claude to simplify query, searches eBay Browse API, applies IQR + grade filter, writes Clearing/Holding prices back to sheet.
+10. **Add `search_listings_for_price()` to `listener/ebay.py`** — new Browse API function without price/time filters, returns `{price, title}` list, limit 200.
+11. **Add sheet helpers to `listener/sheets.py`** — `read_price_check()` and `write_price_check_row()`.
+12. **Create `.github/workflows/price-check.yml`** — `workflow_dispatch` only; needs `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `LISTENER_SHEET_ID`, `GOOGLE_SHEETS_CREDENTIALS`, `ANTHROPIC_API_KEY`.
+13. **User setup** — create "Price Check" tab in Listener sheet with headers: Description | Hint URL | EPID | Clearing Price | Holding Price | # Listings | Last Checked.
