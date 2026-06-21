@@ -15,7 +15,7 @@
 4. **Surface postage in P&L by Group** — $1,306 in SHIPPING_LABEL spend is captured in `order_fees` but never flows into the P&L by Group costs column. (suggested)
 5. **Manual entry UI** — the New Entries Google Sheet tab works but is clunky. Build a dedicated local UI (Flask, Streamlit tab, or other — TBD) that submits directly to Supabase and triggers a sheet sync. Decision between approaches still open.
 
-## Analytics Dashboard
-5. **Add revenue to Mission Control** — `orders_raw` has `sale_price` but it's never surfaced. Add a revenue column to the table and a trend line to Listing Deep Dive. (suggested)
-6. **Surface conversion rate in Deep Dive** — `listing_metrics_computed` already stores `conversion_rate`, `units_per_view`, `units_per_1k_impr`; dashboard never reads them. (suggested)
-7. **Mission Control trend view** — currently shows only yesterday's data; add a 7–30 day aggregate chart for impressions + views over time. (suggested)
+## Traffic Analytics
+6. **Add listings to report config** — `traffic_analytics/report_listings.json` currently only has 1 listing. Edit on GitHub to add the listings you want in the daily email.
+7. **Revenue metric in email** — `orders_raw.sale_price` is available but not in the report yet; add a Revenue row if useful. (suggested)
+8. **Weekly summary email** — a separate Monday morning email aggregating the full prior week per listing, for higher-level trend review. (suggested)

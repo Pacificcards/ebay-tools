@@ -4,8 +4,8 @@ Monorepo for Pacific Cards Co. eBay operations. Three independent subprojects sh
 
 ## Subprojects
 
-### 1. Analytics Pipeline (`traffic_analytics/`)
-Daily pipeline fetching eBay data into Supabase. Runs via `analytics-ingest.yml` at 8am UTC.
+### 1. Traffic Analytics (`traffic_analytics/`)
+Daily pipeline fetching eBay data into Supabase. Runs via `analytics-ingest.yml` at 12:00 UTC (5am PT).
 
 Steps in order:
 1. `sync_listings` — active listings → `listing_metadata`
@@ -13,8 +13,14 @@ Steps in order:
 3. `fetch_orders` — order line items → `orders_raw`
 4. `fetch_finances` — all financial transactions → `order_fees`
 5. `compute_metrics` — derived metrics → `listing_metrics_computed`
+6. `send_daily_report` — HTML email with yesterday's metrics for configured listings
 
-**Dashboard:** `dashboard/app.py` — Streamlit, two tabs: Mission Control + Listing Deep Dive.
+**Daily email report:**
+- Listings configured in `traffic_analytics/report_listings.json` (array of `{id, name}` — edit on GitHub to add/remove)
+- Metrics per listing: Impressions, Views, CTR, Orders, Qty Sold, Ord/1k (orders per 1,000 impressions)
+- Each metric shows value + % change vs. day before (DoD) and same day last week (WoW)
+- Green = positive %, red = negative; sends to `GMAIL_ADDRESS` via SMTP
+- No Streamlit dashboard — email replaced it (2026-06-20)
 
 ### 2. P&L Accounting (`pl/`)
 Google Sheets-based P&L. Script: `pl/sync_to_sheets.py`. Runs daily via `pl-ingest.yml` (triggers after analytics ingest).
@@ -112,13 +118,18 @@ Pauses/resumes eBay Promoted Listings campaigns on a schedule. Triggered by cron
 3. Surface postage in P&L — $1,306 in SHIPPING_LABEL spend not flowing into P&L by Group costs
 4. Manual entry UI — New Entries Google Sheet tab is functional but clunky; approach (Flask/Streamlit/other) TBD
 
-### Analytics Dashboard
-1. Add revenue column to Mission Control + revenue trend to Deep Dive
-2. Surface conversion rate in Deep Dive (`listing_metrics_computed` has it, dashboard never reads it)
-3. Mission Control trend view — currently shows only yesterday; add 7–30 day aggregate chart
-4. Tag-based filtering — `listing_tags` table exists in schema but is never read
+### Traffic Analytics
+1. Add more listings to `traffic_analytics/report_listings.json` — currently only 1 listing configured
+2. ~~Streamlit dashboard~~ — dropped in favour of daily email (2026-06-20)
 
 ## Session Log
+
+### 2026-06-20
+- Traffic Analytics: renamed subproject from `analytics/` to `traffic_analytics/` throughout repo
+- Traffic Analytics: built `send_daily_report.py` — daily HTML email after pipeline with Impressions, Views, CTR, Orders, Qty Sold, Ord/1k; DoD and WoW % changes; green/red colours
+- Traffic Analytics: `report_listings.json` config for listing IDs + names (currently 1 listing: Pokemon 15 Card Lot)
+- Traffic Analytics: shifted pipeline cron from 8am UTC to 12:00 UTC (5am PT)
+- Traffic Analytics: Streamlit dashboard dropped — email is the analytics surface going forward
 
 ### 2026-06-15
 - Listener: fixed stale alert date parsing (gspread returns dates in locale format, not YYYY-MM-DD — now handles multiple formats + serial numbers)
