@@ -22,6 +22,7 @@ Required env vars (in .env or environment):
 
 import os
 import sys
+import uuid
 from datetime import date, datetime
 
 import gspread
@@ -38,8 +39,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-# New Entries: date | description | amount | vendor | payment_method | group | status
-NEW_ENTRIES_HEADERS = ["date", "description", "amount", "vendor", "payment_method", "group", "status"]
+# New Entries: date | description | type | amount | vendor | payment_method | group | status
+NEW_ENTRIES_HEADERS = ["date", "description", "type", "amount", "vendor", "payment_method", "group", "status"]
 
 # Sales: order_date | title | gross_sale | net_payout | order_id | group
 SALES_HEADERS     = ["order_date", "title", "gross_sale", "net_payout", "order_id", "group"]
@@ -62,9 +63,12 @@ def fetch_sales() -> list[list]:
                 SELECT
                     o.order_date::text,
                     COALESCE(lm.title, o.title, o.listing_id) AS title,
-                    CAST(o.sale_price + COALESCE(o.shipping_price, 0) AS text) AS gross_sale,
+                    CASE WHEN o.order_id LIKE 'MANUAL-%' THEN ''
+                         ELSE CAST(o.sale_price + COALESCE(o.shipping_price, 0) AS text)
+                    END AS gross_sale,
                     CAST(
                         CASE
+                            WHEN o.order_id LIKE 'MANUAL-%' THEN o.sale_price
                             WHEN f.amount IS NULL THEN NULL
                             WHEN order_totals.total_gross <= 0 THEN NULL
                             ELSE (
@@ -83,7 +87,7 @@ def fetch_sales() -> list[list]:
                         END
                     AS text) AS net_payout,
                     o.order_id,
-                    ''
+                    COALESCE(o.group_name, '')
                 FROM orders_raw o
                 LEFT JOIN listing_metadata lm USING (listing_id)
                 LEFT JOIN order_fees f
@@ -287,14 +291,17 @@ def process_new_entries(doc: gspread.Spreadsheet) -> int:
         return 0
 
     today_str = date.today().isoformat()
-    entries: list[dict] = []
-    sheet_row_numbers: list[int] = []  # 1-indexed row numbers for cell stamping
+    status_col = len(NEW_ENTRIES_HEADERS)  # last column, 1-indexed
+    purchase_entries: list[dict] = []
+    purchase_row_numbers: list[int] = []
+    sale_entries: list[dict] = []
+    sale_row_numbers: list[int] = []
 
     for i, row in enumerate(all_rows[1:], start=2):
         # Pad short rows to full header width
         row = list(row) + [""] * (len(NEW_ENTRIES_HEADERS) - len(row))
 
-        status = row[6].strip()
+        status = row[7].strip()
         if status:
             continue  # already synced
 
@@ -309,27 +316,46 @@ def process_new_entries(doc: gspread.Spreadsheet) -> int:
             print(f"  [new_entries] skipping '{description}': {e}")
             continue
 
-        raw_amount = row[2].strip().lstrip("$").replace(",", "") or None
-        entries.append({
+        entry_type = row[2].strip().lower()
+        if entry_type not in ("sale", "purchase", ""):
+            ws.update_cell(i, status_col, f"✗ Invalid type: '{row[2].strip()}'")
+            print(f"  [new_entries] invalid type '{row[2].strip()}' for '{description}' — valid values: sale, purchase")
+            continue
+        if not entry_type:
+            entry_type = "purchase"
+
+        raw_amount = row[3].strip().lstrip("$").replace(",", "") or None
+        entry = {
             "purchase_date":  date_val,
             "description":    description,
             "total_cost":     raw_amount,
-            "vendor":         row[3].strip() or None,
-            "payment_method": row[4].strip() or None,
-            "group_name":     row[5].strip() or None,
-        })
-        sheet_row_numbers.append(i)
+            "vendor":         row[4].strip() or None,
+            "payment_method": row[5].strip() or None,
+            "group_name":     row[6].strip() or None,
+        }
+        if entry_type == "sale":
+            sale_entries.append(entry)
+            sale_row_numbers.append(i)
+        else:
+            purchase_entries.append(entry)
+            purchase_row_numbers.append(i)
 
-    if not entries:
+    if not purchase_entries and not sale_entries:
         return 0
 
-    synced_indices = _insert_manual_entries(entries)
+    synced_count = 0
 
-    status_col = len(NEW_ENTRIES_HEADERS)  # last column, 1-indexed
-    for idx in synced_indices:
-        ws.update_cell(sheet_row_numbers[idx], status_col, f"✓ Synced {today_str}")
+    if purchase_entries:
+        for idx in _insert_manual_entries(purchase_entries):
+            ws.update_cell(purchase_row_numbers[idx], status_col, f"✓ Synced {today_str}")
+            synced_count += 1
 
-    return len(synced_indices)
+    if sale_entries:
+        for idx in _insert_manual_sales(sale_entries):
+            ws.update_cell(sale_row_numbers[idx], status_col, f"✓ Synced {today_str}")
+            synced_count += 1
+
+    return synced_count
 
 
 def _insert_manual_entries(entries: list[dict]) -> list[int]:
@@ -371,6 +397,44 @@ def _insert_manual_entries(entries: list[dict]) -> list[int]:
     return synced
 
 
+def _insert_manual_sales(entries: list[dict]) -> list[int]:
+    """
+    Insert manual sales into orders_raw.
+    Returns list of successfully inserted indices (into the entries list).
+    """
+    conn = get_connection()
+    synced: list[int] = []
+    try:
+        with conn.cursor() as cur:
+            for i, entry in enumerate(entries):
+                try:
+                    cur.execute("SAVEPOINT sp")
+                    order_id = f"MANUAL-{uuid.uuid4().hex[:16]}"
+                    cur.execute(
+                        """
+                        INSERT INTO orders_raw (
+                            order_id, listing_id, order_date, title, sale_price, group_name
+                        ) VALUES (%s, 'manual', %s, %s, %s, %s)
+                        """,
+                        (
+                            order_id,
+                            entry["purchase_date"],
+                            entry["description"],
+                            entry["total_cost"],
+                            entry["group_name"],
+                        ),
+                    )
+                    cur.execute("RELEASE SAVEPOINT sp")
+                    synced.append(i)
+                except Exception as e:
+                    cur.execute("ROLLBACK TO SAVEPOINT sp")
+                    print(f"  [new_entries] failed to insert sale '{entry['description']}': {e}")
+        conn.commit()
+    finally:
+        conn.close()
+    return synced
+
+
 # ── Sheet writing ─────────────────────────────────────────────────────────────
 
 def _open_sheet(doc_id: str, creds_path: str) -> gspread.Spreadsheet:
@@ -404,7 +468,8 @@ def write_sales_tab(doc: gspread.Spreadsheet, rows: list[list]) -> None:
                 group_by_order_id[order_id] = group_val
 
     for row in rows:
-        row[5] = group_by_order_id.get(row[4], "")
+        sheet_group = group_by_order_id.get(row[4], "")
+        row[5] = sheet_group if sheet_group else row[5]
 
     ws.clear()
     ws.update([SALES_HEADERS] + rows, value_input_option="USER_ENTERED")
