@@ -1,7 +1,7 @@
 name: Analytics daily ingest
 
 on:
-  # Triggered daily at 12:00 UTC (5am PT) by cron-job.org via workflow_dispatch
+  # Triggered daily at 10:00 UTC (3am PT) by cron-job.org via workflow_dispatch
   workflow_dispatch:
   push:
     paths:
