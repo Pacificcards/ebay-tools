@@ -1,12 +1,12 @@
 # Next Steps
 
 ## Immediate / Unblocked
-1. **Push local P&L changes to repo** — `pl/sync_to_sheets.py` and `CLAUDE.md` have uncommitted changes; the GitHub Action ("P&L ingest") will fail until pushed.
-2. **Update listener cron-job.org from every 15 min to hourly** — agreed this session; reduces GHA spend ~75%. Job ID: 7684877. Needs cron-job.org API key or manual update in the dashboard.
+1. **Update listener cron-job.org from every 15 min to hourly** — agreed 2026-06-21; reduces GHA spend ~75%. Job ID: 7684877. Needs cron-job.org API key or manual update in the dashboard.
 
 ## P&L
-3. **Handle refunds** — refunded orders show as positive revenue in Sales tab. Fix: offset or exclude REFUND rows from `order_fees` in the sales query in `sync_to_sheets.py`.
-4. **Manual entry UI** — New Entries tab works but is clunky. Approach (Flask/Streamlit/other) still TBD.
+2. **Handle refunds** — refunded orders show as positive revenue in Sales tab. Fix: offset or exclude REFUND rows from `order_fees` in the sales query in `sync_to_sheets.py`.
+3. **net_payout for manual sales from non-eBay platforms with fees** — currently net_payout = entered amount (assumes no fees). If user sells on TCGPlayer (~10.25% + $0.30) or similar, they'd need to enter the post-fee amount manually. No code change needed, just awareness. (suggested)
+4. **Manual entry UI** — New Entries tab is functional but clunky. Approach (Flask/Streamlit/other) still TBD.
 
 ## Price Check (ready to build — plan fully designed)
 5. **Build `listener/price_check.py`** — reads "Price Check" tab, calls Claude to simplify query, searches eBay Browse API, applies IQR + grade filter, writes Clearing/Holding prices back. Full plan at `/Users/eastcoastlimited/.claude/plans/fancy-skipping-teapot.md`.

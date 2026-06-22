@@ -38,8 +38,12 @@ Sheet tabs: **Sales**, **Purchases**, **Ad Fees**, **P&L by Group**, **New Entri
 - Credentials: `pl/credentials/service_account.json` (gitignored)
 - Service account: `ebay-tools-sheets@pcc-accounting.iam.gserviceaccount.com`
 
-#### Known data integrity issue
-The `pl-ingest.yml` GitHub Action is running **old code** (local changes not yet committed/pushed). Triggering it manually will fail with `ValueError: invalid literal for int() with base 10: 'manual'` on `save_purchase_groups`. Run the sync locally until the changes are pushed.
+#### Manual sales via New Entries tab
+- Set `type = sale` in the New Entries tab to route a row to the Sales tab (inserts into `orders_raw` with a `MANUAL-` prefixed order_id)
+- Set `type = purchase` or leave blank to route to the Purchases tab (existing behavior)
+- Any other value stamps `✗ Invalid type: '...'` in the status column and skips the row
+- Manual sales: `gross_sale` is blank, `net_payout` = entered amount (no eBay fees)
+- Group assigned in New Entries carries through to the Sales tab correctly
 
 ### 3. Listener (`listener/`)
 Scans eBay every 15 minutes for underpriced cards on a watchlist. Fires Discord alerts on new finds.
@@ -125,7 +129,8 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 
 ### P&L
 1. Handle refunds — refunded orders show as positive revenue in Sales tab
-2. Manual entry UI — New Entries Google Sheet tab is functional but clunky; approach (Flask/Streamlit/other) TBD
+2. Manual sales via New Entries — working as of 2026-06-22; `type = sale` routes to Sales tab
+3. Manual entry UI — New Entries tab is functional but clunky; approach (Flask/Streamlit/other) TBD
 
 ### Traffic Analytics
 1. ~~Add more listings to `report_listings.json`~~ — now has 4 listings (Pokemon 15 Card Lot, NBA Hoops Hobby Box, TAG 10 Mewtwo, TAG 10 Mienfoo)
@@ -153,6 +158,13 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - Whether to expose raw price range alongside the two recommendations
 
 ## Session Log
+
+### 2026-06-22
+- P&L: added manual sales support — New Entries `type = sale` routes to `orders_raw` (Sales tab); `type = purchase` or blank routes to `import_queue` (Purchases tab)
+- P&L: invalid type values now stamp `✗ Invalid type: '...'` in status column instead of silently defaulting to purchase
+- P&L: manual sales show gross_sale blank, net_payout = entered amount
+- P&L: fixed group assignment for Sales tab — `fetch_sales()` now returns `group_name` from DB (was hardcoded `''`); `write_sales_tab()` preserves DB group on first sync (same pattern as Purchases)
+- P&L: all changes committed and pushed (commit eb3a67f)
 
 ### 2026-06-21 (session 2)
 - P&L: added `group` column to Ad Fees tab — user assigns groups manually; assignments persisted to `order_fees.group_name` in Supabase
