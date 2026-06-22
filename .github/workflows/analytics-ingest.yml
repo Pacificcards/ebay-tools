@@ -1,8 +1,7 @@
 name: Analytics daily ingest
 
 on:
-  schedule:
-    - cron: '0 12 * * *'
+  # Triggered daily at 12:00 UTC (5am PT) by cron-job.org via workflow_dispatch
   workflow_dispatch:
   push:
     paths:
@@ -41,6 +40,7 @@ jobs:
         run: python -m traffic_analytics.compute_metrics
 
       - name: Send daily report
+        if: github.event_name != 'push'
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
