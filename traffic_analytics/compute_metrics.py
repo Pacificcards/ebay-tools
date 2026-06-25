@@ -38,10 +38,10 @@ def compute() -> None:
                 LEFT JOIN (
                     SELECT
                         listing_id,
-                        order_date          AS date,
-                        COUNT(*)            AS orders,
-                        SUM(quantity)       AS quantity,
-                        SUM(sale_price)     AS revenue
+                        order_date                                       AS date,
+                        COUNT(DISTINCT SPLIT_PART(order_id, '_', 1))    AS orders,
+                        SUM(quantity)                                    AS quantity,
+                        SUM(sale_price)                                  AS revenue
                     FROM orders_raw
                     GROUP BY listing_id, order_date
                 ) o USING (listing_id, date)

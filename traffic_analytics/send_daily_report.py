@@ -35,24 +35,30 @@ def fetch_data(conn, listing_id: str, dates: tuple) -> dict:
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT date, impressions_total, views_total, orders
+        SELECT date, impressions_total, views_total
         FROM listing_metrics_raw
         WHERE listing_id = %s AND date IN %s
     """, (listing_id, dates))
-    result = {row[0]: {"impressions": row[1], "clicks": row[2], "orders": row[3], "qty": 0}
+    result = {row[0]: {"impressions": row[1], "clicks": row[2], "orders": 0, "qty": 0}
               for row in cur.fetchall()}
 
+    # Source orders and qty from orders_raw (not listing_metrics_raw.orders, which stores
+    # eBay's TRANSACTION metric that counts units sold, not distinct orders).
+    # SPLIT_PART strips the _lineItemId suffix to count distinct eBay orders.
     cur.execute("""
-        SELECT order_date, SUM(quantity)
+        SELECT order_date,
+               COUNT(DISTINCT SPLIT_PART(order_id, '_', 1)) AS orders,
+               SUM(quantity) AS qty
         FROM orders_raw
         WHERE listing_id = %s AND order_date IN %s
         GROUP BY order_date
     """, (listing_id, dates))
-    for order_date, qty in cur.fetchall():
+    for order_date, order_count, qty in cur.fetchall():
         if order_date in result:
+            result[order_date]["orders"] = int(order_count)
             result[order_date]["qty"] = int(qty)
         else:
-            result[order_date] = {"impressions": None, "clicks": None, "orders": None, "qty": int(qty)}
+            result[order_date] = {"impressions": None, "clicks": None, "orders": int(order_count), "qty": int(qty)}
 
     return result
 
