@@ -2,11 +2,13 @@
 
 ## Immediate / Unblocked
 1. **Update listener cron-job.org from every 15 min to hourly** — agreed 2026-06-21; reduces GHA spend ~75%. Job ID: 7684877. Needs cron-job.org API key or manual update in the dashboard.
+2. ~~**Fix analytics email reliability**~~ — done 2026-06-22; cron-job.org now triggers at 10:00 UTC (3am PT), email decoupled from push triggers.
 
 ## P&L
-2. **Handle refunds** — refunded orders show as positive revenue in Sales tab. Fix: offset or exclude REFUND rows from `order_fees` in the sales query in `sync_to_sheets.py`.
-3. **net_payout for manual sales from non-eBay platforms with fees** — currently net_payout = entered amount (assumes no fees). If user sells on TCGPlayer (~10.25% + $0.30) or similar, they'd need to enter the post-fee amount manually. No code change needed, just awareness. (suggested)
-4. **Manual entry UI** — New Entries tab is functional but clunky. Approach (Flask/Streamlit/other) still TBD.
+2. **Listing-level hierarchy refactor** — full design complete (see CLAUDE.md P&L section). Steps: (a) create `listing_groups` table in Supabase; (b) seed from `orders_raw` distinct listing_ids + titles; (c) add Listings tab to sheet for group assignment; (d) update `fetch_sales`, `fetch_ad_fees` to derive group from listing; (e) update P&L by Group formula to use listing-derived groups; (f) optionally add P&L by Listing tab. Decide whether to add P&L by Listing tab before starting.
+3. **Fix stale tests** — `write_pl_tab` called with 3 args in tests but now takes 4 (`ad_fees_row_count`); `fetch_purchases` mock uses 6-column schema but now returns 7; Purchases batch preservation test index offsets wrong. Fix before next P&L deploy.
+4. **Handle refunds** — refunded orders show as positive revenue in Sales tab. Fix: exclude/offset REFUND rows in `fetch_sales()` query.
+5. **Manual entry UI** — New Entries tab functional but clunky. Approach (Flask/Streamlit/other) still TBD.
 
 ## Price Check (ready to build — plan fully designed)
 5. **Build `listener/price_check.py`** — reads "Price Check" tab, calls Claude to simplify query, searches eBay Browse API, applies IQR + grade filter, writes Clearing/Holding prices back. Full plan at `/Users/eastcoastlimited/.claude/plans/fancy-skipping-teapot.md`.

@@ -43,9 +43,9 @@ SCOPES = [
 NEW_ENTRIES_HEADERS = ["date", "description", "type", "amount", "vendor", "payment_method", "group", "status"]
 
 # Sales: order_date | title | gross_sale | net_payout | order_id | group
-SALES_HEADERS     = ["order_date", "title", "gross_sale", "net_payout", "order_id", "group"]
+SALES_HEADERS     = ["order_date", "title", "gross_sale", "net_payout", "order_id", "ebay_order_id", "shipping_cost", "group"]
 PURCHASES_HEADERS = ["purchase_date", "description", "vendor", "total_cost", "source", "id", "group"]
-AD_FEES_HEADERS   = ["date", "fee_type", "amount", "transaction_id", "group"]
+AD_FEES_HEADERS   = ["date", "fee_type", "amount", "order_id", "listing_id", "title", "transaction_id", "group"]
 
 PLAIN_FORMAT = {
     "backgroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
@@ -87,6 +87,20 @@ def fetch_sales() -> list[list]:
                         END
                     AS text) AS net_payout,
                     o.order_id,
+                    CASE WHEN o.order_id LIKE 'MANUAL-%' THEN ''
+                         ELSE SPLIT_PART(o.order_id, '_', 1)
+                    END AS ebay_order_id,
+                    CAST(
+                        CASE
+                            WHEN o.order_id LIKE 'MANUAL-%' THEN NULL
+                            WHEN sl.total_shipping IS NULL THEN NULL
+                            WHEN order_totals.total_gross <= 0 THEN NULL
+                            ELSE ROUND(
+                                sl.total_shipping * (o.sale_price + COALESCE(o.shipping_price, 0))
+                                / order_totals.total_gross,
+                            2)
+                        END
+                    AS text) AS shipping_cost,
                     COALESCE(o.group_name, '')
                 FROM orders_raw o
                 LEFT JOIN listing_metadata lm USING (listing_id)
@@ -100,6 +114,12 @@ def fetch_sales() -> list[list]:
                     FROM orders_raw
                     GROUP BY ebay_order_id
                 ) order_totals ON order_totals.ebay_order_id = SPLIT_PART(o.order_id, '_', 1)
+                LEFT JOIN (
+                    SELECT order_id, SUM(amount) AS total_shipping
+                    FROM order_fees
+                    WHERE fee_type = 'SHIPPING_LABEL' AND booking_entry = 'DEBIT'
+                    GROUP BY order_id
+                ) sl ON sl.order_id = SPLIT_PART(o.order_id, '_', 1)
                 ORDER BY o.order_date DESC
             """)
             return [list(row) for row in cur.fetchall()]
@@ -134,15 +154,37 @@ def fetch_ad_fees() -> list[list]:
     try:
         with conn.cursor() as cur:
             cur.execute("""
+                WITH fee_listing AS (
+                    SELECT
+                        f.*,
+                        COALESCE(
+                            f.listing_id,
+                            (SELECT o.listing_id
+                             FROM orders_raw o
+                             WHERE SPLIT_PART(o.order_id, '_', 1) = f.order_id
+                             LIMIT 1)
+                        ) AS resolved_listing_id
+                    FROM order_fees f
+                    WHERE f.fee_type != 'SALE'
+                )
                 SELECT
-                    transaction_date::text,
-                    COALESCE(fee_type, 'Unknown'),
-                    CAST(amount AS text),
-                    billing_transaction_id,
-                    COALESCE(group_name, '')
-                FROM order_fees
-                WHERE fee_type != 'SALE'
-                ORDER BY transaction_date DESC
+                    fl.transaction_date::text,
+                    COALESCE(fl.fee_type, 'Unknown'),
+                    CAST(fl.amount AS text),
+                    COALESCE(fl.order_id, ''),
+                    COALESCE(fl.resolved_listing_id, ''),
+                    COALESCE(
+                        (SELECT lm.title FROM listing_metadata lm
+                         WHERE lm.listing_id = fl.resolved_listing_id),
+                        (SELECT o.title FROM orders_raw o
+                         WHERE o.listing_id = fl.resolved_listing_id
+                         LIMIT 1),
+                        ''
+                    ) AS title,
+                    fl.billing_transaction_id,
+                    COALESCE(fl.group_name, '')
+                FROM fee_listing fl
+                ORDER BY fl.transaction_date DESC
             """)
             return [list(row) for row in cur.fetchall()]
     finally:
@@ -162,7 +204,8 @@ def _read_sale_groups(doc: gspread.Spreadsheet) -> dict[str, str]:
     if len(existing) > 1:
         for row in existing[1:]:
             order_id  = row[4] if len(row) > 4 else ""
-            group_val = row[5] if len(row) > 5 else ""
+            # Support old 6-col schema (group at 5) and new 8-col schema (group at 7)
+            group_val = row[7] if len(row) > 7 else (row[5] if len(row) > 5 else "")
             if order_id and group_val:
                 groups[order_id] = group_val
     return groups
@@ -227,8 +270,13 @@ def _read_ad_fee_groups(doc: gspread.Spreadsheet) -> dict[str, str]:
     groups: dict[str, str] = {}
     if len(existing) > 1:
         for row in existing[1:]:
-            txn_id    = row[3] if len(row) > 3 else ""
-            group_val = row[4] if len(row) > 4 else ""
+            # Support old 5-col schema (txn_id at 3) and new 8-col schema (txn_id at 6)
+            if len(row) >= 8:
+                txn_id    = row[6]
+                group_val = row[7]
+            else:
+                txn_id    = row[3] if len(row) > 3 else ""
+                group_val = row[4] if len(row) > 4 else ""
             if txn_id and group_val:
                 groups[txn_id] = group_val
     return groups
@@ -458,21 +506,22 @@ def write_sales_tab(doc: gspread.Spreadsheet, rows: list[list]) -> None:
     ws = _get_or_create_tab(doc, "Sales", index=0)
     existing = ws.get_all_values()
 
-    # Preserve group values (column F, index 5); order_id is column E (index 4)
+    # Preserve group values (column H, index 7); order_id is column E (index 4)
+    # Support old 6-col schema (group at 5) and new 8-col schema (group at 7)
     group_by_order_id: dict[str, str] = {}
     if len(existing) > 1:
         for row in existing[1:]:
             order_id  = row[4] if len(row) > 4 else ""
-            group_val = row[5] if len(row) > 5 else ""
+            group_val = row[7] if len(row) > 7 else (row[5] if len(row) > 5 else "")
             if order_id and group_val:
                 group_by_order_id[order_id] = group_val
 
     for row in rows:
         sheet_group = group_by_order_id.get(row[4], "")
-        row[5] = sheet_group if sheet_group else row[5]
+        row[7] = sheet_group if sheet_group else row[7]
 
     ws.clear()
-    ws.update([SALES_HEADERS] + rows, value_input_option="USER_ENTERED")
+    ws.update([SALES_HEADERS] + rows, 'A1', value_input_option="USER_ENTERED")
     _reset_header_format(ws)
 
 
@@ -494,7 +543,7 @@ def write_purchases_tab(doc: gspread.Spreadsheet, rows: list[list]) -> None:
         row[6] = sheet_group if sheet_group else row[6]
 
     ws.clear()
-    ws.update([PURCHASES_HEADERS] + rows, value_input_option="USER_ENTERED")
+    ws.update([PURCHASES_HEADERS] + rows, 'A1', value_input_option="USER_ENTERED")
     _reset_header_format(ws)
 
 
@@ -502,21 +551,26 @@ def write_ad_fees_tab(doc: gspread.Spreadsheet, rows: list[list]) -> None:
     ws = _get_or_create_tab(doc, "Ad Fees", index=2)
     existing = ws.get_all_values()
 
-    # Preserve group values (column E, index 4); billing_transaction_id is column D (index 3)
+    # Preserve group values (column H, index 7); billing_transaction_id is column G (index 6)
+    # Also support old 5-col schema on first sync after column additions
     group_by_txn_id: dict[str, str] = {}
     if len(existing) > 1:
         for row in existing[1:]:
-            txn_id    = row[3] if len(row) > 3 else ""
-            group_val = row[4] if len(row) > 4 else ""
+            if len(row) >= 8:
+                txn_id    = row[6]
+                group_val = row[7]
+            else:
+                txn_id    = row[3] if len(row) > 3 else ""
+                group_val = row[4] if len(row) > 4 else ""
             if txn_id and group_val:
                 group_by_txn_id[txn_id] = group_val
 
     for row in rows:
-        sheet_group = group_by_txn_id.get(row[3], "")
-        row[4] = sheet_group if sheet_group else row[4]
+        sheet_group = group_by_txn_id.get(row[6], "")
+        row[7] = sheet_group if sheet_group else row[7]
 
     ws.clear()
-    ws.update([AD_FEES_HEADERS] + rows, value_input_option="USER_ENTERED")
+    ws.update([AD_FEES_HEADERS] + rows, 'A1', value_input_option="USER_ENTERED")
     _reset_header_format(ws)
 
 
@@ -527,9 +581,9 @@ def write_pl_tab(doc: gspread.Spreadsheet, sales_row_count: int, purchases_row_c
     purchases_end = max(purchases_row_count + 1, 2)
     ad_fees_end   = max(ad_fees_row_count + 1, 2)
 
-    sg  = f"Sales!F2:F{sales_end}"
+    sg  = f"Sales!H2:H{sales_end}"
     pg  = f"Purchases!G2:G{purchases_end}"
-    ag  = f"'Ad Fees'!E2:E{ad_fees_end}"
+    ag  = f"'Ad Fees'!H2:H{ad_fees_end}"
     sc  = f"Sales!C2:C{sales_end}"
     sd  = f"Sales!D2:D{sales_end}"
     pc  = f"Purchases!D2:D{purchases_end}"
@@ -547,7 +601,7 @@ def write_pl_tab(doc: gspread.Spreadsheet, sales_row_count: int, purchases_row_c
     ]
 
     ws.clear()
-    ws.update(headers + data, value_input_option="USER_ENTERED")
+    ws.update(headers + data, 'A1', value_input_option="USER_ENTERED")
     _reset_header_format(ws)
 
 

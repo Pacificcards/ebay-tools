@@ -45,6 +45,31 @@ Sheet tabs: **Sales**, **Purchases**, **Ad Fees**, **P&L by Group**, **New Entri
 - Manual sales: `gross_sale` is blank, `net_payout` = entered amount (no eBay fees)
 - Group assigned in New Entries carries through to the Sales tab correctly
 
+#### Planned: Listing-level P&L hierarchy (NOT YET BUILT — 2026-06-23)
+Architecture decision: move group assignment from order/fee level to **listing level**.
+
+**Hierarchy:** Group > Listing > Order
+- A group contains multiple listings (e.g. all cards from one hobby box break)
+- A listing has many orders; all orders for a listing map to the same group
+- Shipping costs and ad spend attributed at listing level, then roll up to group
+
+**New table: `listing_groups`** (`listing_id | group_name | title`)
+- Do NOT anchor to `listing_metadata` — it only covers listings active since 2026-05-23; 164 of 243 distinct listing_ids in `orders_raw` are missing from it
+- Seed titles from `orders_raw.title` — all 243 distinct listing_ids have titles (confirmed complete)
+- Group assignment happens in a new **Listings** tab in the sheet (one row per listing, one `group` column to edit)
+- Sales, Ad Fees tabs become read-only for group (display only, derived from listing)
+
+**Cost attribution facts (confirmed from DB):**
+- Shipping labels (`SHIPPING_LABEL`): 721 of 729 rows have `order_id`; join to `orders_raw` via `SPLIT_PART(order_id, '_', 1)` — 591 orders matched, $1,377 attributable
+- Ad spend (`NON_SALE_CHARGE`): 333 of 336 rows have `listing_id`; NO `order_id` — listing-level only, $2,132 total
+- Existing group assignments on `orders_raw` and `order_fees`: clean slate acceptable, will be reassigned via Listings tab
+
+**Goal:** per-listing profitability (revenue - shipping label - ad spend = listing profit); groups aggregate listings for batch P&L
+
+**Still to decide before building:**
+- Whether to add a P&L by Listing tab (in addition to P&L by Group)
+- Exact migration plan for existing group assignments
+
 ### 3. Listener (`listener/`)
 Scans eBay every 15 minutes for underpriced cards on a watchlist. Fires Discord alerts on new finds.
 
@@ -128,13 +153,15 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 - No open items — campaigns.json migration complete and tested 2026-06-15
 
 ### P&L
-1. Handle refunds — refunded orders show as positive revenue in Sales tab
-2. Manual sales via New Entries — working as of 2026-06-22; `type = sale` routes to Sales tab
-3. Manual entry UI — New Entries tab is functional but clunky; approach (Flask/Streamlit/other) TBD
+1. **Listing-level hierarchy refactor** — Group > Listing > Order; new `listing_groups` table; design complete, not yet built (see full spec in P&L section above)
+2. Handle refunds — refunded orders show as positive revenue in Sales tab
+3. Tests are stale — `write_pl_tab` now takes 4 args but tests call it with 3; `fetch_purchases` returns 7 columns but test mock uses 6; Purchases batch preservation test uses old 6-column schema
+4. Manual entry UI — New Entries tab functional but clunky; approach TBD
 
 ### Traffic Analytics
 1. ~~Add more listings to `report_listings.json`~~ — now has 4 listings (Pokemon 15 Card Lot, NBA Hoops Hobby Box, TAG 10 Mewtwo, TAG 10 Mienfoo)
 2. ~~Streamlit dashboard~~ — dropped in favour of daily email (2026-06-20)
+3. ~~GitHub Actions schedule cron~~ — removed; cron-job.org triggers workflow_dispatch at 10:00 UTC (3am PT) daily (2026-06-22)
 
 ### Price Check (planned, not yet built)
 New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy-skipping-teapot.md`
@@ -159,12 +186,22 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 
 ## Session Log
 
+### 2026-06-23
+- P&L: confirmed shipping label costs (SHIPPING_LABEL) ARE attributable to orders — join via `SPLIT_PART(order_id, '_', 1)`; 591 orders matched, $1,377 in attributable shipping
+- P&L: confirmed ad spend (NON_SALE_CHARGE) is NOT attributable to orders — no order_id in eBay API response; listing_id only (333/336 rows), $2,132 total
+- P&L: designed listing-level hierarchy (Group > Listing > Order) — group assignment moves to listing level via new `listing_groups` table; full spec written in CLAUDE.md
+- P&L: ruled out anchoring to `listing_metadata` (only 79 of 243 order listing_ids present — started May 23); confirmed `orders_raw.title` has complete title coverage for all 243 listing_ids
+- P&L: implementation not started — user paused to think; will revisit
+
 ### 2026-06-22
 - P&L: added manual sales support — New Entries `type = sale` routes to `orders_raw` (Sales tab); `type = purchase` or blank routes to `import_queue` (Purchases tab)
 - P&L: invalid type values now stamp `✗ Invalid type: '...'` in status column instead of silently defaulting to purchase
 - P&L: manual sales show gross_sale blank, net_payout = entered amount
 - P&L: fixed group assignment for Sales tab — `fetch_sales()` now returns `group_name` from DB (was hardcoded `''`); `write_sales_tab()` preserves DB group on first sync (same pattern as Purchases)
 - P&L: all changes committed and pushed (commit eb3a67f)
+- Traffic Analytics: removed GitHub Actions schedule cron — was unreliable (delayed or skipped); replaced with cron-job.org workflow_dispatch at 10:00 UTC (3am PT)
+- Traffic Analytics: email send step now skipped on push triggers (`if: github.event_name != 'push'`) — code pushes run the data pipeline but do not fire the email
+- Traffic Analytics: cron-job.org job created and validated (workflow_dispatch test run confirmed email sends correctly)
 
 ### 2026-06-21 (session 2)
 - P&L: added `group` column to Ad Fees tab — user assigns groups manually; assignments persisted to `order_fees.group_name` in Supabase
