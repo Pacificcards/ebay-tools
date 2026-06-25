@@ -168,3 +168,42 @@ CREATE TABLE IF NOT EXISTS batch_sales (
 -- ============================================================
 -- listener_watchlist (search_query, max_price, category)
 -- listener_alerts (listing_id, title, price, reference_price, alerted_at)
+
+-- ============================================================
+-- MARKET MONITOR
+-- ============================================================
+
+-- Daily aggregate snapshot per monitored query.
+CREATE TABLE IF NOT EXISTS market_snapshots (
+    id            SERIAL PRIMARY KEY,
+    query_id      TEXT        NOT NULL,
+    name          TEXT,
+    date          DATE        NOT NULL,
+    listing_count INTEGER,
+    new_count     INTEGER,
+    gone_count    INTEGER,
+    price_min     NUMERIC(10,2),
+    price_max     NUMERIC(10,2),
+    price_mean    NUMERIC(10,2),
+    price_median  NUMERIC(10,2),
+    price_p25     NUMERIC(10,2),
+    price_p75     NUMERIC(10,2),
+    fetched_at    TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(query_id, date)
+);
+
+-- Per-listing lifespan tracking across daily runs.
+-- first_seen / last_seen updated by each fetch run.
+-- "new" = first_seen = today; "gone" = last_seen = yesterday.
+CREATE TABLE IF NOT EXISTS market_snapshot_items (
+    id            SERIAL PRIMARY KEY,
+    query_id      TEXT        NOT NULL,
+    item_id       TEXT        NOT NULL,
+    title         TEXT,
+    price         NUMERIC(10,2),
+    buying_format TEXT,
+    url           TEXT,
+    first_seen    DATE        NOT NULL,
+    last_seen     DATE        NOT NULL,
+    UNIQUE(query_id, item_id)
+);

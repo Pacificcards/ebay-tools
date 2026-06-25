@@ -1,0 +1,42 @@
+name: Market Monitor
+
+on:
+  # Triggered daily at 10:30 UTC (after analytics-ingest at 10:00) by cron-job.org
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install -r requirements.txt
+
+      - name: Fetch market listings
+        env:
+          EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
+          EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+          MARKET_MONITOR_SHEET_ID: ${{ secrets.MARKET_MONITOR_SHEET_ID }}
+        run: python -m market_monitor.fetch_market
+
+      - name: Generate dashboard data
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: python -m market_monitor.generate_dashboard
+
+      - name: Commit market_data.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/market/market_data.json
+          git diff --staged --quiet || git commit -m "chore: market snapshot $(date +%Y-%m-%d)"
+          git push

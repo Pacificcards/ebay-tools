@@ -87,6 +87,73 @@ def search_listings_by_epid(token: str, epid: str, min_price: float, max_price: 
     return _parse_items(resp.json())
 
 
+def _parse_market_items(response_json: dict) -> list[dict]:
+    """Parse Browse API response for market monitoring (includes buying_format, no seller fields)."""
+    results = []
+    for item in response_json.get("itemSummaries", []):
+        price_val = item.get("price", {}).get("value")
+        raw_id = item.get("itemId", "")
+        item_id = raw_id.split("|")[1] if raw_id.count("|") >= 2 else raw_id
+        buying_options = item.get("buyingOptions", [])
+        buying_format = "AUCTION" if "AUCTION" in buying_options else "FIXED_PRICE"
+        results.append({
+            "item_id": item_id,
+            "title": item.get("title", ""),
+            "price": float(price_val) if price_val else 0.0,
+            "buying_format": buying_format,
+            "url": item.get("itemWebUrl", ""),
+        })
+    return results
+
+
+def search_all_listings(
+    token: str,
+    query: str,
+    category_id: str | None = None,
+    min_price: float | None = None,
+    max_price: float | None = None,
+) -> list[dict]:
+    """Return all active US listings matching query (BIN + auction). Paginated up to 2000 results."""
+    filters = ["itemLocationCountry:US", "priceCurrency:USD"]
+    if min_price is not None and max_price is not None:
+        filters.append(f"price:[{min_price}..{max_price}]")
+    elif min_price is not None:
+        filters.append(f"price:[{min_price}..]")
+    elif max_price is not None:
+        filters.append(f"price:[..{max_price}]")
+
+    params = {
+        "q": query,
+        "filter": ",".join(filters),
+        "limit": 200,
+        "sort": "price",
+    }
+    if category_id:
+        params["category_ids"] = category_id
+
+    all_items = []
+    offset = 0
+    MAX = 2000
+
+    while len(all_items) < MAX:
+        params["offset"] = offset
+        resp = requests.get(
+            f"{BROWSE_BASE}/item_summary/search",
+            headers=_headers(token),
+            params=params,
+        )
+        if not resp.ok:
+            break
+        data = resp.json()
+        batch = _parse_market_items(data)
+        all_items.extend(batch)
+        if len(batch) < 200:
+            break
+        offset += 200
+
+    return all_items[:MAX]
+
+
 def search_listings_by_keyword(token: str, query: str, min_price: float, max_price: float) -> list[dict]:
     """Return recent BIN listings matching a keyword query within the price range, cheapest first."""
     resp = requests.get(
