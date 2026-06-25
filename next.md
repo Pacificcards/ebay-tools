@@ -17,6 +17,10 @@
 8. **Create `.github/workflows/price-check.yml`** — `workflow_dispatch` only; needs `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `LISTENER_SHEET_ID`, `GOOGLE_SHEETS_CREDENTIALS`, `ANTHROPIC_API_KEY`.
 9. **User setup** — create "Price Check" tab in Listener sheet with headers: Description | Hint URL | EPID | Clearing Price | Holding Price | # Listings | Last Checked.
 
-## Traffic Analytics (suggested)
-10. **Revenue metric in daily email** — `orders_raw.sale_price` is available; add a Revenue row to the report. (suggested)
-11. **Weekly summary email** — Monday morning email aggregating the full prior week per listing. (suggested)
+## Traffic Analytics
+10. **Fix orders vs quantity bug in daily email** — on 2026-06-23, 1 order for qty 3 was reported as 3 orders for qty 0. Orders and quantity are being counted/sourced incorrectly; needs investigation into how `compute_metrics` or `send_daily_report` aggregates these fields.
+11. **Revenue metric in daily email** — `orders_raw.sale_price` is available; add a Revenue row to the report. (suggested)
+12. **Weekly summary email** — Monday morning email aggregating the full prior week per listing. (suggested)
+
+## Active Listings Counter (stub — details TBD)
+13. **New listener subproject: count active listings for sealed products** — scan eBay for the number of active listings for specific sealed products the user tracks. User will provide more detail on scope and trigger. Parking here as a near-term project.
