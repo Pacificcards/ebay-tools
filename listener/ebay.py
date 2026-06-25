@@ -3,7 +3,8 @@ import re
 import requests
 from datetime import datetime, timezone, timedelta
 
-BROWSE_BASE = "https://api.ebay.com/buy/browse/v1"
+BROWSE_BASE   = "https://api.ebay.com/buy/browse/v1"
+TAXONOMY_BASE = "https://api.ebay.com/commerce/taxonomy/v1"
 TOKEN_URL = "https://api.ebay.com/identity/v1/oauth2/token"
 APP_SCOPE = "https://api.ebay.com/oauth/api_scope"
 
@@ -32,6 +33,21 @@ def _build_filter(min_price: float, max_price: float) -> str:
         "buyingOptions:{FIXED_PRICE}",
         "itemLocationCountry:US",
     ])
+
+
+def get_category_id(token: str, category_name: str) -> str | None:
+    """Look up an eBay category ID by name via the Taxonomy API. Returns the top suggestion."""
+    resp = requests.get(
+        f"{TAXONOMY_BASE}/category_tree/0/get_category_suggestions",
+        headers=_headers(token),
+        params={"q": category_name},
+    )
+    if not resp.ok:
+        return None
+    suggestions = resp.json().get("categorySuggestions", [])
+    if not suggestions:
+        return None
+    return suggestions[0]["category"]["categoryId"]
 
 
 def get_epid_from_listing(token: str, hint_url: str) -> str | None:
