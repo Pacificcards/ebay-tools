@@ -27,6 +27,16 @@ Google Sheets-based P&L. Script: `pl/sync_to_sheets.py`. Runs daily via `pl-inge
 
 Sheet tabs: **Sales**, **Purchases**, **Ad Fees**, **P&L by Group**, **New Entries**
 
+#### Column schemas (current)
+- **Sales**: `order_date | title | gross_sale | net_payout | order_id | ebay_order_id | shipping_cost | group`
+  - `order_id` = full internal key (e.g. `22-14785-63636_10082049011622`) — used for group persistence
+  - `ebay_order_id` = base order ID (e.g. `22-14785-63636`) — matches Ad Fees tab for cross-reference; blank for manual sales
+  - `shipping_cost` = from `order_fees` SHIPPING_LABEL DEBIT, proportionally split for multi-line orders; blank if label was via Pirateship or not yet reported by eBay
+- **Purchases**: `purchase_date | description | vendor | total_cost | source | id | group`
+- **Ad Fees**: `date | fee_type | amount | order_id | listing_id | title | transaction_id | group`
+  - `order_id` populated for SHIPPING_LABEL rows; blank for NON_SALE_CHARGE (ad spend has no order-level attribution)
+  - `listing_id` + `title` populated for most rows; derived from `listing_metadata` or `orders_raw` via join
+
 - `gross_sale` = item price + buyer-paid shipping
 - `net_payout` = eBay SALE CREDIT after fees, proportionally split for multi-line orders
 - `group` column is user-editable on Sales, Purchases, and Ad Fees tabs — preserved across syncs via Supabase
@@ -140,6 +150,9 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 
 ## Constraints
 - Do NOT fetch eBay developer docs from the web — user downloads PDFs and places in `/Users/eastcoastlimited/ClaudeCode/ebay_dev_docs/`
+- **Schema change gotcha (P&L):** when adding/removing columns that shift the `group` column index, BOTH `_read_*_groups()` AND the preservation block inside `write_*_tab()` must be updated — they are separate and both read from the sheet. Add backwards-compat for the old schema so the first sync after a change doesn't corrupt group assignments.
+- **gspread 6.x:** `ws.update()` takes `(values, range_name)` — values first. Always pass explicit `'A1'` as range_name to avoid ambiguity. `ws.clear()` may not clear beyond gspread's tracked column range; user-added columns in the sheet survive a clear.
+- **eBay Finances API delay:** shipping label transactions can appear hours after purchase. If a label is missing, it may just not have been reported yet — trigger a manual `fetch_finances` re-run before assuming it was purchased externally.
 - eBay refresh token valid ~Nov 2027. Re-gen: `/Users/eastcoastlimited/ClaudeCode/ebay_campaign_scheduler/get_refresh_token.py`
 - Legacy scheduler repo at `/Users/eastcoastlimited/ClaudeCode/ebay_campaign_scheduler` — do not touch unless asked
 - cron-job.org API key is in `.claude/settings.local.json` (not in repo)
@@ -155,8 +168,11 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 ### P&L
 1. **Listing-level hierarchy refactor** — Group > Listing > Order; new `listing_groups` table; design complete, not yet built (see full spec in P&L section above)
 2. Handle refunds — refunded orders show as positive revenue in Sales tab
-3. Tests are stale — `write_pl_tab` now takes 4 args but tests call it with 3; `fetch_purchases` returns 7 columns but test mock uses 6; Purchases batch preservation test uses old 6-column schema
+3. Tests are stale — `write_pl_tab` takes 4 args but tests call it with 3; `fetch_purchases` returns 7 cols but mock uses 6; Sales/Purchases batch preservation tests use old column indices
 4. Manual entry UI — New Entries tab functional but clunky; approach TBD
+
+### Traffic Analytics
+1. **Orders vs quantity bug** — on 2026-06-23, 1 order for qty 3 was reported as 3 orders / qty 0; investigate `compute_metrics` or `send_daily_report` aggregation logic
 
 ### Traffic Analytics
 1. ~~Add more listings to `report_listings.json`~~ — now has 4 listings (Pokemon 15 Card Lot, NBA Hoops Hobby Box, TAG 10 Mewtwo, TAG 10 Mienfoo)
@@ -185,6 +201,17 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - Whether to expose raw price range alongside the two recommendations
 
 ## Session Log
+
+### 2026-06-24
+- P&L: added `ebay_order_id` and `shipping_cost` to Sales tab; shipping cost joins via `SPLIT_PART` on order_id, proportionally split for multi-line orders
+- P&L: added `order_id`, `listing_id`, `title` columns to Ad Fees tab (derived from `order_fees` + `orders_raw` + `listing_metadata` via CTE)
+- P&L: fixed group preservation bug — `write_sales_tab` had stale index for group column (was reading index 5 after schema change moved group to index 7, causing ebay_order_id to be written as group value); both `_read_sale_groups` and `write_sales_tab`'s internal preservation block now handle old 6-col and new 8-col schemas
+- P&L: fixed gspread 6.x deprecation — all `ws.update()` calls now pass values before range_name
+- P&L: fixed missing Ad Fees header row and stale user columns — root cause was gspread not clearing beyond its tracked range; fix: explicit `'A1'` range on all update calls
+- P&L: eBay label transactions can have same-day reporting delay (order 14-14798-26564 purchased June 24, not in morning pipeline run; resolved by manual `fetch_finances` re-run)
+- P&L: all changes committed and pushed (commits 553713d, f39798f, 5a510b1)
+- Backlog: added traffic report orders/qty bug (1 order qty 3 → reported as 3 orders qty 0, seen 2026-06-23)
+- Backlog: added active listings counter stub (new listener subproject, details TBD)
 
 ### 2026-06-23
 - P&L: confirmed shipping label costs (SHIPPING_LABEL) ARE attributable to orders — join via `SPLIT_PART(order_id, '_', 1)`; 591 orders matched, $1,377 in attributable shipping
