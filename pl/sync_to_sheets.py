@@ -42,8 +42,8 @@ SCOPES = [
 # New Entries: date | description | type | amount | vendor | payment_method | group | status
 NEW_ENTRIES_HEADERS = ["date", "description", "type", "amount", "vendor", "payment_method", "group", "status"]
 
-# Sales: order_date | title | gross_sale | net_payout | order_id | ebay_order_id | shipping_cost | group | source
-SALES_HEADERS     = ["order_date", "title", "gross_sale", "net_payout", "order_id", "ebay_order_id", "shipping_cost", "group", "source"]
+# Sales: order_date | title | gross_sale | net_payout | shipping_cost | order_id | ebay_order_id | group | source
+SALES_HEADERS     = ["order_date", "title", "gross_sale", "net_payout", "shipping_cost", "order_id", "ebay_order_id", "group", "source"]
 PURCHASES_HEADERS = ["purchase_date", "description", "vendor", "total_cost", "source", "id", "group"]
 AD_FEES_HEADERS   = ["date", "fee_type", "amount", "order_id", "listing_id", "title", "transaction_id", "group"]
 
@@ -86,10 +86,6 @@ def fetch_sales() -> list[list]:
                             )
                         END
                     AS text) AS net_payout,
-                    o.order_id,
-                    CASE WHEN o.order_id LIKE 'MANUAL-%' THEN ''
-                         ELSE SPLIT_PART(o.order_id, '_', 1)
-                    END AS ebay_order_id,
                     CAST(
                         CASE
                             WHEN o.order_id LIKE 'MANUAL-%' THEN NULL
@@ -101,6 +97,10 @@ def fetch_sales() -> list[list]:
                             2)
                         END
                     AS text) AS shipping_cost,
+                    o.order_id,
+                    CASE WHEN o.order_id LIKE 'MANUAL-%' THEN ''
+                         ELSE SPLIT_PART(o.order_id, '_', 1)
+                    END AS ebay_order_id,
                     COALESCE(o.group_name, ''),
                     CASE WHEN o.order_id LIKE 'MANUAL-%' THEN 'Manual' ELSE 'eBay' END AS source
                 FROM orders_raw o
@@ -204,8 +204,9 @@ def _read_sale_groups(doc: gspread.Spreadsheet) -> dict[str, str]:
     groups: dict[str, str] = {}
     if len(existing) > 1:
         for row in existing[1:]:
-            order_id  = row[4] if len(row) > 4 else ""
-            # Support old 6-col schema (group at 5) and new 8-col schema (group at 7)
+            # order_id col: index 5 in current 9-col schema; index 4 in old <=8-col schemas
+            order_id  = row[5] if len(row) > 7 else (row[4] if len(row) > 4 else "")
+            # group col: index 7 in current schema; index 5 in old 6-col schema
             group_val = row[7] if len(row) > 7 else (row[5] if len(row) > 5 else "")
             if order_id and group_val:
                 groups[order_id] = group_val
@@ -507,18 +508,18 @@ def write_sales_tab(doc: gspread.Spreadsheet, rows: list[list]) -> None:
     ws = _get_or_create_tab(doc, "Sales", index=0)
     existing = ws.get_all_values()
 
-    # Preserve group values (column H, index 7); order_id is column E (index 4)
-    # Support old 6-col (group at 5), 8-col (group at 7), and current 9-col (group at 7) schemas
+    # Preserve group values (column H, index 7); order_id is column F (index 5 in current 9-col schema)
+    # Support old 6-col (group at 5, order_id at 4), and current 9-col (group at 7, order_id at 5)
     group_by_order_id: dict[str, str] = {}
     if len(existing) > 1:
         for row in existing[1:]:
-            order_id  = row[4] if len(row) > 4 else ""
+            order_id  = row[5] if len(row) > 7 else (row[4] if len(row) > 4 else "")
             group_val = row[7] if len(row) > 7 else (row[5] if len(row) > 5 else "")
             if order_id and group_val:
                 group_by_order_id[order_id] = group_val
 
     for row in rows:
-        sheet_group = group_by_order_id.get(row[4], "")
+        sheet_group = group_by_order_id.get(row[5], "")
         row[7] = sheet_group if sheet_group else row[7]
 
     ws.clear()
