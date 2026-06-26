@@ -103,7 +103,40 @@ Scans eBay every 15 minutes for underpriced cards on a watchlist. Fires Discord 
 - `COL_EPID = 8`, `COL_EPID_STATUS = 9` (1-based, in `listener/sheets.py`)
 - Discord bot requires Message Content Intent enabled in Discord developer portal
 
-### 4. Campaign Scheduler (`scheduler/`)
+### 4. Market Monitor (`market_monitor/`)
+Daily pipeline that tracks active eBay listings for ~12 sealed product search queries. Runs via `market-monitor.yml` at 10:30 UTC (after analytics-ingest).
+
+**Steps in order:**
+1. `fetch_market.py` — reads `pcc_sealed_monitor` Google Sheet ("Queries" tab), resolves category names → IDs via eBay Taxonomy API, searches eBay Browse API (paginated, BIN + auction, up to 2,000 results/query), upserts per-listing tracking and daily aggregate stats to Supabase
+2. `generate_dashboard.py` — reads last 90 days of DB data, writes `docs/market/market_data.json`
+3. GHA commits `market_data.json` back to repo → GitHub Pages serves updated dashboard
+
+**Google Sheet config (`pcc_sealed_monitor` → `Queries` tab):**
+Columns: `Name | Query | Category | Min Price | Max Price | Active`
+- `Category` = plain English name (e.g. "Trading Card Games") — code looks up the ID via eBay Taxonomy API
+- `Active` = checkbox — unchecked rows are skipped
+- Query `id` (DB key) is auto-derived: slugified lowercase Name
+
+**Database tables:**
+- `market_snapshots` — daily aggregate per query: `(query_id, date)` UNIQUE; stores count, new_count, gone_count, price_min/max/mean/median/p25/p75
+- `market_snapshot_items` — per-listing lifespan: `(query_id, item_id)` UNIQUE; `first_seen` set on insert, `last_seen` updated each run. "New" = first_seen = today; "Gone" = last_seen = yesterday (proxy: sold or ended)
+
+**Dashboard (GitHub Pages):**
+URL: `pacificcards.github.io/ebay-tools/market/` (once GitHub Pages enabled)
+Views: overview table (all queries, DoD comparison), trend charts (listing count + median price, 90 days), price histogram, new listings today table, gone today table.
+Reads `docs/market/market_data.json` at page load (Chart.js, no backend needed).
+
+**Key files:**
+- `market_monitor/sheets.py` — `load_queries()` reads Google Sheet
+- `market_monitor/fetch_market.py` — main daily fetcher
+- `market_monitor/generate_dashboard.py` — writes `market_data.json`
+- `listener/ebay.py` — `search_all_listings()` (paginated, no time filter, BIN+auction) + `get_category_id()` (Taxonomy API)
+- `docs/market/index.html` — static dashboard HTML (committed once, not regenerated)
+- `docs/market/market_data.json` — regenerated daily by pipeline
+
+**GitHub secret needed:** `MARKET_MONITOR_SHEET_ID`
+
+### 5. Campaign Scheduler (`scheduler/`)
 Pauses/resumes eBay Promoted Listings campaigns on a schedule. Triggered by cron-job.org → `workflow_dispatch` on `campaign-scheduler.yml`.
 
 - Campaigns defined in `scheduler/campaigns.json` (id + name — edit here to add/remove/rename)
@@ -146,7 +179,7 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 - `pl/credentials/` is gitignored — never commit
 
 ## GitHub Secrets (org: Pacificcards)
-`EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_REFRESH_TOKEN`, `SUPABASE_DB_URL`, `GOOGLE_SHEETS_CREDENTIALS`, `LISTENER_SHEET_ID`, `PL_SHEETS_DOC_ID`, `DISCORD_WEBHOOK_URL`, `DISCORD_BOT_TOKEN`, `DISCORD_WATCHLIST_CHANNEL_ID`, `ANTHROPIC_API_KEY`, `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`
+`EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_REFRESH_TOKEN`, `SUPABASE_DB_URL`, `GOOGLE_SHEETS_CREDENTIALS`, `LISTENER_SHEET_ID`, `PL_SHEETS_DOC_ID`, `MARKET_MONITOR_SHEET_ID` (pending — user to add), `DISCORD_WEBHOOK_URL`, `DISCORD_BOT_TOKEN`, `DISCORD_WATCHLIST_CHANNEL_ID`, `ANTHROPIC_API_KEY`, `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`
 
 ## Constraints
 - Do NOT fetch eBay developer docs from the web — user downloads PDFs and places in `/Users/eastcoastlimited/ClaudeCode/ebay_dev_docs/`
@@ -172,12 +205,17 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 4. Manual entry UI — New Entries tab functional but clunky; approach TBD
 
 ### Traffic Analytics
-1. **Orders vs quantity bug** — on 2026-06-23, 1 order for qty 3 was reported as 3 orders / qty 0; investigate `compute_metrics` or `send_daily_report` aggregation logic
+- No open items — orders/qty bug fixed 2026-06-25 (see session log)
 
-### Traffic Analytics
-1. ~~Add more listings to `report_listings.json`~~ — now has 4 listings (Pokemon 15 Card Lot, NBA Hoops Hobby Box, TAG 10 Mewtwo, TAG 10 Mienfoo)
-2. ~~Streamlit dashboard~~ — dropped in favour of daily email (2026-06-20)
-3. ~~GitHub Actions schedule cron~~ — removed; cron-job.org triggers workflow_dispatch at 10:00 UTC (3am PT) daily (2026-06-22)
+### Market Monitor (built, pending user setup)
+New subproject tracking active eBay listing supply and pricing for ~12 sealed product queries. See subproject section below for full spec.
+
+**Pending user actions before first run:**
+1. Create Google Sheet named `pcc_sealed_monitor` with a `Queries` tab (headers: `Name | Query | Category | Min Price | Max Price | Active`)
+2. Share sheet with service account `ebay-tools-sheets@pcc-accounting.iam.gserviceaccount.com`
+3. Add GitHub secret `MARKET_MONITOR_SHEET_ID`
+4. Enable GitHub Pages (repo Settings → Pages → main branch, /docs folder)
+5. Trigger `Market Monitor` workflow manually for first run
 
 ### Price Check (planned, not yet built)
 New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy-skipping-teapot.md`
@@ -201,6 +239,15 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - Whether to expose raw price range alongside the two recommendations
 
 ## Session Log
+
+### 2026-06-25 / 2026-06-26
+- Traffic Analytics: fixed two bugs in daily email orders/qty reporting:
+  1. `listing_metrics_raw.orders` stores eBay's `TRANSACTION` metric (units sold, not distinct orders) — 1 order for qty 3 reported as 3 orders. Fixed by sourcing orders from `orders_raw` using `COUNT(DISTINCT SPLIT_PART(order_id, '_', 1))`
+  2. Date mismatch: `listing_metrics_raw` uses eBay's PT reporting date; `orders_raw.order_date` is UTC — caused qty to appear on a different day than orders. Fixed by sourcing both metrics from `orders_raw`. Same `COUNT(*)` → `COUNT(DISTINCT ...)` fix applied to `compute_metrics.py`
+- Market Monitor: built complete new subproject — `market_monitor/` with `fetch_market.py`, `generate_dashboard.py`, `sheets.py`; `docs/market/index.html` static dashboard; `market-monitor.yml` workflow; two new DB tables; `search_all_listings()` + `get_category_id()` added to `listener/ebay.py`
+- Market Monitor: category column changed from "Category ID" (user enters ID) to "Category" (user enters name); code resolves name → ID via eBay Taxonomy API (`get_category_id()` in `listener/ebay.py`), cached per run
+- Market Monitor: Google Sheet named `pcc_sealed_monitor` (opened by ID, not name — name is just for user reference)
+- All changes committed and pushed (commits 2cdd28f, b33926d, f45f11a)
 
 ### 2026-06-24
 - P&L: added `ebay_order_id` and `shipping_cost` to Sales tab; shipping cost joins via `SPLIT_PART` on order_id, proportionally split for multi-line orders
