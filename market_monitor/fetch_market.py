@@ -7,9 +7,12 @@ Run daily. Each run:
   4. Computes aggregate stats and upserts into market_snapshots.
 """
 import os
+import re
 import sys
 from datetime import date, timedelta
 from statistics import mean, median, quantiles
+
+from psycopg2.extras import execute_values
 
 from dotenv import load_dotenv
 
@@ -18,6 +21,24 @@ load_dotenv()
 from listener.ebay import get_app_token, get_category_id, search_all_listings
 from market_monitor.sheets import load_queries
 from shared.db import get_connection
+
+# Matches multi-unit lot listings by title. Covers the most common seller patterns.
+_LOT_RE = re.compile(
+    r'\b\d+\s*[x×]\b'                               # 2x, 3 x, 10x
+    r'|\b[x×]\s*\d+\b'                               # x2, x3
+    r'|\blot\s+of\s+\d+'                             # lot of 2
+    r'|\b([2-9]|\d{2,})\s+(booster\s+)?box(es)?\b'   # 2 boxes, 3 booster boxes (not "1 box")
+    r'|\bbundle\b'                                   # bundle
+    r'|\bcase\s+of\s+\d+'                           # case of 6
+    r'|\bpack\s+of\s+\d+'                           # pack of 3
+    r'|\bset\s+of\s+\d+'                            # set of 2
+    r'|\bqty\s*:?\s*[2-9]',                         # qty 2, qty: 3
+    re.IGNORECASE,
+)
+
+
+def _is_lot(title: str) -> bool:
+    return bool(_LOT_RE.search(title))
 
 
 def _get_yesterday_ids(conn, query_id: str, yesterday: date) -> set[str]:
@@ -30,32 +51,28 @@ def _get_yesterday_ids(conn, query_id: str, yesterday: date) -> set[str]:
 
 
 def _upsert_items(conn, query_id: str, today: date, items: list[dict]) -> None:
+    if not items:
+        return
     with conn.cursor() as cur:
-        for item in items:
-            cur.execute(
-                """
-                INSERT INTO market_snapshot_items
-                    (query_id, item_id, title, price, buying_format, url, first_seen, last_seen)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (query_id, item_id) DO UPDATE SET
-                    price         = EXCLUDED.price,
-                    title         = EXCLUDED.title,
-                    buying_format = EXCLUDED.buying_format,
-                    url           = EXCLUDED.url,
-                    last_seen     = EXCLUDED.last_seen
-                """,
+        execute_values(
+            cur,
+            """
+            INSERT INTO market_snapshot_items
+                (query_id, item_id, title, price, buying_format, url, first_seen, last_seen)
+            VALUES %s
+            ON CONFLICT (query_id, item_id) DO UPDATE SET
+                price         = EXCLUDED.price,
+                title         = EXCLUDED.title,
+                buying_format = EXCLUDED.buying_format,
+                url           = EXCLUDED.url,
+                last_seen     = EXCLUDED.last_seen
+            """,
+            [
                 (query_id, item["item_id"], item["title"], item["price"],
-                 item["buying_format"], item["url"], today, today),
-            )
-
-
-def _count_new(conn, query_id: str, today: date) -> int:
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT COUNT(*) FROM market_snapshot_items WHERE query_id = %s AND first_seen = %s",
-            (query_id, today),
+                 item["buying_format"], item["url"], today, today)
+                for item in items
+            ],
         )
-        return cur.fetchone()[0]
 
 
 def _price_stats(prices: list[float]) -> dict:
@@ -125,44 +142,51 @@ def run() -> None:
     # Resolve category names → IDs once, cached across queries.
     category_cache: dict[str, str | None] = {}
 
-    for q in queries:
-        cat_name = q.get("category_name")
-        if cat_name and cat_name not in category_cache:
-            cat_id = get_category_id(token, cat_name)
-            category_cache[cat_name] = cat_id
-            if cat_id:
-                print(f"  Category '{cat_name}' → ID {cat_id}")
-            else:
-                print(f"  Category '{cat_name}' → not found, searching without category filter")
-        resolved_category_id = category_cache.get(cat_name) if cat_name else None
+    conn = get_connection()
+    try:
+        for q in queries:
+            cat_name = q.get("category_name")
+            if cat_name and cat_name not in category_cache:
+                cat_id = get_category_id(token, cat_name)
+                category_cache[cat_name] = cat_id
+                if cat_id:
+                    print(f"  Category '{cat_name}' → ID {cat_id}")
+                else:
+                    print(f"  Category '{cat_name}' → not found, searching without category filter")
+            resolved_category_id = category_cache.get(cat_name) if cat_name else None
 
-        print(f"  Fetching: {q['name']} ...", end=" ", flush=True)
-        items = search_all_listings(
-            token, q["query"],
-            category_id=resolved_category_id,
-            min_price=q["min_price"],
-            max_price=q["max_price"],
-        )
-        print(f"{len(items)} listings")
+            print(f"  Fetching: {q['name']} ...", end=" ", flush=True)
+            raw_items = search_all_listings(
+                token, q["query"],
+                category_id=resolved_category_id,
+                min_price=q["min_price"],
+                max_price=q["max_price"],
+            )
+            items = [item for item in raw_items if not _is_lot(item["title"])]
+            lot_count = len(raw_items) - len(items)
+            print(f"{len(items)} listings ({lot_count} lots filtered)")
 
-        conn = get_connection()
-        try:
+            # BIN-only for price stats; all formats for supply counts
+            bin_items = [item for item in items if item["buying_format"] == "FIXED_PRICE"]
+
             yesterday_ids = _get_yesterday_ids(conn, q["id"], yesterday)
             today_ids     = {item["item_id"] for item in items}
             gone_count    = len(yesterday_ids - today_ids)
+            new_count     = len(today_ids - yesterday_ids)
 
             with conn:
                 _upsert_items(conn, q["id"], today, items)
-                new_count = _count_new(conn, q["id"], today)
-                prices    = [item["price"] for item in items if item["price"] > 0]
-                stats     = _price_stats(prices)
+                prices = [item["price"] for item in bin_items if item["price"] > 0]
+                stats  = _price_stats(prices)
                 _upsert_snapshot(conn, q["id"], q["name"], today,
                                  len(items), new_count, gone_count, stats)
-        finally:
-            conn.close()
 
-        print(f"    → new={new_count}, gone={gone_count}, "
-              f"median=${stats['price_median']}, count={len(items)}")
+            auctions = len(items) - len(bin_items)
+            print(f"    → new={new_count}, gone={gone_count}, "
+                  f"bin={len(bin_items)}, auctions={auctions}, "
+                  f"median=${stats['price_median']} (BIN only)")
+    finally:
+        conn.close()
 
     print("[market_monitor] Done.")
 

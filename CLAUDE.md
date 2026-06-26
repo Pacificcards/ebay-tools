@@ -28,10 +28,12 @@ Google Sheets-based P&L. Script: `pl/sync_to_sheets.py`. Runs daily via `pl-inge
 Sheet tabs: **Sales**, **Purchases**, **Ad Fees**, **P&L by Group**, **New Entries**
 
 #### Column schemas (current)
-- **Sales**: `order_date | title | gross_sale | net_payout | order_id | ebay_order_id | shipping_cost | group`
-  - `order_id` = full internal key (e.g. `22-14785-63636_10082049011622`) — used for group persistence
-  - `ebay_order_id` = base order ID (e.g. `22-14785-63636`) — matches Ad Fees tab for cross-reference; blank for manual sales
-  - `shipping_cost` = from `order_fees` SHIPPING_LABEL DEBIT, proportionally split for multi-line orders; blank if label was via Pirateship or not yet reported by eBay
+- **Sales**: `order_date | title | gross_sale | net_payout | shipping_cost | order_id | ebay_order_id | group | source`
+  - `shipping_cost` (col E) = from `order_fees` SHIPPING_LABEL DEBIT, proportionally split for multi-line orders; blank if label was via Pirateship or not yet reported by eBay
+  - `order_id` (col F) = full internal key (e.g. `22-14785-63636_10082049011622`) — used for group persistence
+  - `ebay_order_id` (col G) = base order ID (e.g. `22-14785-63636`) — matches Ad Fees tab for cross-reference; blank for manual sales
+  - `group` (col H) = user-editable; resolved by header name in code, not hardcoded index
+  - `source` (col I) = "eBay" or "Manual"
 - **Purchases**: `purchase_date | description | vendor | total_cost | source | id | group`
 - **Ad Fees**: `date | fee_type | amount | order_id | listing_id | title | transaction_id | group`
   - `order_id` populated for SHIPPING_LABEL rows; blank for NON_SALE_CHARGE (ad spend has no order-level attribution)
@@ -114,7 +116,7 @@ Daily pipeline that tracks active eBay listings for ~12 sealed product search qu
 **Google Sheet config (`pcc_sealed_monitor` → `Queries` tab):**
 Columns: `Name | Query | Category | Min Price | Max Price | Active`
 - `Category` = plain English name (e.g. "Trading Card Games") — code looks up the ID via eBay Taxonomy API
-- `Active` = checkbox — unchecked rows are skipped
+- `Active` = `Yes` or `No` (also accepts `Y`, `TRUE`) — non-yes rows are skipped
 - Query `id` (DB key) is auto-derived: slugified lowercase Name
 
 **Database tables:**
@@ -201,8 +203,7 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 ### P&L
 1. **Listing-level hierarchy refactor** — Group > Listing > Order; new `listing_groups` table; design complete, not yet built (see full spec in P&L section above)
 2. Handle refunds — refunded orders show as positive revenue in Sales tab
-3. Tests are stale — `write_pl_tab` takes 4 args but tests call it with 3; `fetch_purchases` returns 7 cols but mock uses 6; Sales/Purchases batch preservation tests use old column indices
-4. Manual entry UI — New Entries tab functional but clunky; approach TBD
+3. Manual entry UI — New Entries tab functional but clunky; approach TBD
 
 ### Traffic Analytics
 - No open items — orders/qty bug fixed 2026-06-25 (see session log)
@@ -239,6 +240,19 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - Whether to expose raw price range alongside the two recommendations
 
 ## Session Log
+
+### 2026-06-26 (session 2)
+- P&L: ran full code review (8 findings); fixed 5 of 8 in previous session + this session
+- P&L: `save_sale_groups`, `save_purchase_groups`, `save_ad_fee_groups` now use `execute_values` bulk UPDATE instead of per-row loops — 3 SQL statements instead of ~2,000 per sync
+- P&L: `fetch_sales`, `fetch_purchases`, `fetch_ad_fees`, and all 3 save functions now share one DB connection per sync run (was 6 separate opens/closes)
+- P&L: `fetch_sales(conn)`, `fetch_purchases(conn)`, `fetch_ad_fees(conn)` take explicit `conn` param — tests updated to pass mock conn directly (no more `patch.object` needed)
+- Market Monitor: `_count_new()` deleted — replaced with `len(today_ids - yesterday_ids)` from sets already in memory; note: counts "new since yesterday" not "first ever seen" (minor semantic difference, acceptable for supply monitoring)
+- Market Monitor: `conn = get_connection()` moved before the query loop — 1 connection for all queries instead of N
+- Market Monitor: `print(f"→ new=...")` moved inside try block — was outside, would `UnboundLocalError` on DB failure
+- All 22 tests pass after updates
+- Fixed eBay purchases workflow — module path was `analytics.fetch_ebay_purchases` (module doesn't exist); corrected to `traffic_analytics.fetch_ebay_purchases`; 8 purchases captured on first successful run
+- Fixed group corruption on June 22–24 orders — corrupted `group_name` values matched `SPLIT_PART(order_id, '_', 1)`; cleared 7 rows and re-synced
+- Unfixed review findings (deferred): #3 `_count_new` already removed; #4 was the per-query connection (now fixed); remaining unfixed: none from original 8 except the listing-level refactor which is tracked separately
 
 ### 2026-06-25 / 2026-06-26
 - Traffic Analytics: fixed two bugs in daily email orders/qty reporting:

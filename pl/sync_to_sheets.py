@@ -27,6 +27,7 @@ from datetime import date, datetime
 
 import gspread
 from google.oauth2.service_account import Credentials
+from psycopg2.extras import execute_values
 from dotenv import load_dotenv
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -55,141 +56,129 @@ PLAIN_FORMAT = {
 
 # ── Data fetching ─────────────────────────────────────────────────────────────
 
-def fetch_sales() -> list[list]:
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
+def fetch_sales(conn) -> list[list]:
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT
+                o.order_date::text,
+                COALESCE(lm.title, o.title, o.listing_id) AS title,
+                CASE WHEN o.order_id LIKE 'MANUAL-%' THEN ''
+                     ELSE CAST(o.sale_price + COALESCE(o.shipping_price, 0) AS text)
+                END AS gross_sale,
+                CAST(
+                    CASE
+                        WHEN o.order_id LIKE 'MANUAL-%' THEN o.sale_price
+                        WHEN f.amount IS NULL THEN NULL
+                        WHEN order_totals.total_gross <= 0 THEN NULL
+                        ELSE (
+                            CASE
+                                WHEN ROUND(
+                                         f.amount * (o.sale_price + COALESCE(o.shipping_price, 0))
+                                         / order_totals.total_gross,
+                                     2) > (o.sale_price + COALESCE(o.shipping_price, 0)) * 1.10
+                                THEN NULL
+                                ELSE ROUND(
+                                         f.amount * (o.sale_price + COALESCE(o.shipping_price, 0))
+                                         / order_totals.total_gross,
+                                     2)
+                            END
+                        )
+                    END
+                AS text) AS net_payout,
+                CAST(
+                    CASE
+                        WHEN o.order_id LIKE 'MANUAL-%' THEN NULL
+                        WHEN sl.total_shipping IS NULL THEN NULL
+                        WHEN order_totals.total_gross <= 0 THEN NULL
+                        ELSE ROUND(
+                            sl.total_shipping * (o.sale_price + COALESCE(o.shipping_price, 0))
+                            / order_totals.total_gross,
+                        2)
+                    END
+                AS text) AS shipping_cost,
+                o.order_id,
+                CASE WHEN o.order_id LIKE 'MANUAL-%' THEN ''
+                     ELSE SPLIT_PART(o.order_id, '_', 1)
+                END AS ebay_order_id,
+                COALESCE(o.group_name, ''),
+                CASE WHEN o.order_id LIKE 'MANUAL-%' THEN 'Manual' ELSE 'eBay' END AS source
+            FROM orders_raw o
+            LEFT JOIN listing_metadata lm USING (listing_id)
+            LEFT JOIN order_fees f
+                ON f.order_id = SPLIT_PART(o.order_id, '_', 1)
+                AND f.booking_entry = 'CREDIT'
+                AND f.fee_type = 'SALE'
+            LEFT JOIN (
+                SELECT SPLIT_PART(order_id, '_', 1) AS ebay_order_id,
+                       SUM(sale_price + COALESCE(shipping_price, 0)) AS total_gross
+                FROM orders_raw
+                GROUP BY ebay_order_id
+            ) order_totals ON order_totals.ebay_order_id = SPLIT_PART(o.order_id, '_', 1)
+            LEFT JOIN (
+                SELECT order_id, SUM(amount) AS total_shipping
+                FROM order_fees
+                WHERE fee_type = 'SHIPPING_LABEL' AND booking_entry = 'DEBIT'
+                GROUP BY order_id
+            ) sl ON sl.order_id = SPLIT_PART(o.order_id, '_', 1)
+            ORDER BY o.order_date DESC
+        """)
+        return [list(row) for row in cur.fetchall()]
+
+
+def fetch_purchases(conn) -> list[list]:
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT
+                purchase_date::text,
+                description,
+                CASE WHEN source = 'ebay_purchase' THEN 'eBay' ELSE COALESCE(vendor, '') END,
+                CAST(total_cost AS text),
+                source,
+                id::text,
+                COALESCE(group_name, '')
+            FROM import_queue
+            WHERE status != 'ignored'
+            ORDER BY purchase_date DESC
+        """)
+        return [list(row) for row in cur.fetchall()]
+
+
+def fetch_ad_fees(conn) -> list[list]:
+    with conn.cursor() as cur:
+        cur.execute("""
+            WITH fee_listing AS (
                 SELECT
-                    o.order_date::text,
-                    COALESCE(lm.title, o.title, o.listing_id) AS title,
-                    CASE WHEN o.order_id LIKE 'MANUAL-%' THEN ''
-                         ELSE CAST(o.sale_price + COALESCE(o.shipping_price, 0) AS text)
-                    END AS gross_sale,
-                    CAST(
-                        CASE
-                            WHEN o.order_id LIKE 'MANUAL-%' THEN o.sale_price
-                            WHEN f.amount IS NULL THEN NULL
-                            WHEN order_totals.total_gross <= 0 THEN NULL
-                            ELSE (
-                                CASE
-                                    WHEN ROUND(
-                                             f.amount * (o.sale_price + COALESCE(o.shipping_price, 0))
-                                             / order_totals.total_gross,
-                                         2) > (o.sale_price + COALESCE(o.shipping_price, 0)) * 1.10
-                                    THEN NULL
-                                    ELSE ROUND(
-                                             f.amount * (o.sale_price + COALESCE(o.shipping_price, 0))
-                                             / order_totals.total_gross,
-                                         2)
-                                END
-                            )
-                        END
-                    AS text) AS net_payout,
-                    CAST(
-                        CASE
-                            WHEN o.order_id LIKE 'MANUAL-%' THEN NULL
-                            WHEN sl.total_shipping IS NULL THEN NULL
-                            WHEN order_totals.total_gross <= 0 THEN NULL
-                            ELSE ROUND(
-                                sl.total_shipping * (o.sale_price + COALESCE(o.shipping_price, 0))
-                                / order_totals.total_gross,
-                            2)
-                        END
-                    AS text) AS shipping_cost,
-                    o.order_id,
-                    CASE WHEN o.order_id LIKE 'MANUAL-%' THEN ''
-                         ELSE SPLIT_PART(o.order_id, '_', 1)
-                    END AS ebay_order_id,
-                    COALESCE(o.group_name, ''),
-                    CASE WHEN o.order_id LIKE 'MANUAL-%' THEN 'Manual' ELSE 'eBay' END AS source
-                FROM orders_raw o
-                LEFT JOIN listing_metadata lm USING (listing_id)
-                LEFT JOIN order_fees f
-                    ON f.order_id = SPLIT_PART(o.order_id, '_', 1)
-                    AND f.booking_entry = 'CREDIT'
-                    AND f.fee_type = 'SALE'
-                LEFT JOIN (
-                    SELECT SPLIT_PART(order_id, '_', 1) AS ebay_order_id,
-                           SUM(sale_price + COALESCE(shipping_price, 0)) AS total_gross
-                    FROM orders_raw
-                    GROUP BY ebay_order_id
-                ) order_totals ON order_totals.ebay_order_id = SPLIT_PART(o.order_id, '_', 1)
-                LEFT JOIN (
-                    SELECT order_id, SUM(amount) AS total_shipping
-                    FROM order_fees
-                    WHERE fee_type = 'SHIPPING_LABEL' AND booking_entry = 'DEBIT'
-                    GROUP BY order_id
-                ) sl ON sl.order_id = SPLIT_PART(o.order_id, '_', 1)
-                ORDER BY o.order_date DESC
-            """)
-            return [list(row) for row in cur.fetchall()]
-    finally:
-        conn.close()
-
-
-def fetch_purchases() -> list[list]:
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT
-                    purchase_date::text,
-                    description,
-                    CASE WHEN source = 'ebay_purchase' THEN 'eBay' ELSE COALESCE(vendor, '') END,
-                    CAST(total_cost AS text),
-                    source,
-                    id::text,
-                    COALESCE(group_name, '')
-                FROM import_queue
-                WHERE status != 'ignored'
-                ORDER BY purchase_date DESC
-            """)
-            return [list(row) for row in cur.fetchall()]
-    finally:
-        conn.close()
-
-
-def fetch_ad_fees() -> list[list]:
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                WITH fee_listing AS (
-                    SELECT
-                        f.*,
-                        COALESCE(
-                            f.listing_id,
-                            (SELECT o.listing_id
-                             FROM orders_raw o
-                             WHERE SPLIT_PART(o.order_id, '_', 1) = f.order_id
-                             LIMIT 1)
-                        ) AS resolved_listing_id
-                    FROM order_fees f
-                    WHERE f.fee_type != 'SALE'
-                )
-                SELECT
-                    fl.transaction_date::text,
-                    COALESCE(fl.fee_type, 'Unknown'),
-                    CAST(fl.amount AS text),
-                    COALESCE(fl.order_id, ''),
-                    COALESCE(fl.resolved_listing_id, ''),
+                    f.*,
                     COALESCE(
-                        (SELECT lm.title FROM listing_metadata lm
-                         WHERE lm.listing_id = fl.resolved_listing_id),
-                        (SELECT o.title FROM orders_raw o
-                         WHERE o.listing_id = fl.resolved_listing_id
-                         LIMIT 1),
-                        ''
-                    ) AS title,
-                    fl.billing_transaction_id,
-                    COALESCE(fl.group_name, '')
-                FROM fee_listing fl
-                ORDER BY fl.transaction_date DESC
-            """)
-            return [list(row) for row in cur.fetchall()]
-    finally:
-        conn.close()
+                        f.listing_id,
+                        (SELECT o.listing_id
+                         FROM orders_raw o
+                         WHERE SPLIT_PART(o.order_id, '_', 1) = f.order_id
+                         LIMIT 1)
+                    ) AS resolved_listing_id
+                FROM order_fees f
+                WHERE f.fee_type != 'SALE'
+            )
+            SELECT
+                fl.transaction_date::text,
+                COALESCE(fl.fee_type, 'Unknown'),
+                CAST(fl.amount AS text),
+                COALESCE(fl.order_id, ''),
+                COALESCE(fl.resolved_listing_id, ''),
+                COALESCE(
+                    (SELECT lm.title FROM listing_metadata lm
+                     WHERE lm.listing_id = fl.resolved_listing_id),
+                    (SELECT o.title FROM orders_raw o
+                     WHERE o.listing_id = fl.resolved_listing_id
+                     LIMIT 1),
+                    ''
+                ) AS title,
+                fl.billing_transaction_id,
+                COALESCE(fl.group_name, '')
+            FROM fee_listing fl
+            ORDER BY fl.transaction_date DESC
+        """)
+        return [list(row) for row in cur.fetchall()]
 
 
 # ── Group persistence ─────────────────────────────────────────────────────────
@@ -203,12 +192,16 @@ def _read_sale_groups(doc: gspread.Spreadsheet) -> dict[str, str]:
     existing = ws.get_all_values()
     groups: dict[str, str] = {}
     if len(existing) > 1:
+        header = existing[0]
+        try:
+            order_id_col = header.index("order_id")
+            group_col    = header.index("group")
+        except ValueError:
+            order_id_col, group_col = 4, 5  # old 6-col schema fallback
         for row in existing[1:]:
-            # order_id col: index 5 in current 9-col schema; index 4 in old <=8-col schemas
-            order_id  = row[5] if len(row) > 7 else (row[4] if len(row) > 4 else "")
-            # group col: index 7 in current schema; index 5 in old 6-col schema
-            group_val = row[7] if len(row) > 7 else (row[5] if len(row) > 5 else "")
-            if order_id and group_val:
+            order_id  = row[order_id_col] if len(row) > order_id_col else ""
+            group_val = row[group_col]     if len(row) > group_col    else ""
+            if order_id and group_val and group_val != order_id.split("_")[0]:
                 groups[order_id] = group_val
     return groups
 
@@ -230,36 +223,38 @@ def _read_purchase_groups(doc: gspread.Spreadsheet) -> dict[str, str]:
     return groups
 
 
-def save_sale_groups(groups: dict[str, str]) -> None:
+def save_sale_groups(groups: dict[str, str], conn) -> None:
     """Persist group assignments from the Sales tab back to orders_raw."""
-    if not groups:
+    # Reject values matching the base eBay order ID (XX-XXXXX-XXXXX) — corruption guard.
+    clean = [(k, v) for k, v in groups.items() if v != k.split("_")[0]]
+    if not clean:
         return
-    conn = get_connection()
-    try:
-        with conn, conn.cursor() as cur:
-            for order_id, group_name in groups.items():
-                cur.execute(
-                    "UPDATE orders_raw SET group_name = %s WHERE order_id = %s",
-                    (group_name, order_id),
-                )
-    finally:
-        conn.close()
+    with conn, conn.cursor() as cur:
+        execute_values(
+            cur,
+            """
+            UPDATE orders_raw AS t SET group_name = d.group_name
+            FROM (VALUES %s) AS d(order_id, group_name)
+            WHERE t.order_id = d.order_id
+            """,
+            clean,
+        )
 
 
-def save_purchase_groups(groups: dict[str, str]) -> None:
+def save_purchase_groups(groups: dict[str, str], conn) -> None:
     """Persist group assignments from the Purchases tab back to import_queue."""
     if not groups:
         return
-    conn = get_connection()
-    try:
-        with conn, conn.cursor() as cur:
-            for item_id, group_name in groups.items():
-                cur.execute(
-                    "UPDATE import_queue SET group_name = %s WHERE id = %s",
-                    (group_name, int(item_id)),
-                )
-    finally:
-        conn.close()
+    with conn, conn.cursor() as cur:
+        execute_values(
+            cur,
+            """
+            UPDATE import_queue AS t SET group_name = d.group_name
+            FROM (VALUES %s) AS d(id, group_name)
+            WHERE t.id = d.id::integer
+            """,
+            [(int(k), v) for k, v in groups.items()],
+        )
 
 
 def _read_ad_fee_groups(doc: gspread.Spreadsheet) -> dict[str, str]:
@@ -284,20 +279,20 @@ def _read_ad_fee_groups(doc: gspread.Spreadsheet) -> dict[str, str]:
     return groups
 
 
-def save_ad_fee_groups(groups: dict[str, str]) -> None:
+def save_ad_fee_groups(groups: dict[str, str], conn) -> None:
     """Persist group assignments from the Ad Fees tab back to order_fees."""
     if not groups:
         return
-    conn = get_connection()
-    try:
-        with conn, conn.cursor() as cur:
-            for txn_id, group_name in groups.items():
-                cur.execute(
-                    "UPDATE order_fees SET group_name = %s WHERE billing_transaction_id = %s",
-                    (group_name, txn_id),
-                )
-    finally:
-        conn.close()
+    with conn, conn.cursor() as cur:
+        execute_values(
+            cur,
+            """
+            UPDATE order_fees AS t SET group_name = d.group_name
+            FROM (VALUES %s) AS d(txn_id, group_name)
+            WHERE t.billing_transaction_id = d.txn_id
+            """,
+            list(groups.items()),
+        )
 
 
 # ── Manual entry processing ───────────────────────────────────────────────────
@@ -508,19 +503,25 @@ def write_sales_tab(doc: gspread.Spreadsheet, rows: list[list]) -> None:
     ws = _get_or_create_tab(doc, "Sales", index=0)
     existing = ws.get_all_values()
 
-    # Preserve group values (column H, index 7); order_id is column F (index 5 in current 9-col schema)
-    # Support old 6-col (group at 5, order_id at 4), and current 9-col (group at 7, order_id at 5)
     group_by_order_id: dict[str, str] = {}
     if len(existing) > 1:
+        header = existing[0]
+        try:
+            order_id_col = header.index("order_id")
+            group_col    = header.index("group")
+        except ValueError:
+            order_id_col, group_col = 4, 5  # old 6-col schema fallback
         for row in existing[1:]:
-            order_id  = row[5] if len(row) > 7 else (row[4] if len(row) > 4 else "")
-            group_val = row[7] if len(row) > 7 else (row[5] if len(row) > 5 else "")
-            if order_id and group_val:
+            order_id  = row[order_id_col] if len(row) > order_id_col else ""
+            group_val = row[group_col]     if len(row) > group_col    else ""
+            if order_id and group_val and group_val != order_id.split("_")[0]:
                 group_by_order_id[order_id] = group_val
 
+    order_id_col = SALES_HEADERS.index("order_id")
+    group_col    = SALES_HEADERS.index("group")
     for row in rows:
-        sheet_group = group_by_order_id.get(row[5], "")
-        row[7] = sheet_group if sheet_group else row[7]
+        sheet_group = group_by_order_id.get(row[order_id_col], "")
+        row[group_col] = sheet_group if sheet_group else row[group_col]
 
     ws.clear()
     ws.update([SALES_HEADERS] + rows, 'A1', value_input_option="USER_ENTERED")
@@ -621,27 +622,33 @@ def sync(doc_id: str, creds_path: str) -> None:
     synced_count = process_new_entries(doc)
     print(f"  {synced_count} new entr{'y' if synced_count == 1 else 'ies'} synced to Supabase")
 
-    # Persist current group assignments from Sheet back to Supabase
+    # Persist current group assignments from Sheet back to Supabase, then fetch all data.
+    # One connection for the entire DB phase.
     print("Saving group assignments to Supabase...")
     sale_groups     = _read_sale_groups(doc)
     purchase_groups = _read_purchase_groups(doc)
     ad_fee_groups   = _read_ad_fee_groups(doc)
-    save_sale_groups(sale_groups)
-    save_purchase_groups(purchase_groups)
-    save_ad_fee_groups(ad_fee_groups)
-    print(f"  {len(sale_groups)} sale groups, {len(purchase_groups)} purchase groups, {len(ad_fee_groups)} ad fee groups saved")
 
-    print("Fetching sales from Supabase...")
-    sales = fetch_sales()
-    print(f"  {len(sales)} sales found")
+    conn = get_connection()
+    try:
+        save_sale_groups(sale_groups, conn)
+        save_purchase_groups(purchase_groups, conn)
+        save_ad_fee_groups(ad_fee_groups, conn)
+        print(f"  {len(sale_groups)} sale groups, {len(purchase_groups)} purchase groups, {len(ad_fee_groups)} ad fee groups saved")
 
-    print("Fetching purchases from Supabase...")
-    purchases = fetch_purchases()
-    print(f"  {len(purchases)} purchases found")
+        print("Fetching sales from Supabase...")
+        sales = fetch_sales(conn)
+        print(f"  {len(sales)} sales found")
 
-    print("Fetching ad fees from Supabase...")
-    ad_fees = fetch_ad_fees()
-    print(f"  {len(ad_fees)} ad fee records found")
+        print("Fetching purchases from Supabase...")
+        purchases = fetch_purchases(conn)
+        print(f"  {len(purchases)} purchases found")
+
+        print("Fetching ad fees from Supabase...")
+        ad_fees = fetch_ad_fees(conn)
+        print(f"  {len(ad_fees)} ad fee records found")
+    finally:
+        conn.close()
 
     print("Writing Sales tab...")
     write_sales_tab(doc, sales)

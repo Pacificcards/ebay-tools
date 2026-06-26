@@ -74,10 +74,12 @@ def _parse_items(response_json: dict) -> list[dict]:
         # Browse API returns IDs as "v1|123456789|0" — extract the numeric part
         item_id = raw_id.split("|")[1] if raw_id.count("|") >= 2 else raw_id
         seller = item.get("seller", {})
+        buying_options = item.get("buyingOptions", [])
         results.append({
             "item_id": item_id,
             "title": item.get("title", ""),
             "price": float(price_val) if price_val else 0.0,
+            "buying_format": "AUCTION" if "AUCTION" in buying_options else "FIXED_PRICE",
             "url": item.get("itemWebUrl", ""),
             "seller_feedback_score": seller.get("feedbackScore", ""),
             "seller_feedback_pct": seller.get("feedbackPercentage", ""),
@@ -103,23 +105,24 @@ def search_listings_by_epid(token: str, epid: str, min_price: float, max_price: 
     return _parse_items(resp.json())
 
 
-def _parse_market_items(response_json: dict) -> list[dict]:
-    """Parse Browse API response for market monitoring (includes buying_format, no seller fields)."""
-    results = []
-    for item in response_json.get("itemSummaries", []):
-        price_val = item.get("price", {}).get("value")
-        raw_id = item.get("itemId", "")
-        item_id = raw_id.split("|")[1] if raw_id.count("|") >= 2 else raw_id
-        buying_options = item.get("buyingOptions", [])
-        buying_format = "AUCTION" if "AUCTION" in buying_options else "FIXED_PRICE"
-        results.append({
-            "item_id": item_id,
-            "title": item.get("title", ""),
-            "price": float(price_val) if price_val else 0.0,
-            "buying_format": buying_format,
-            "url": item.get("itemWebUrl", ""),
-        })
-    return results
+def _paginate(token: str, params: dict, max_results: int = 2000) -> list[dict]:
+    """Fetch all pages for a given set of search params."""
+    items: list[dict] = []
+    offset = 0
+    while len(items) < max_results:
+        resp = requests.get(
+            f"{BROWSE_BASE}/item_summary/search",
+            headers=_headers(token),
+            params={**params, "offset": offset},
+        )
+        if not resp.ok:
+            break
+        batch = _parse_items(resp.json())
+        items.extend(batch)
+        if len(batch) < 200:
+            break
+        offset += 200
+    return items
 
 
 def search_all_listings(
@@ -129,45 +132,41 @@ def search_all_listings(
     min_price: float | None = None,
     max_price: float | None = None,
 ) -> list[dict]:
-    """Return all active US listings matching query (BIN + auction). Paginated up to 2000 results."""
-    filters = ["itemLocationCountry:US", "priceCurrency:USD"]
-    if min_price is not None and max_price is not None:
-        filters.append(f"price:[{min_price}..{max_price}]")
-    elif min_price is not None:
-        filters.append(f"price:[{min_price}..]")
-    elif max_price is not None:
-        filters.append(f"price:[..{max_price}]")
+    """Return all active US listings matching query.
 
-    params = {
-        "q": query,
-        "filter": ",".join(filters),
-        "limit": 200,
-        "sort": "price",
-    }
+    BIN listings: price-filtered by min_price/max_price.
+    Auction listings: always included, no price filter (prices are naturally lower).
+    Results are merged and deduplicated by item_id.
+    """
+    base_params: dict = {"q": query, "limit": 200, "sort": "price"}
     if category_id:
-        params["category_ids"] = category_id
+        base_params["category_ids"] = category_id
 
-    all_items = []
-    offset = 0
-    MAX = 2000
+    base_filters = ["itemLocationCountry:US", "priceCurrency:USD"]
 
-    while len(all_items) < MAX:
-        params["offset"] = offset
-        resp = requests.get(
-            f"{BROWSE_BASE}/item_summary/search",
-            headers=_headers(token),
-            params=params,
-        )
-        if not resp.ok:
-            break
-        data = resp.json()
-        batch = _parse_market_items(data)
-        all_items.extend(batch)
-        if len(batch) < 200:
-            break
-        offset += 200
+    # BIN with price filter
+    bin_filters = base_filters + ["buyingOptions:{FIXED_PRICE}"]
+    if min_price is not None and max_price is not None:
+        bin_filters.append(f"price:[{min_price}..{max_price}]")
+    elif min_price is not None:
+        bin_filters.append(f"price:[{min_price}..]")
+    elif max_price is not None:
+        bin_filters.append(f"price:[..{max_price}]")
+    bin_items = _paginate(token, {**base_params, "filter": ",".join(bin_filters)})
 
-    return all_items[:MAX]
+    # Auctions — no price filter
+    auction_filters = base_filters + ["buyingOptions:{AUCTION}"]
+    auction_items = _paginate(token, {**base_params, "filter": ",".join(auction_filters)})
+
+    # Merge, deduplicate by item_id (BIN takes priority if same ID appears in both)
+    seen: set[str] = set()
+    result: list[dict] = []
+    for item in bin_items + auction_items:
+        if item["item_id"] not in seen:
+            seen.add(item["item_id"])
+            result.append(item)
+
+    return result[:2000]
 
 
 def search_listings_by_keyword(token: str, query: str, min_price: float, max_price: float) -> list[dict]:

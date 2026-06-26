@@ -5,7 +5,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-EXPECTED_HEADERS = ["Name", "Query", "Category", "Min Price", "Max Price", "Active"]
+EXPECTED_HEADERS = ["Name", "Exclusions", "Category", "Min Price", "Max Price", "Active"]
 
 
 def _slugify(name: str) -> str:
@@ -13,11 +13,41 @@ def _slugify(name: str) -> str:
 
 
 def _parse_active(val) -> bool:
+    if isinstance(val, str):
+        return val.strip().upper() in ("YES", "Y", "TRUE")
     if isinstance(val, bool):
         return val
-    if isinstance(val, str):
-        return val.upper() == "TRUE"
     return False
+
+
+def _build_exclusions(exclusions_str: str) -> str:
+    """Convert a CSV exclusion list into eBay search exclusion syntax.
+
+    Each comma-separated term becomes a -term or -"phrase" exclusion.
+    Terms already wrapped in quotes in the cell, or terms containing spaces,
+    are treated as phrase exclusions.
+
+    Example: 'lot, bundle, "hobby box"' → '-lot -bundle -"hobby box"'
+    """
+    if not exclusions_str.strip():
+        return ""
+    parts = []
+    for term in exclusions_str.split(","):
+        term = term.strip()
+        if not term:
+            continue
+        # Explicitly quoted: "hobby box" → -"hobby box"
+        if term.startswith('"') and term.endswith('"') and len(term) > 2:
+            phrase = term[1:-1].strip()
+            if phrase:
+                parts.append(f'-"{phrase}"')
+        # Multi-word without quotes: hobby box → -"hobby box"
+        elif " " in term:
+            parts.append(f'-"{term}"')
+        # Single word: lot → -lot
+        else:
+            parts.append(f"-{term}")
+    return " ".join(parts)
 
 
 def load_queries(sheet_id: str, creds_json: str) -> list[dict]:
@@ -32,12 +62,14 @@ def load_queries(sheet_id: str, creds_json: str) -> list[dict]:
         name = str(row.get("Name", "")).strip()
         if not name or not _parse_active(row.get("Active")):
             continue
+        exclusions = _build_exclusions(str(row.get("Exclusions", "")))
+        query = f"{name} {exclusions}".strip() if exclusions else name
         min_p = row.get("Min Price")
         max_p = row.get("Max Price")
         queries.append({
             "id":            _slugify(name),
             "name":          name,
-            "query":         str(row.get("Query", "")).strip(),
+            "query":         query,
             "category_name": str(row.get("Category", "")).strip() or None,
             "min_price":     float(min_p) if min_p else None,
             "max_price":     float(max_p) if max_p else None,
