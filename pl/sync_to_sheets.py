@@ -42,8 +42,8 @@ SCOPES = [
 # New Entries: date | description | type | amount | vendor | payment_method | group | status
 NEW_ENTRIES_HEADERS = ["date", "description", "type", "amount", "vendor", "payment_method", "group", "status"]
 
-# Sales: order_date | title | gross_sale | net_payout | order_id | group
-SALES_HEADERS     = ["order_date", "title", "gross_sale", "net_payout", "order_id", "ebay_order_id", "shipping_cost", "group"]
+# Sales: order_date | title | gross_sale | net_payout | order_id | ebay_order_id | shipping_cost | group | source
+SALES_HEADERS     = ["order_date", "title", "gross_sale", "net_payout", "order_id", "ebay_order_id", "shipping_cost", "group", "source"]
 PURCHASES_HEADERS = ["purchase_date", "description", "vendor", "total_cost", "source", "id", "group"]
 AD_FEES_HEADERS   = ["date", "fee_type", "amount", "order_id", "listing_id", "title", "transaction_id", "group"]
 
@@ -101,7 +101,8 @@ def fetch_sales() -> list[list]:
                             2)
                         END
                     AS text) AS shipping_cost,
-                    COALESCE(o.group_name, '')
+                    COALESCE(o.group_name, ''),
+                    CASE WHEN o.order_id LIKE 'MANUAL-%' THEN 'Manual' ELSE 'eBay' END AS source
                 FROM orders_raw o
                 LEFT JOIN listing_metadata lm USING (listing_id)
                 LEFT JOIN order_fees f
@@ -507,7 +508,7 @@ def write_sales_tab(doc: gspread.Spreadsheet, rows: list[list]) -> None:
     existing = ws.get_all_values()
 
     # Preserve group values (column H, index 7); order_id is column E (index 4)
-    # Support old 6-col schema (group at 5) and new 8-col schema (group at 7)
+    # Support old 6-col (group at 5), 8-col (group at 7), and current 9-col (group at 7) schemas
     group_by_order_id: dict[str, str] = {}
     if len(existing) > 1:
         for row in existing[1:]:
