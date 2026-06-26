@@ -188,6 +188,7 @@ CREATE TABLE IF NOT EXISTS market_snapshots (
     price_median  NUMERIC(10,2),
     price_p25     NUMERIC(10,2),
     price_p75     NUMERIC(10,2),
+    msrp          NUMERIC(10,2),
     fetched_at    TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(query_id, date)
 );

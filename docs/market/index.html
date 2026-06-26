@@ -211,11 +211,34 @@ function renderTrends(queryId) {
   const labels = series.map(r => r.date.slice(5)); // MM-DD
   const counts  = series.map(r => r.listing_count);
   const medians = series.map(r => r.price_median);
+  const q = DATA.queries.find(q => q.id === queryId);
+  const msrp = q && q.msrp != null ? q.msrp : null;
 
   if (countChart) countChart.destroy();
   if (priceChart) priceChart.destroy();
   countChart = buildLineChart('count-chart', labels, counts, BLUE);
-  priceChart = buildLineChart('price-chart', labels, medians, GREEN);
+
+  const ctx = document.getElementById('price-chart').getContext('2d');
+  const datasets = [{
+    data: medians, borderColor: GREEN, backgroundColor: GREEN + '22',
+    pointRadius: 2, tension: 0.3, fill: true, label: 'Median Price',
+  }];
+  if (msrp !== null) {
+    datasets.push({
+      data: labels.map(() => msrp),
+      borderColor: '#f59e0b',
+      borderWidth: 2,
+      borderDash: [6, 4],
+      pointRadius: 0,
+      fill: false,
+      label: `MSRP $${msrp.toFixed(2)}`,
+    });
+  }
+  const opts = chartDefaults();
+  if (msrp !== null) {
+    opts.plugins = { legend: { display: true, labels: { font: { size: 11 }, boxWidth: 20 } } };
+  }
+  priceChart = new Chart(ctx, { type: 'line', data: { labels, datasets }, options: opts });
 }
 
 // ── Item tables ───────────────────────────────────────────────────────────────

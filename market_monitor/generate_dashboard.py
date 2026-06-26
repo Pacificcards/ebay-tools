@@ -67,6 +67,15 @@ def generate() -> None:
                 ORDER BY query_id, price
             """, (today,))
             price_rows = cur.fetchall()
+
+            # Latest MSRP per query (use MAX to get most recent non-null value)
+            cur.execute("""
+                SELECT query_id, MAX(msrp)
+                FROM market_snapshots
+                WHERE msrp IS NOT NULL
+                GROUP BY query_id
+            """)
+            msrp_map: dict[str, float] = {r[0]: float(r[1]) for r in cur.fetchall()}
     finally:
         conn.close()
 
@@ -75,7 +84,7 @@ def generate() -> None:
     for r in trend_rows:
         qid, name = r[0], r[1]
         seen_queries[qid] = name
-    queries = [{"id": qid, "name": name} for qid, name in seen_queries.items()]
+    queries = [{"id": qid, "name": name, "msrp": msrp_map.get(qid)} for qid, name in seen_queries.items()]
 
     # Trend data by query
     trends: dict[str, list] = {}
