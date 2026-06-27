@@ -5,7 +5,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-EXPECTED_HEADERS = ["Name", "Exclusions", "Category", "CategoryID", "Min Price", "Max Price", "Active", "MSRP", "Presale Date", "Release Date", "Type"]
+EXPECTED_HEADERS = ["Name", "Exclusions", "CategoryID", "Min Price", "Max Price", "Active", "MSRP", "Presale Date", "Release Date", "Type"]
 
 
 def _slugify(name: str) -> str:

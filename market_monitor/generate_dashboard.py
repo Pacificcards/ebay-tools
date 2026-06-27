@@ -76,12 +76,15 @@ def generate() -> None:
             """, (latest_date,))
             auction_rows = cur.fetchall()
 
-            # Latest MSRP, presale_date, release_date, type per query
+            # Most recent MSRP, presale_date, release_date, type per query
+            # DISTINCT ON + ORDER BY date DESC ensures we get the latest row's values,
+            # not MAX() which would pick the lex/numeric maximum across all history.
             cur.execute("""
-                SELECT query_id, MAX(msrp), MAX(presale_date)::text, MAX(release_date)::text, MAX(type)
+                SELECT DISTINCT ON (query_id)
+                    query_id, msrp, presale_date::text, release_date::text, type
                 FROM market_snapshots
                 WHERE msrp IS NOT NULL OR presale_date IS NOT NULL OR release_date IS NOT NULL OR type IS NOT NULL
-                GROUP BY query_id
+                ORDER BY query_id, date DESC
             """)
             msrp_map:         dict[str, float] = {}
             presale_date_map: dict[str, str]   = {}

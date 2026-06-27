@@ -35,7 +35,7 @@ _LOT_RE = re.compile(
     r'|\bpack\s+of\s+\d+'                           # pack of 3
     r'|\bset\s+of\s+\d+'                            # set of 2
     r'|\bqty\s*:?\s*[2-9]'                          # qty 2, qty: 3
-    r'|\([2-9]\d*\)'                                 # (4), (6), (12) — quantity in parens
+    r'|\((?:[2-9]|\d{2,})\)'                           # (4), (12), (24) — quantity in parens; [2-9] for single digit, \d{2,} for 10+
     r'|\bteam\s+break\b'                            # team break spot auctions
     r'|\bplayer\s+break\b'                          # player break spot auctions (one slot per player)
     r'|\bcase\s*break\b'                            # case break spot auctions
@@ -109,7 +109,7 @@ def _upsert_snapshot(conn, query_id: str, name: str, today: date,
                      stats: dict, msrp: float | None = None,
                      presale_date: str | None = None,
                      release_date: str | None = None,
-                     type: str | None = None) -> None:
+                     query_type: str | None = None) -> None:
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -138,7 +138,7 @@ def _upsert_snapshot(conn, query_id: str, name: str, today: date,
             (query_id, name, today, listing_count, new_count, gone_count,
              stats["price_min"], stats["price_max"], stats["price_mean"],
              stats["price_median"], stats["price_p25"], stats["price_p75"],
-             msrp, presale_date, release_date, type),
+             msrp, presale_date, release_date, query_type),
         )
 
 
@@ -191,7 +191,7 @@ def run() -> None:
                 _upsert_snapshot(conn, q["id"], q["name"], today,
                                  len(items), new_count, gone_count, stats,
                                  q.get("msrp"), q.get("presale_date"), q.get("release_date"),
-                                 q.get("type"))
+                                 q.get("type"))  # dict key "type" is fine; param renamed query_type
 
             auctions = len(items) - len(bin_items)
             print(f"    → new={new_count}, gone={gone_count}, "
