@@ -69,17 +69,22 @@ def get_epid_from_listing(token: str, hint_url: str) -> str | None:
 def _parse_items(response_json: dict) -> list[dict]:
     results = []
     for item in response_json.get("itemSummaries", []):
-        price_val = item.get("price", {}).get("value")
+        buying_options = item.get("buyingOptions", [])
+        is_auction = "AUCTION" in buying_options
+        # Auctions carry currentBidPrice; BIN listings use price
+        if is_auction:
+            price_val = (item.get("currentBidPrice") or item.get("price") or {}).get("value")
+        else:
+            price_val = item.get("price", {}).get("value")
         raw_id = item.get("itemId", "")
         # Browse API returns IDs as "v1|123456789|0" — extract the numeric part
         item_id = raw_id.split("|")[1] if raw_id.count("|") >= 2 else raw_id
         seller = item.get("seller", {})
-        buying_options = item.get("buyingOptions", [])
         results.append({
             "item_id": item_id,
             "title": item.get("title", ""),
             "price": float(price_val) if price_val else 0.0,
-            "buying_format": "AUCTION" if "AUCTION" in buying_options else "FIXED_PRICE",
+            "buying_format": "AUCTION" if is_auction else "FIXED_PRICE",
             "url": item.get("itemWebUrl", ""),
             "seller_feedback_score": seller.get("feedbackScore", ""),
             "seller_feedback_pct": seller.get("feedbackPercentage", ""),

@@ -67,13 +67,17 @@ def load_queries(sheet_id: str, creds_json: str) -> list[dict]:
         min_p = row.get("Min Price")
         max_p = row.get("Max Price")
         msrp  = row.get("MSRP")
+        # Category accepts a numeric eBay category ID; text values are ignored
+        # (the Taxonomy name-lookup API returns unreliable results)
+        cat_raw = str(row.get("Category", "")).strip()
+        cat_id = cat_raw if cat_raw.isdigit() else None
         queries.append({
-            "id":            _slugify(name),
-            "name":          name,
-            "query":         query,
-            "category_name": str(row.get("Category", "")).strip() or None,
-            "min_price":     float(min_p) if min_p else None,
-            "max_price":     float(max_p) if max_p else None,
-            "msrp":          float(msrp) if msrp else None,
+            "id":          _slugify(name),
+            "name":        name,
+            "query":       query,
+            "category_id": cat_id,
+            "min_price":   float(min_p) if min_p else None,
+            "max_price":   float(max_p) if max_p else None,
+            "msrp":        float(msrp) if msrp else None,
         })
     return queries

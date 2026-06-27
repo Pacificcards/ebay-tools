@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from listener.ebay import get_app_token, get_category_id, search_all_listings
+from listener.ebay import get_app_token, search_all_listings
 from market_monitor.sheets import load_queries
 from shared.db import get_connection
 
@@ -140,26 +140,17 @@ def run() -> None:
     today     = date.today()
     yesterday = today - timedelta(days=1)
 
-    # Resolve category names → IDs once, cached across queries.
-    category_cache: dict[str, str | None] = {}
-
     conn = get_connection()
     try:
         for q in queries:
-            cat_name = q.get("category_name")
-            if cat_name and cat_name not in category_cache:
-                cat_id = get_category_id(token, cat_name)
-                category_cache[cat_name] = cat_id
-                if cat_id:
-                    print(f"  Category '{cat_name}' → ID {cat_id}")
-                else:
-                    print(f"  Category '{cat_name}' → not found, searching without category filter")
-            resolved_category_id = category_cache.get(cat_name) if cat_name else None
+            cat_id = q.get("category_id")
+            if cat_id:
+                print(f"  Category ID: {cat_id}")
 
             print(f"  Fetching: {q['name']} ...", end=" ", flush=True)
             raw_items = search_all_listings(
                 token, q["query"],
-                category_id=resolved_category_id,
+                category_id=cat_id,
                 min_price=q["min_price"],
                 max_price=q["max_price"],
             )
