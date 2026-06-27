@@ -7,6 +7,15 @@ from google.oauth2.service_account import Credentials
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 EXPECTED_HEADERS = ["Name", "Exclusions", "Category", "Min Price", "Max Price", "Active", "MSRP"]
 
+# Mapping from plain-English category names (as entered in the sheet) to eBay category IDs.
+# Numeric IDs are also accepted directly (e.g. "261332") for cases not listed here.
+CATEGORY_ID_MAP: dict[str, str] = {
+    "Sealed Trading Card Boxes":     "261332",
+    "Sealed Trading Card Cases":     "261333",
+    "CCG Sealed Boxes":              "261044",
+    "Trading Card Box & Case Breaks": "261334",
+}
+
 
 def _slugify(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
@@ -67,10 +76,16 @@ def load_queries(sheet_id: str, creds_json: str) -> list[dict]:
         min_p = row.get("Min Price")
         max_p = row.get("Max Price")
         msrp  = row.get("MSRP")
-        # Category accepts a numeric eBay category ID; text values are ignored
-        # (the Taxonomy name-lookup API returns unreliable results)
         cat_raw = str(row.get("Category", "")).strip()
-        cat_id = cat_raw if cat_raw.isdigit() else None
+        if not cat_raw:
+            cat_id = None
+        elif cat_raw.isdigit():
+            cat_id = cat_raw
+        elif cat_raw in CATEGORY_ID_MAP:
+            cat_id = CATEGORY_ID_MAP[cat_raw]
+        else:
+            print(f"[sheets] WARNING: unknown category '{cat_raw}' for '{name}' — no category filter applied")
+            cat_id = None
         queries.append({
             "id":          _slugify(name),
             "name":        name,
