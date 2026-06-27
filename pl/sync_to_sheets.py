@@ -424,7 +424,7 @@ def process_new_entries(doc: gspread.Spreadsheet) -> int:
         status = row[_STATUS_COL - 1].strip()
 
         # Deletion: user set status to "Marked for Deletion"
-        if status.lower() == "marked for deletion":
+        if "mark" in status.lower() and "delet" in status.lower():
             record_id = row[_RECORD_ID_COL - 1].strip()
             if not record_id:
                 ws.update_cell(i, _STATUS_COL, "✗ No Record ID — entry predates delete workflow")
