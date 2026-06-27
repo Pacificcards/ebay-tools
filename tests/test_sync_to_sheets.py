@@ -6,6 +6,7 @@ Covers:
   - group value preservation when re-syncing (existing user edits survive)
   - P&L tab formula construction
   - Analytics app integrity (no P&L symbols remain after separation)
+  - New Entries: record_id stamping on insert, deletion workflow
 
 All DB and Sheets calls are mocked — no live credentials needed.
 """
@@ -13,7 +14,7 @@ All DB and Sheets calls are mocked — no live credentials needed.
 import sys
 import os
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch, call
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -243,6 +244,131 @@ class TestPLTab(unittest.TestCase):
         self.assertIn("Sales!",     formula_row[1])  # gross_revenue pulls from Sales
         self.assertIn("Purchases!", formula_row[3])  # costs pull from Purchases
 
+
+
+# ── New Entries: record_id and deletion ──────────────────────────────────────
+
+class TestNewEntriesRecordId(unittest.TestCase):
+    """Record ID is stamped after successful insert; deletion flow works end-to-end."""
+
+    def _make_ws(self, rows):
+        ws = MagicMock()
+        ws.get_all_values.return_value = rows
+        return ws
+
+    def _make_doc(self, ws):
+        doc = MagicMock()
+        doc.worksheet.return_value = ws
+        return doc
+
+    def test_record_id_stamped_after_purchase_insert(self):
+        """Successful purchase insert writes record_id to col 9."""
+        rows = [
+            sts.NEW_ENTRIES_HEADERS,
+            ["2026-06-20", "Test purchase", "purchase", "50.00", "", "", "", "", ""],
+        ]
+        ws  = self._make_ws(rows)
+        doc = self._make_doc(ws)
+
+        with patch.object(sts, "_insert_manual_entries", return_value={0: "42"}) as mock_ins, \
+             patch.object(sts, "_insert_manual_sales",   return_value={}):
+            sts.process_new_entries(doc)
+
+        mock_ins.assert_called_once()
+        calls = ws.update_cell.call_args_list
+        # status stamp (col 8) and record_id stamp (col 9) both written for row 2
+        status_call    = next(c for c in calls if c[0][1] == sts._STATUS_COL)
+        record_id_call = next(c for c in calls if c[0][1] == sts._RECORD_ID_COL)
+        self.assertEqual(status_call[0][0],    2)
+        self.assertEqual(record_id_call[0][0], 2)
+        self.assertEqual(record_id_call[0][2], "42")
+
+    def test_record_id_stamped_after_sale_insert(self):
+        """Successful sale insert writes MANUAL- order_id to col 9."""
+        rows = [
+            sts.NEW_ENTRIES_HEADERS,
+            ["2026-06-20", "Test sale", "sale", "100.00", "", "", "", "", ""],
+        ]
+        ws  = self._make_ws(rows)
+        doc = self._make_doc(ws)
+
+        with patch.object(sts, "_insert_manual_entries", return_value={}), \
+             patch.object(sts, "_insert_manual_sales",   return_value={0: "MANUAL-abc123"}):
+            sts.process_new_entries(doc)
+
+        calls = ws.update_cell.call_args_list
+        record_id_call = next(c for c in calls if c[0][1] == sts._RECORD_ID_COL)
+        self.assertEqual(record_id_call[0][2], "MANUAL-abc123")
+
+    def test_marked_for_deletion_calls_delete_and_stamps_deleted(self):
+        """Row with 'Marked for Deletion' status triggers deletion and stamps 'Deleted …'."""
+        rows = [
+            sts.NEW_ENTRIES_HEADERS,
+            ["2026-06-20", "Old purchase", "purchase", "50.00", "", "", "", "Marked for Deletion", "42"],
+        ]
+        ws  = self._make_ws(rows)
+        doc = self._make_doc(ws)
+
+        with patch.object(sts, "_delete_manual_entry", return_value=(True, "")) as mock_del, \
+             patch.object(sts, "_insert_manual_entries", return_value={}), \
+             patch.object(sts, "_insert_manual_sales",   return_value={}):
+            sts.process_new_entries(doc)
+
+        mock_del.assert_called_once_with("42")
+        status_call = ws.update_cell.call_args_list[0]
+        self.assertIn("Deleted", status_call[0][2])
+
+    def test_marked_for_deletion_no_record_id_stamps_error(self):
+        """Deletion without a Record ID stamps an error."""
+        rows = [
+            sts.NEW_ENTRIES_HEADERS,
+            ["2026-06-20", "Old entry", "purchase", "50.00", "", "", "", "Marked for Deletion", ""],
+        ]
+        ws  = self._make_ws(rows)
+        doc = self._make_doc(ws)
+
+        with patch.object(sts, "_delete_manual_entry") as mock_del, \
+             patch.object(sts, "_insert_manual_entries", return_value={}), \
+             patch.object(sts, "_insert_manual_sales",   return_value={}):
+            sts.process_new_entries(doc)
+
+        mock_del.assert_not_called()
+        status_call = ws.update_cell.call_args_list[0]
+        self.assertIn("No Record ID", status_call[0][2])
+
+    def test_marked_for_deletion_failure_stamps_error(self):
+        """Failed deletion stamps the error message from _delete_manual_entry."""
+        rows = [
+            sts.NEW_ENTRIES_HEADERS,
+            ["2026-06-20", "eBay order", "sale", "100.00", "", "", "", "Marked for Deletion", "MANUAL-abc"],
+        ]
+        ws  = self._make_ws(rows)
+        doc = self._make_doc(ws)
+
+        with patch.object(sts, "_delete_manual_entry", return_value=(False, "Not found or not a manual entry")), \
+             patch.object(sts, "_insert_manual_entries", return_value={}), \
+             patch.object(sts, "_insert_manual_sales",   return_value={}):
+            sts.process_new_entries(doc)
+
+        status_call = ws.update_cell.call_args_list[0]
+        self.assertIn("Not found", status_call[0][2])
+
+    def test_already_synced_row_skipped(self):
+        """Rows with a non-deletion status are not re-processed."""
+        rows = [
+            sts.NEW_ENTRIES_HEADERS,
+            ["2026-06-20", "Old entry", "purchase", "50.00", "", "", "", "✓ Synced 2026-06-20", "42"],
+        ]
+        ws  = self._make_ws(rows)
+        doc = self._make_doc(ws)
+
+        with patch.object(sts, "_insert_manual_entries", return_value={}) as mock_ins, \
+             patch.object(sts, "_insert_manual_sales",   return_value={}):
+            count = sts.process_new_entries(doc)
+
+        mock_ins.assert_not_called()  # early return — nothing to insert
+        self.assertEqual(count, 0)
+        ws.update_cell.assert_not_called()
 
 
 # ── Analytics app separation ──────────────────────────────────────────────────

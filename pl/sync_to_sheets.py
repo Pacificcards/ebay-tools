@@ -40,8 +40,11 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-# New Entries: date | description | type | amount | vendor | payment_method | group | status
-NEW_ENTRIES_HEADERS = ["date", "description", "type", "amount", "vendor", "payment_method", "group", "status"]
+# New Entries: date | description | type | amount | vendor | payment_method | group | status | record_id
+NEW_ENTRIES_HEADERS = ["date", "description", "type", "amount", "vendor", "payment_method", "group", "status", "record_id"]
+
+_STATUS_COL    = NEW_ENTRIES_HEADERS.index("status") + 1     # col 8, 1-indexed for gspread
+_RECORD_ID_COL = NEW_ENTRIES_HEADERS.index("record_id") + 1  # col 9
 
 # Sales: order_date | title | gross_sale | net_payout | shipping_cost | order_id | ebay_order_id | group | source
 SALES_HEADERS     = ["order_date", "title", "gross_sale", "net_payout", "shipping_cost", "order_id", "ebay_order_id", "group", "source"]
@@ -322,9 +325,10 @@ def _ensure_new_entries_tab(doc: gspread.Spreadsheet) -> None:
 
 def process_new_entries(doc: gspread.Spreadsheet) -> int:
     """
-    Read blank-status rows from the New Entries tab, insert them into import_queue,
-    and stamp each successfully synced row with the sync date.
-    Returns the count of rows synced.
+    Read the New Entries tab and:
+      - Insert blank-status rows into the DB, then stamp status + record_id.
+      - Delete rows where status is "Marked for Deletion" using the stored record_id.
+    Returns the count of rows inserted (deletions not counted).
     """
     try:
         ws = doc.worksheet("New Entries")
@@ -336,24 +340,33 @@ def process_new_entries(doc: gspread.Spreadsheet) -> int:
         return 0
 
     today_str = date.today().isoformat()
-    status_col = len(NEW_ENTRIES_HEADERS)  # last column, 1-indexed
     purchase_entries: list[dict] = []
     purchase_row_numbers: list[int] = []
     sale_entries: list[dict] = []
     sale_row_numbers: list[int] = []
 
     for i, row in enumerate(all_rows[1:], start=2):
-        # Pad short rows to full header width
         row = list(row) + [""] * (len(NEW_ENTRIES_HEADERS) - len(row))
 
-        status = row[7].strip()
+        status = row[_STATUS_COL - 1].strip()
+
+        # Deletion: user set status to "Marked for Deletion"
+        if status.lower() == "marked for deletion":
+            record_id = row[_RECORD_ID_COL - 1].strip()
+            if not record_id:
+                ws.update_cell(i, _STATUS_COL, "✗ No Record ID — entry predates delete workflow")
+                continue
+            success, msg = _delete_manual_entry(record_id)
+            ws.update_cell(i, _STATUS_COL, f"Deleted {today_str}" if success else f"✗ {msg}")
+            continue
+
         if status:
-            continue  # already synced
+            continue  # already processed
 
         raw_date    = row[0].strip()
         description = row[1].strip()
         if not raw_date or not description:
-            continue  # skip blank rows
+            continue
 
         try:
             date_val = _normalize_date(raw_date)
@@ -363,7 +376,7 @@ def process_new_entries(doc: gspread.Spreadsheet) -> int:
 
         entry_type = row[2].strip().lower()
         if entry_type not in ("sale", "purchase", ""):
-            ws.update_cell(i, status_col, f"✗ Invalid type: '{row[2].strip()}'")
+            ws.update_cell(i, _STATUS_COL, f"✗ Invalid type: '{row[2].strip()}'")
             print(f"  [new_entries] invalid type '{row[2].strip()}' for '{description}' — valid values: sale, purchase")
             continue
         if not entry_type:
@@ -391,25 +404,62 @@ def process_new_entries(doc: gspread.Spreadsheet) -> int:
     synced_count = 0
 
     if purchase_entries:
-        for idx in _insert_manual_entries(purchase_entries):
-            ws.update_cell(purchase_row_numbers[idx], status_col, f"✓ Synced {today_str}")
+        for idx, record_id in _insert_manual_entries(purchase_entries).items():
+            ws.update_cell(purchase_row_numbers[idx], _STATUS_COL, f"✓ Synced {today_str}")
+            ws.update_cell(purchase_row_numbers[idx], _RECORD_ID_COL, record_id)
             synced_count += 1
 
     if sale_entries:
-        for idx in _insert_manual_sales(sale_entries):
-            ws.update_cell(sale_row_numbers[idx], status_col, f"✓ Synced {today_str}")
+        for idx, record_id in _insert_manual_sales(sale_entries).items():
+            ws.update_cell(sale_row_numbers[idx], _STATUS_COL, f"✓ Synced {today_str}")
+            ws.update_cell(sale_row_numbers[idx], _RECORD_ID_COL, record_id)
             synced_count += 1
 
     return synced_count
 
 
-def _insert_manual_entries(entries: list[dict]) -> list[int]:
+def _delete_manual_entry(record_id: str) -> tuple[bool, str]:
     """
-    Insert manual entries into import_queue.
-    Returns list of successfully inserted indices (into the entries list).
+    Hard-delete a manually created entry by its record_id.
+    Sales have MANUAL- prefixed order_ids; purchases have numeric import_queue ids.
+    Refuses to delete eBay-sourced rows (safety guard).
+    Returns (success, error_message).
     """
     conn = get_connection()
-    synced: list[int] = []
+    try:
+        with conn.cursor() as cur:
+            if record_id.startswith("MANUAL-"):
+                cur.execute(
+                    "DELETE FROM orders_raw WHERE order_id = %s AND order_id LIKE 'MANUAL-%%'",
+                    (record_id,),
+                )
+            else:
+                try:
+                    purchase_id = int(record_id)
+                except ValueError:
+                    return False, f"Invalid Record ID: '{record_id}'"
+                cur.execute(
+                    "DELETE FROM import_queue WHERE id = %s AND source = 'manual'",
+                    (purchase_id,),
+                )
+            if cur.rowcount == 0:
+                return False, "Not found or not a manual entry"
+        conn.commit()
+        return True, ""
+    except Exception as e:
+        conn.rollback()
+        return False, str(e)
+    finally:
+        conn.close()
+
+
+def _insert_manual_entries(entries: list[dict]) -> dict[int, str]:
+    """
+    Insert manual entries into import_queue.
+    Returns {index: record_id} for each successfully inserted entry.
+    """
+    conn = get_connection()
+    synced: dict[int, str] = {}
     try:
         with conn.cursor() as cur:
             for i, entry in enumerate(entries):
@@ -421,6 +471,7 @@ def _insert_manual_entries(entries: list[dict]) -> list[int]:
                             source, status, purchase_date, description,
                             total_cost, vendor, payment_method, group_name
                         ) VALUES ('manual', 'pending', %s, %s, %s, %s, %s, %s)
+                        RETURNING id
                         """,
                         (
                             entry["purchase_date"],
@@ -431,8 +482,8 @@ def _insert_manual_entries(entries: list[dict]) -> list[int]:
                             entry["group_name"],
                         ),
                     )
+                    synced[i] = str(cur.fetchone()[0])
                     cur.execute("RELEASE SAVEPOINT sp")
-                    synced.append(i)
                 except Exception as e:
                     cur.execute("ROLLBACK TO SAVEPOINT sp")
                     print(f"  [new_entries] failed to insert '{entry['description']}': {e}")
@@ -442,13 +493,13 @@ def _insert_manual_entries(entries: list[dict]) -> list[int]:
     return synced
 
 
-def _insert_manual_sales(entries: list[dict]) -> list[int]:
+def _insert_manual_sales(entries: list[dict]) -> dict[int, str]:
     """
     Insert manual sales into orders_raw.
-    Returns list of successfully inserted indices (into the entries list).
+    Returns {index: order_id} for each successfully inserted entry.
     """
     conn = get_connection()
-    synced: list[int] = []
+    synced: dict[int, str] = {}
     try:
         with conn.cursor() as cur:
             for i, entry in enumerate(entries):
@@ -469,8 +520,8 @@ def _insert_manual_sales(entries: list[dict]) -> list[int]:
                             entry["group_name"],
                         ),
                     )
+                    synced[i] = order_id
                     cur.execute("RELEASE SAVEPOINT sp")
-                    synced.append(i)
                 except Exception as e:
                     cur.execute("ROLLBACK TO SAVEPOINT sp")
                     print(f"  [new_entries] failed to insert sale '{entry['description']}': {e}")
