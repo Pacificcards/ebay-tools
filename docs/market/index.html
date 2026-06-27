@@ -11,11 +11,13 @@
     h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
     .subtitle { color: #6b7280; font-size: 14px; margin-bottom: 28px; }
     h2 { font-size: 15px; font-weight: 600; margin: 32px 0 12px; color: #111827; }
-    hr { border: none; border-top: 1px solid #e5e7eb; margin-bottom: 28px; }
+    hr { border: none; border-top: 1px solid #e5e7eb; margin: 32px 0; }
     .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin-bottom: 24px; }
     select { font-size: 13px; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; margin-bottom: 16px; }
     table { border-collapse: collapse; width: 100%; font-size: 13px; }
     th { text-align: left; padding: 8px 12px; color: #6b7280; font-weight: 600; border-bottom: 2px solid #e5e7eb; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { color: #374151; }
     td { padding: 8px 12px; border-bottom: 1px solid #f3f4f6; }
     tr:last-child td { border-bottom: none; }
     .up   { color: #16a34a; font-weight: 500; }
@@ -36,7 +38,6 @@
 
 <h1>Pacific Cards Co. — Market Monitor</h1>
 <p class="subtitle" id="subtitle">Loading…</p>
-<hr>
 
 <!-- Overview -->
 <h2>Overview</h2>
@@ -46,16 +47,19 @@
       <tr>
         <th>Product</th>
         <th style="text-align:right">Listings</th>
-        <th style="text-align:right">vs Yesterday</th>
         <th style="text-align:right">Median Price</th>
         <th style="text-align:right">vs Yesterday</th>
         <th style="text-align:right">New Today</th>
+        <th style="text-align:right">New Median</th>
         <th style="text-align:right">Sold Yesterday</th>
+        <th style="text-align:right">Sold Median</th>
       </tr>
     </thead>
     <tbody id="overview-body"></tbody>
   </table>
 </div>
+
+<hr>
 
 <!-- Trend Charts -->
 <h2>Trend Analysis</h2>
@@ -77,21 +81,23 @@
   <div class="chart-wrap"><canvas id="hist-chart"></canvas></div>
 </div>
 
-<!-- New / Gone -->
-<div class="two-col">
-  <div>
-    <h2>New Listings Today <span id="new-query-label" style="font-weight:400;color:#6b7280"></span></h2>
-    <div class="card" id="new-table-wrap"></div>
-  </div>
-  <div>
-    <h2>Sold Yesterday <span id="gone-query-label" style="font-weight:400;color:#6b7280"></span></h2>
-    <div class="card" id="gone-table-wrap"><p class="empty">Listings that disappeared since yesterday (proxy: sold or ended).</p></div>
-  </div>
-</div>
+<!-- Sold Yesterday -->
+<h2>Sold Yesterday <span id="gone-query-label" style="font-weight:400;color:#6b7280"></span></h2>
+<div class="card" id="gone-table-wrap"><p class="empty">Listings that disappeared since yesterday (proxy: sold or ended).</p></div>
+
+<!-- Current BIN Listings -->
+<h2>Current BIN Listings <span id="bin-query-label" style="font-weight:400;color:#6b7280"></span></h2>
+<div class="card" id="bin-table-wrap"></div>
+
+<!-- Active Auctions -->
+<h2>Active Auctions <span id="auction-query-label" style="font-weight:400;color:#6b7280"></span></h2>
+<div class="card" id="auction-table-wrap"></div>
 
 <script>
 let DATA = null;
 let countChart = null, priceChart = null, histChart = null;
+let binSort = { col: 'price', dir: 1 };
+let currentQueryId = null;
 
 // ── Utilities ────────────────────────────────────────────────────────────────
 
@@ -119,6 +125,21 @@ function buyingTag(fmt) {
   return fmt === 'AUCTION'
     ? '<span class="tag tag-auction">Auction</span>'
     : '<span class="tag tag-bin">BIN</span>';
+}
+
+function fmtTimeRemaining(end_time_str) {
+  if (!end_time_str) return '—';
+  const fetched = DATA.fetched_at ? new Date(DATA.fetched_at) : new Date(DATA.generated_at);
+  const end = new Date(end_time_str);
+  const ms = end - fetched;
+  if (ms <= 0) return 'Ended';
+  const totalMins = Math.floor(ms / 60000);
+  const d = Math.floor(totalMins / 1440);
+  const h = Math.floor((totalMins % 1440) / 60);
+  const m = totalMins % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
 }
 
 // ── Chart helpers ─────────────────────────────────────────────────────────────
@@ -191,17 +212,20 @@ function renderOverview() {
   const rows = DATA.queries.map(q => {
     const t = DATA.today[q.id] || {};
     const y = DATA.yesterday[q.id] || {};
+    const newMedian  = (DATA.new_medians  || {})[q.id];
+    const goneMedian = (DATA.gone_medians || {})[q.id];
     return `<tr>
       <td style="font-weight:500">${q.name}</td>
       <td style="text-align:right">${fmtNum(t.listing_count)}</td>
-      <td style="text-align:right">${fmtPct(pct(t.listing_count, y.listing_count))}</td>
       <td style="text-align:right">${fmtPrice(t.price_median)}</td>
       <td style="text-align:right">${fmtPct(pct(t.price_median, y.price_median))}</td>
       <td style="text-align:right;color:#16a34a;font-weight:500">${fmtNum(t.new_count)}</td>
+      <td style="text-align:right">${newMedian  != null ? fmtPrice(newMedian)  : '<span class="neu">—</span>'}</td>
       <td style="text-align:right;color:#dc2626;font-weight:500">${fmtNum(t.gone_count)}</td>
+      <td style="text-align:right">${goneMedian != null ? fmtPrice(goneMedian) : '<span class="neu">—</span>'}</td>
     </tr>`;
   });
-  tbody.innerHTML = rows.join('') || '<tr><td colspan="7" class="empty">No data yet.</td></tr>';
+  tbody.innerHTML = rows.join('') || '<tr><td colspan="8" class="empty">No data yet.</td></tr>';
 }
 
 // ── Trend charts ──────────────────────────────────────────────────────────────
@@ -241,48 +265,116 @@ function renderTrends(queryId) {
   priceChart = new Chart(ctx, { type: 'line', data: { labels, datasets }, options: opts });
 }
 
-// ── Item tables ───────────────────────────────────────────────────────────────
+// ── Sold Yesterday ────────────────────────────────────────────────────────────
 
-function renderItemTable(containerId, items, cols) {
-  const wrap = document.getElementById(containerId);
-  if (!items || items.length === 0) {
+function renderGoneTable(queryId) {
+  const wrap = document.getElementById('gone-table-wrap');
+  const items = DATA.gone_items[queryId] || [];
+  if (items.length === 0) {
     wrap.innerHTML = '<p class="empty">None today.</p>';
     return;
   }
-  const header = `<thead><tr>${cols.map(c => `<th>${c.label}</th>`).join('')}</tr></thead>`;
-  const body = items.map(item => {
-    const cells = cols.map(c => `<td>${c.render(item)}</td>`).join('');
-    return `<tr>${cells}</tr>`;
-  }).join('');
-  wrap.innerHTML = `<table>${header}<tbody>${body}</tbody></table>`;
+  const rows = items.map(i => `<tr>
+    <td>${i.title}</td>
+    <td style="text-align:right">${fmtPrice(i.price)}</td>
+    <td style="text-align:right">${buyingTag(i.buying_format)}</td>
+    <td style="text-align:right">${i.first_seen}</td>
+  </tr>`).join('');
+  wrap.innerHTML = `<table>
+    <thead><tr>
+      <th>Title</th>
+      <th style="text-align:right">Last Price</th>
+      <th style="text-align:right">Format</th>
+      <th style="text-align:right">First Seen</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
 }
 
-const NEW_COLS = [
-  { label: 'Title', render: i => `<a href="${i.url}" target="_blank">${i.title}</a>` },
-  { label: 'Price', render: i => fmtPrice(i.price) },
-  { label: 'Format', render: i => buyingTag(i.buying_format) },
-];
+// ── BIN listings (sortable) ───────────────────────────────────────────────────
 
-const GONE_COLS = [
-  { label: 'Title', render: i => i.title },
-  { label: 'Last Price', render: i => fmtPrice(i.price) },
-  { label: 'Format', render: i => buyingTag(i.buying_format) },
-  { label: 'First Seen', render: i => i.first_seen },
-];
+function renderBinTable(queryId) {
+  const wrap = document.getElementById('bin-table-wrap');
+  const items = DATA.bin_listings[queryId] || [];
+  if (items.length === 0) {
+    wrap.innerHTML = '<p class="empty">No BIN listings.</p>';
+    return;
+  }
+  const sorted = [...items].sort((a, b) => {
+    if (binSort.col === 'price') return ((a.price || 0) - (b.price || 0)) * binSort.dir;
+    return (a.title || '').localeCompare(b.title || '') * binSort.dir;
+  });
+
+  function sortArrow(col) {
+    if (binSort.col !== col) return ' <span style="color:#d1d5db">↕</span>';
+    return binSort.dir === 1 ? ' ↑' : ' ↓';
+  }
+
+  const rows = sorted.map(i => `<tr>
+    <td><a href="${i.url}" target="_blank">${i.title}</a></td>
+    <td style="text-align:right">${fmtPrice(i.price)}</td>
+  </tr>`).join('');
+
+  wrap.innerHTML = `<table>
+    <thead><tr>
+      <th class="sortable" onclick="sortBin('title')">Title${sortArrow('title')}</th>
+      <th class="sortable" style="text-align:right" onclick="sortBin('price')">Price${sortArrow('price')}</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function sortBin(col) {
+  if (binSort.col === col) {
+    binSort.dir *= -1;
+  } else {
+    binSort.col = col;
+    binSort.dir = 1;
+  }
+  renderBinTable(currentQueryId);
+}
+
+// ── Auction listings ──────────────────────────────────────────────────────────
+
+function renderAuctionTable(queryId) {
+  const wrap = document.getElementById('auction-table-wrap');
+  const items = DATA.auction_listings[queryId] || [];
+  if (items.length === 0) {
+    wrap.innerHTML = '<p class="empty">No active auctions.</p>';
+    return;
+  }
+  const rows = items.map(i => `<tr>
+    <td><a href="${i.url}" target="_blank">${i.title}</a></td>
+    <td style="text-align:right">${i.price > 0 ? fmtPrice(i.price) : '—'}</td>
+    <td style="text-align:right">${fmtTimeRemaining(i.end_time)}</td>
+  </tr>`).join('');
+  wrap.innerHTML = `<table>
+    <thead><tr>
+      <th>Title</th>
+      <th style="text-align:right">Current Bid</th>
+      <th style="text-align:right">Time Remaining</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
 
 // ── Query selector ────────────────────────────────────────────────────────────
 
 function updateQuery(queryId) {
+  currentQueryId = queryId;
   const q = DATA.queries.find(q => q.id === queryId);
   const name = q ? ` — ${q.name}` : '';
-  document.getElementById('hist-query-label').textContent = name;
-  document.getElementById('new-query-label').textContent  = name;
-  document.getElementById('gone-query-label').textContent = name;
+  document.getElementById('hist-query-label').textContent    = name;
+  document.getElementById('gone-query-label').textContent    = name;
+  document.getElementById('bin-query-label').textContent     = name;
+  document.getElementById('auction-query-label').textContent = name;
 
   renderTrends(queryId);
   buildHistogram(DATA.prices[queryId]);
-  renderItemTable('new-table-wrap',  DATA.new_items[queryId],  NEW_COLS);
-  renderItemTable('gone-table-wrap', DATA.gone_items[queryId], GONE_COLS);
+  renderGoneTable(queryId);
+  binSort = { col: 'price', dir: 1 };
+  renderBinTable(queryId);
+  renderAuctionTable(queryId);
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────

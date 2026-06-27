@@ -48,15 +48,6 @@ def generate() -> None:
                 for r in cur.fetchall()
             }
 
-            # New items: first_seen = latest_date
-            cur.execute("""
-                SELECT query_id, item_id, title, price, buying_format, url
-                FROM market_snapshot_items
-                WHERE first_seen = %s
-                ORDER BY query_id, price
-            """, (latest_date,))
-            new_rows = cur.fetchall()
-
             # Gone items: last_seen = prev_date (not refreshed in latest run)
             cur.execute("""
                 SELECT query_id, item_id, title, price, buying_format, first_seen::text
@@ -66,14 +57,23 @@ def generate() -> None:
             """, (prev_date,))
             gone_rows = cur.fetchall()
 
-            # Current prices: last_seen = latest_date, BIN-only for histogram
+            # Current BIN listings: last_seen = latest_date, price > 0
             cur.execute("""
-                SELECT query_id, price
+                SELECT query_id, title, price, url
                 FROM market_snapshot_items
-                WHERE last_seen = %s AND price > 0 AND buying_format = 'FIXED_PRICE'
+                WHERE last_seen = %s AND buying_format = 'FIXED_PRICE' AND price > 0
                 ORDER BY query_id, price
             """, (latest_date,))
-            price_rows = cur.fetchall()
+            bin_rows = cur.fetchall()
+
+            # Current auction listings: last_seen = latest_date
+            cur.execute("""
+                SELECT query_id, title, price, url, end_time::text
+                FROM market_snapshot_items
+                WHERE last_seen = %s AND buying_format = 'AUCTION'
+                ORDER BY query_id, end_time NULLS LAST
+            """, (latest_date,))
+            auction_rows = cur.fetchall()
 
             # Latest MSRP per query (use MAX to get most recent non-null value)
             cur.execute("""
@@ -83,6 +83,33 @@ def generate() -> None:
                 GROUP BY query_id
             """)
             msrp_map: dict[str, float] = {r[0]: float(r[1]) for r in cur.fetchall()}
+
+            # Median price of new BIN listings today (first_seen = latest_date)
+            cur.execute("""
+                SELECT query_id,
+                       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price)
+                FROM market_snapshot_items
+                WHERE first_seen = %s AND buying_format = 'FIXED_PRICE' AND price > 0
+                GROUP BY query_id
+            """, (latest_date,))
+            new_median_map: dict[str, float] = {r[0]: float(r[1]) for r in cur.fetchall()}
+
+            # Median price of gone BIN listings (last_seen = prev_date, proxy: sold/ended)
+            cur.execute("""
+                SELECT query_id,
+                       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price)
+                FROM market_snapshot_items
+                WHERE last_seen = %s AND buying_format = 'FIXED_PRICE' AND price > 0
+                GROUP BY query_id
+            """, (prev_date,))
+            gone_median_map: dict[str, float] = {r[0]: float(r[1]) for r in cur.fetchall()}
+
+            # Timestamp of the last pipeline run (for computing auction time-remaining)
+            cur.execute("""
+                SELECT MAX(fetched_at)::text FROM market_snapshots WHERE date = %s
+            """, (latest_date,))
+            fetched_at_row = cur.fetchone()
+            fetched_at = fetched_at_row[0] if fetched_at_row else None
     finally:
         conn.close()
 
@@ -109,33 +136,46 @@ def generate() -> None:
         if r[2] == latest_date_str:
             today_snap[qid] = entry
 
-    # New / gone items by query
-    new_items: dict[str, list] = {}
-    for r in new_rows:
-        new_items.setdefault(r[0], []).append(
-            {"item_id": r[1], "title": r[2], "price": _f(r[3]), "buying_format": r[4], "url": r[5]}
-        )
-
+    # Gone items by query
     gone_items: dict[str, list] = {}
     for r in gone_rows:
         gone_items.setdefault(r[0], []).append(
             {"item_id": r[1], "title": r[2], "price": _f(r[3]), "buying_format": r[4], "first_seen": r[5]}
         )
 
-    # Current prices by query (for histogram)
-    prices: dict[str, list] = {}
-    for r in price_rows:
-        prices.setdefault(r[0], []).append(float(r[1]))
+    # Current BIN listings by query (also used for histogram)
+    bin_listings: dict[str, list] = {}
+    for r in bin_rows:
+        bin_listings.setdefault(r[0], []).append(
+            {"title": r[1], "price": _f(r[2]), "url": r[3]}
+        )
+
+    # Current auction listings by query
+    auction_listings: dict[str, list] = {}
+    for r in auction_rows:
+        auction_listings.setdefault(r[0], []).append(
+            {"title": r[1], "price": _f(r[2]), "url": r[3], "end_time": r[4]}
+        )
+
+    # Prices list (floats) derived from BIN listings for histogram
+    prices: dict[str, list] = {
+        qid: [item["price"] for item in items if item["price"] is not None]
+        for qid, items in bin_listings.items()
+    }
 
     data = {
-        "generated_at": latest_date_str,
-        "queries":      queries,
-        "trends":       trends,
-        "today":        today_snap,
-        "yesterday":    yesterday_snap,
-        "new_items":    new_items,
-        "gone_items":   gone_items,
-        "prices":       prices,
+        "generated_at":    latest_date_str,
+        "fetched_at":      fetched_at,
+        "queries":         queries,
+        "trends":          trends,
+        "today":           today_snap,
+        "yesterday":       yesterday_snap,
+        "new_medians":     new_median_map,
+        "gone_medians":    gone_median_map,
+        "gone_items":      gone_items,
+        "bin_listings":    bin_listings,
+        "auction_listings": auction_listings,
+        "prices":          prices,
     }
 
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -143,10 +183,11 @@ def generate() -> None:
     with open(out_path, "w") as f:
         json.dump(data, f, default=str)
 
-    n_queries = len(queries)
-    n_items   = sum(len(v) for v in prices.values())
+    n_queries  = len(queries)
+    n_bin      = sum(len(v) for v in bin_listings.values())
+    n_auctions = sum(len(v) for v in auction_listings.values())
     print(f"[generate_dashboard] Wrote market_data.json "
-          f"({n_queries} queries, {n_items} current BIN listings, {latest_date_str})")
+          f"({n_queries} queries, {n_bin} BIN + {n_auctions} auction listings, {latest_date_str})")
 
 
 def _f(val) -> float | None:
