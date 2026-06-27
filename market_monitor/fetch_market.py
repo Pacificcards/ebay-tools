@@ -33,7 +33,11 @@ _LOT_RE = re.compile(
     r'|\bcase\s+of\s+\d+'                           # case of 6
     r'|\bpack\s+of\s+\d+'                           # pack of 3
     r'|\bset\s+of\s+\d+'                            # set of 2
-    r'|\bqty\s*:?\s*[2-9]',                         # qty 2, qty: 3
+    r'|\bqty\s*:?\s*[2-9]'                          # qty 2, qty: 3
+    r'|\bteam\s+break\b'                            # team break spot auctions
+    r'|\bplayer\s+break\b'                          # player break spot auctions (one slot per player)
+    r'|\bcase\s*break\b'                            # case break spot auctions
+    r'|\bspot\s+auction\b',                         # generic spot auctions
     re.IGNORECASE,
 )
 
