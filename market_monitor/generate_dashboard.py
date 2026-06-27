@@ -13,9 +13,7 @@ OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "docs", "market")
 
 
 def generate() -> None:
-    today          = date.today()
-    yesterday      = today - timedelta(days=1)
-    window_start   = today - timedelta(days=90)
+    window_start = date.today() - timedelta(days=90)
 
     conn = get_connection()
     try:
@@ -31,41 +29,50 @@ def generate() -> None:
             """, (window_start,))
             trend_rows = cur.fetchall()
 
-            # Yesterday snapshot for DoD comparison
+            # Use the most recent snapshot date as "today" — pipeline stores data in UTC
+            # which may differ from local date when generator runs in a different timezone
+            latest_date_str = max((r[2] for r in trend_rows), default=None)
+            if not latest_date_str:
+                print("[generate_dashboard] No data found.")
+                return
+            latest_date = date.fromisoformat(latest_date_str)
+            prev_date   = latest_date - timedelta(days=1)
+
+            # Previous-day snapshot for DoD comparison
             cur.execute("""
                 SELECT query_id, listing_count, price_median
                 FROM market_snapshots WHERE date = %s
-            """, (yesterday,))
+            """, (prev_date,))
             yesterday_snap = {
                 r[0]: {"listing_count": r[1], "price_median": _f(r[2])}
                 for r in cur.fetchall()
             }
 
-            # New items today (first_seen = today)
+            # New items: first_seen = latest_date
             cur.execute("""
                 SELECT query_id, item_id, title, price, buying_format, url
                 FROM market_snapshot_items
                 WHERE first_seen = %s
                 ORDER BY query_id, price
-            """, (today,))
+            """, (latest_date,))
             new_rows = cur.fetchall()
 
-            # Gone items today (last_seen = yesterday = not refreshed today)
+            # Gone items: last_seen = prev_date (not refreshed in latest run)
             cur.execute("""
                 SELECT query_id, item_id, title, price, buying_format, first_seen::text
                 FROM market_snapshot_items
                 WHERE last_seen = %s
                 ORDER BY query_id, price
-            """, (yesterday,))
+            """, (prev_date,))
             gone_rows = cur.fetchall()
 
-            # Current prices (last_seen = today, for histogram)
+            # Current prices: last_seen = latest_date, BIN-only for histogram
             cur.execute("""
                 SELECT query_id, price
                 FROM market_snapshot_items
-                WHERE last_seen = %s AND price > 0
+                WHERE last_seen = %s AND price > 0 AND buying_format = 'FIXED_PRICE'
                 ORDER BY query_id, price
-            """, (today,))
+            """, (latest_date,))
             price_rows = cur.fetchall()
 
             # Latest MSRP per query (use MAX to get most recent non-null value)
@@ -79,11 +86,13 @@ def generate() -> None:
     finally:
         conn.close()
 
-    # Build queries list (unique query_id + name pairs from trend data)
+    # Build queries list — only include queries that ran on the latest snapshot date
+    # (excludes deactivated queries that have historical rows but didn't run in the latest batch)
     seen_queries: dict[str, str] = {}
     for r in trend_rows:
-        qid, name = r[0], r[1]
-        seen_queries[qid] = name
+        qid, name, row_date = r[0], r[1], r[2]
+        if row_date == latest_date_str:
+            seen_queries[qid] = name
     queries = [{"id": qid, "name": name, "msrp": msrp_map.get(qid)} for qid, name in seen_queries.items()]
 
     # Trend data by query
@@ -97,7 +106,7 @@ def generate() -> None:
             "price_median": _f(r[9]), "price_p25": _f(r[10]), "price_p75": _f(r[11]),
         }
         trends.setdefault(qid, []).append(entry)
-        if r[2] == today.isoformat():
+        if r[2] == latest_date_str:
             today_snap[qid] = entry
 
     # New / gone items by query
@@ -119,7 +128,7 @@ def generate() -> None:
         prices.setdefault(r[0], []).append(float(r[1]))
 
     data = {
-        "generated_at": today.isoformat(),
+        "generated_at": latest_date_str,
         "queries":      queries,
         "trends":       trends,
         "today":        today_snap,
@@ -137,7 +146,7 @@ def generate() -> None:
     n_queries = len(queries)
     n_items   = sum(len(v) for v in prices.values())
     print(f"[generate_dashboard] Wrote market_data.json "
-          f"({n_queries} queries, {n_items} current listings, {today.isoformat()})")
+          f"({n_queries} queries, {n_items} current BIN listings, {latest_date_str})")
 
 
 def _f(val) -> float | None:
