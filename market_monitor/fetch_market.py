@@ -108,15 +108,16 @@ def _upsert_snapshot(conn, query_id: str, name: str, today: date,
                      listing_count: int, new_count: int, gone_count: int,
                      stats: dict, msrp: float | None = None,
                      presale_date: str | None = None,
-                     release_date: str | None = None) -> None:
+                     release_date: str | None = None,
+                     type: str | None = None) -> None:
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO market_snapshots
                 (query_id, name, date, listing_count, new_count, gone_count,
                  price_min, price_max, price_mean, price_median, price_p25, price_p75,
-                 msrp, presale_date, release_date)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 msrp, presale_date, release_date, type)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (query_id, date) DO UPDATE SET
                 name          = EXCLUDED.name,
                 listing_count = EXCLUDED.listing_count,
@@ -131,12 +132,13 @@ def _upsert_snapshot(conn, query_id: str, name: str, today: date,
                 msrp          = EXCLUDED.msrp,
                 presale_date  = EXCLUDED.presale_date,
                 release_date  = EXCLUDED.release_date,
+                type          = EXCLUDED.type,
                 fetched_at    = NOW()
             """,
             (query_id, name, today, listing_count, new_count, gone_count,
              stats["price_min"], stats["price_max"], stats["price_mean"],
              stats["price_median"], stats["price_p25"], stats["price_p75"],
-             msrp, presale_date, release_date),
+             msrp, presale_date, release_date, type),
         )
 
 
@@ -188,7 +190,8 @@ def run() -> None:
                 stats  = _price_stats(prices)
                 _upsert_snapshot(conn, q["id"], q["name"], today,
                                  len(items), new_count, gone_count, stats,
-                                 q.get("msrp"), q.get("presale_date"), q.get("release_date"))
+                                 q.get("msrp"), q.get("presale_date"), q.get("release_date"),
+                                 q.get("type"))
 
             auctions = len(items) - len(bin_items)
             print(f"    → new={new_count}, gone={gone_count}, "

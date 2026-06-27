@@ -5,7 +5,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-EXPECTED_HEADERS = ["Name", "Exclusions", "Category", "CategoryID", "Min Price", "Max Price", "Active", "MSRP", "Presale Date", "Release Date"]
+EXPECTED_HEADERS = ["Name", "Exclusions", "Category", "CategoryID", "Min Price", "Max Price", "Active", "MSRP", "Presale Date", "Release Date", "Type"]
 
 
 def _slugify(name: str) -> str:
@@ -69,6 +69,7 @@ def load_queries(sheet_id: str, creds_json: str) -> list[dict]:
         msrp  = row.get("MSRP")
         presale_date = str(row.get("Presale Date", "")).strip() or None
         release_date = str(row.get("Release Date", "")).strip() or None
+        type_val     = str(row.get("Type", "")).strip() or None
         queries.append({
             "id":           _slugify(name),
             "name":         name,
@@ -79,5 +80,6 @@ def load_queries(sheet_id: str, creds_json: str) -> list[dict]:
             "msrp":         float(msrp) if msrp else None,
             "presale_date": presale_date,
             "release_date": release_date,
+            "type":         type_val,
         })
     return queries
