@@ -37,7 +37,8 @@ _LOT_RE = re.compile(
     r'|\bteam\s+break\b'                            # team break spot auctions
     r'|\bplayer\s+break\b'                          # player break spot auctions (one slot per player)
     r'|\bcase\s*break\b'                            # case break spot auctions
-    r'|\bspot\s+auction\b',                         # generic spot auctions
+    r'|\bspot\s+auction\b'                          # generic spot auctions
+    r'|\$\d+\s+auctions?\b',                        # "$1 Auctions" numbered break spots (e.g. EBJUN-xxx)
     re.IGNORECASE,
 )
 
