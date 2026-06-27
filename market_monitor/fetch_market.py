@@ -9,7 +9,8 @@ Run daily. Each run:
 import os
 import re
 import sys
-from datetime import date, timedelta
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from statistics import mean, median, quantiles
 
 from psycopg2.extras import execute_values
@@ -139,7 +140,7 @@ def run() -> None:
 
     print(f"[market_monitor] {len(queries)} active queries loaded")
     token     = get_app_token(client_id, client_secret)
-    today     = date.today()
+    today     = datetime.now(ZoneInfo("America/Los_Angeles")).date()
     yesterday = today - timedelta(days=1)
 
     conn = get_connection()
