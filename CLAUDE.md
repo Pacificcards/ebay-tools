@@ -110,72 +110,68 @@ Scans eBay every 15 minutes for underpriced cards on a watchlist. Fires Discord 
 - Discord bot requires Message Content Intent enabled in Discord developer portal
 
 ### 4. Market Monitor (`market_monitor/`)
-Daily pipeline that tracks active eBay listings for ~12 sealed product search queries. Runs via `market-monitor.yml` at 10:30 UTC (triggered by cron-job.org). Live at `pacificcards.github.io/ebay-tools/market/`.
+Daily pipeline that tracks active eBay listings for ~12 sealed product search queries. Runs via `market-monitor.yml` at 11:00 UTC (4am PDT) on a GHA schedule. Live at `pacificcards.github.io/ebay-tools/market/`.
 
 **Steps in order:**
-1. `fetch_market.py` — reads `pcc_sealed_monitor` Google Sheet ("Queries" tab), resolves category names → IDs via hardcoded map, searches eBay Browse API (paginated, BIN + auction, up to 2,000 results/query), upserts per-listing tracking and daily aggregate stats to Supabase
+1. `fetch_market.py` — reads `pcc_sealed_monitor` Google Sheet ("Queries" tab), searches eBay Browse API (paginated, BIN + auction, up to 2,000 results/query), upserts per-listing tracking and daily aggregate stats to Supabase
 2. `generate_dashboard.py` — reads last 90 days of DB data, writes `docs/market/market_data.json`
 3. GHA commits `market_data.json` back to repo → GitHub Pages serves updated dashboard
 
 **Google Sheet config (`pcc_sealed_monitor` → `Queries` tab):**
-Columns: `Name | Exclusions | Category | Min Price | Max Price | Active | MSRP`
-- `Category` = plain-English name resolved via `CATEGORY_ID_MAP` in `sheets.py` (NOT the Taxonomy API — that was unreliable). Numeric ID also accepted as fallback. Unknown names log a warning and run unfiltered.
+Columns: `Name | Exclusions | Category | CategoryID | Min Price | Max Price | Active | MSRP | Presale Date | Release Date | Type`
+- `CategoryID` = numeric eBay category ID (col D); user fills with a VLOOKUP formula. Code reads this only — non-numeric values log an error and run without category filter. `Category` col exists for the formula reference but is never read by code.
 - `Active` = `Yes` / `Y` / `TRUE` — non-yes rows are skipped
-- `Exclusions` = CSV of terms → appended as eBay `-keyword` exclusions to the query
+- `Exclusions` = CSV of terms → appended as eBay `-keyword` exclusions to the query (per-query, not global)
 - `MSRP` = optional; stored in DB and shown as a dashed amber reference line on trend charts
+- `Presale Date` / `Release Date` = optional dates for future trend chart annotations
+- `Type` = product type label (e.g. "Baseball", "Pokemon", "Disney Lorcana") — shown in Overview table
 - Query `id` (DB key) is auto-derived: slugified lowercase Name
+- **DO NOT add "case" as a global exclusion** — some queries specifically search for sealed cases. Exclusions are per-row.
 
-**Category name → ID map** (in `market_monitor/sheets.py`):
-| Sheet value | eBay category ID |
-|---|---|
-| Sealed Trading Card Boxes | 261332 |
-| Sealed Trading Card Cases | 261333 |
-| CCG Sealed Boxes | 261044 |
-| Trading Card Box & Case Breaks | 261334 |
+**Lot filter (`_LOT_RE` in `fetch_market.py`) — Layer 2 after eBay category filter:**
+Filters by title. Catches: `2x / x2`, `lot of N`, `2+ boxes`, `bundle`, `case of N`, `booster box case`, `pack/set of N`, `qty 2–9`, `(4)/(12)/etc in parens`, `team/player/case break`, `spot auction`, `$N auctions`
+- **DO NOT use the eBay Taxonomy API for category lookup** — it returned wrong IDs. Use the numeric ID directly in the CategoryID column.
 
 **Key behaviors:**
 - BIN + auction both fetched; auction current-bid price stored (not $0); `itemEndDate` stored as `end_time` in `market_snapshot_items`
 - Price stats (median, histogram) use BIN-only items — auctions excluded from pricing, counted in supply
-- `generate_dashboard.py` uses max(date) from DB as "today" — avoids UTC/PT date mismatch when pipeline runs at 10:30 UTC (still previous calendar day in PT)
-- Queries list in market_data.json filtered to only queries that ran on the most recent snapshot date — deactivated queries don't appear even if they have historical rows
-- Lot listings filtered from results via `_LOT_RE` regex in `fetch_market.py`
+- `generate_dashboard.py` uses `max(date)` from DB as "today" — avoids UTC/PT date mismatch
+- Queries list in market_data.json filtered to only queries that ran on the most recent snapshot date
+- Metadata (msrp, type, presale_date, release_date) read via `DISTINCT ON (query_id) ORDER BY date DESC` — always returns most recent value, not lex max
 
 **Database tables:**
-- `market_snapshots` — daily aggregate per query: `(query_id, date)` UNIQUE; stores count, new_count, gone_count, price_min/max/mean/median/p25/p75, msrp, fetched_at
-- `market_snapshot_items` — per-listing lifespan: `(query_id, item_id)` UNIQUE; `first_seen` set on insert, `last_seen` updated each run, `end_time TIMESTAMPTZ NULL` (auction end datetime from eBay). "New" = first_seen = today; "Gone" = last_seen = yesterday (proxy: sold or ended)
+- `market_snapshots` — daily aggregate per query: `(query_id, date)` UNIQUE; stores count, new_count, gone_count, price stats, msrp, presale_date, release_date, type, fetched_at
+- `market_snapshot_items` — per-listing lifespan: `(query_id, item_id)` UNIQUE; `first_seen`, `last_seen`, `end_time TIMESTAMPTZ NULL` (auction end from eBay), `url`
 
 **market_data.json keys:**
-- `generated_at` — date string of latest snapshot
-- `fetched_at` — ISO timestamp of last pipeline run (used for auction time-remaining calc)
-- `queries`, `trends`, `today`, `yesterday` — standard snapshot data
-- `new_medians` — median BIN price of listings first_seen = today, per query
-- `gone_medians` — median BIN price of listings last_seen = yesterday, per query
-- `bin_listings` — all current BIN items per query: `{title, price, url}`
-- `auction_listings` — all current auction items per query: `{title, price, url, end_time}`
-- `prices` — list of BIN prices (floats) per query, derived from bin_listings; used for histogram
-- `gone_items` — items that disappeared since yesterday per query
+- `generated_at`, `fetched_at` — date string and ISO timestamp of last pipeline run
+- `queries` — list of `{id, name, type, msrp, presale_date, release_date}` for active queries
+- `trends`, `today`, `yesterday` — standard snapshot data
+- `new_medians`, `gone_medians` — median BIN price of new/gone listings per query
+- `bin_listings` — `{title, price, url}` per query
+- `auction_listings` — `{title, price, url, end_time}` per query
+- `prices` — BIN price floats per query (histogram source)
+- `gone_items` — `{item_id, title, price, buying_format, first_seen, url}` per query
 
 **Dashboard (GitHub Pages):**
 URL: `pacificcards.github.io/ebay-tools/market/`
-Views:
-- Overview table: all queries, listing count, median price + DoD %, new today + new median, sold yesterday + sold median
-- `<hr>` separator between overview (all queries) and query-specific sections below
-- Trend charts (listing count + median price + MSRP dashed line, 90 days)
-- Price Distribution — BIN Listings (histogram)
-- Sold Yesterday table
-- Current BIN Listings (sortable by title or price, default price asc)
-- Active Auctions (current bid + time remaining as of data pull)
-Reads `docs/market/market_data.json` at page load (Chart.js, no backend needed).
+- Favicon: Pacific Cards Co. circle logo (`docs/market/favicon.png`)
+- Overview table: sortable by any column; columns: Product, Type, Listings, Median Price, vs Yesterday, New Today, New Median, Sold Yesterday, Sold Median
+- `<hr>` separator between Overview and Trend Analysis
+- Trend charts (supply + median price + MSRP dashed line, 90 days); query selector drives all below sections
+- Price Distribution — BIN Listings histogram ($5 fixed bins)
+- Sold Yesterday (collapsible, titles link to eBay listing)
+- Active BIN Listings (collapsible, sortable by title or price)
+- Active Auctions (collapsible, sortable by current bid or time remaining; default: ending soonest)
+Reads `docs/market/market_data.json` at page load (Chart.js 4.4.3, no backend).
 
 **Key files:**
-- `market_monitor/sheets.py` — `load_queries()` + `CATEGORY_ID_MAP`
-- `market_monitor/fetch_market.py` — main daily fetcher
+- `market_monitor/sheets.py` — `load_queries()`; reads CategoryID (not Category) and Type
+- `market_monitor/fetch_market.py` — main daily fetcher; `_LOT_RE` lot filter
 - `market_monitor/generate_dashboard.py` — writes `market_data.json`
-- `listener/ebay.py` — `search_all_listings()` (paginated, no time filter, BIN+auction)
-- `docs/market/index.html` — static dashboard HTML (committed once, not regenerated)
+- `listener/ebay.py` — `search_all_listings()` (paginated, BIN+auction)
+- `docs/market/index.html` — static dashboard HTML
 - `docs/market/market_data.json` — regenerated daily by pipeline
-
-**DO NOT use the eBay Taxonomy API for category lookup** — it returned wrong IDs (e.g. "Trading Card Boxes" → 183438 = "Card Toploaders & Holders"). Use `CATEGORY_ID_MAP` or let the user enter a numeric ID directly.
 
 ### 5. Campaign Scheduler (`scheduler/`)
 Pauses/resumes eBay Promoted Listings campaigns on a schedule. Triggered by cron-job.org → `workflow_dispatch` on `campaign-scheduler.yml`.
@@ -248,9 +244,9 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 - No open items — orders/qty bug fixed 2026-06-25 (see session log)
 
 ### Market Monitor (live and running)
-Fully operational. Pipeline runs daily at 10:30 UTC via cron-job.org → `market-monitor.yml`. Dashboard at `pacificcards.github.io/ebay-tools/market/`.
+Fully operational. Pipeline runs daily at 11:00 UTC (4am PDT) via GHA schedule on `market-monitor.yml`. Dashboard at `pacificcards.github.io/ebay-tools/market/`. 12 active queries as of 2026-06-27.
 
-**No pending setup actions.** Auction `end_time` data will populate starting from the next pipeline run (2026-06-28).
+**No pending setup actions.** Auction `end_time` data populates from pipeline run 2026-06-28 onward (existing rows have NULL).
 
 ### Price Check (planned, not yet built)
 New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy-skipping-teapot.md`
@@ -274,6 +270,21 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - Whether to expose raw price range alongside the two recommendations
 
 ## Session Log
+
+### 2026-06-27 (session 3) — Market Monitor dashboard + pipeline hardening
+- Dashboard: Pacific Cards Co. favicon added (`docs/market/favicon.png`)
+- Dashboard: Overview table fully sortable (all 9 columns incl. new Type column); collapsible Sold Yesterday / Active BIN / Active Auctions sections
+- Dashboard: Sold Yesterday titles are now clickable eBay links
+- Dashboard: Active Auctions sortable by current bid or time remaining; null end_time respects sort direction
+- Dashboard: histogram fixed $5 bins with edge-case guard (all prices identical)
+- Dashboard: `sortArrow()` extracted to module-level (was duplicated in 3 places)
+- Schema: added `presale_date DATE`, `release_date DATE`, `type TEXT` to `market_snapshots`; `url` field now included in `gone_items` JSON
+- Pipeline: replaced `CATEGORY_ID_MAP` (plain-English name resolution) with `CategoryID` column in sheet (numeric, user-managed VLOOKUP formula); `Category` column still exists in sheet but is not read by code
+- Pipeline: added `Type`, `Presale Date`, `Release Date` columns to sheet + DB + JSON
+- Pipeline: `_LOT_RE` extended with `\bbooster\s+box\s+case\b` and `\((?:[2-9]|\d{2,})\)` (fixed: was `\([2-9]\d*\)` which missed (10)–(19))
+- Pipeline: `_upsert_snapshot` param `type` renamed to `query_type` to avoid shadowing builtin
+- Pipeline: `generate_dashboard.py` metadata query changed from `MAX(type/msrp/dates)` to `DISTINCT ON (query_id) ORDER BY date DESC` — always returns most recent values
+- Pipeline: GHA schedule migrated from cron-job.org to native `schedule: cron: '0 11 * * *'`
 
 ### 2026-06-27 (session 2) — Market Monitor dashboard visualization
 - Dashboard: replaced "New Listings Today" table with full sortable BIN listings table (sort by title or price, default price asc)
