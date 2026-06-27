@@ -349,6 +349,8 @@ def _backfill_record_ids(ws: gspread.Worksheet, all_rows: list[list]) -> None:
     if not backfill_needed:
         return
 
+    # Resolve record IDs from DB first, then write all in one batch_update call
+    updates: list[dict] = []
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -382,10 +384,13 @@ def _backfill_record_ids(ws: gspread.Worksheet, all_rows: list[list]) -> None:
                     )
                 results = cur.fetchall()
                 if len(results) == 1:
-                    ws.update_cell(i, _RECORD_ID_COL, results[0][0])
-                    print(f"  [new_entries] backfilled record_id {results[0][0]} for row {i}")
+                    updates.append({"range": f"I{i}", "values": [[results[0][0]]]})
     finally:
         conn.close()
+
+    if updates:
+        ws.batch_update(updates)
+        print(f"  [new_entries] backfilled record_id for {len(updates)} rows")
 
 
 def process_new_entries(doc: gspread.Spreadsheet) -> int:
