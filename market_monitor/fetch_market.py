@@ -9,7 +9,7 @@ Run daily. Each run:
 import os
 import re
 import sys
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from statistics import mean, median, quantiles
 

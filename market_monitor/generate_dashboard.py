@@ -1,7 +1,8 @@
 """Read Supabase and write docs/market/market_data.json for the GitHub Pages dashboard."""
 import json
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
@@ -13,7 +14,7 @@ OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "docs", "market")
 
 
 def generate() -> None:
-    window_start = date.today() - timedelta(days=90)
+    window_start = datetime.now(ZoneInfo("America/Los_Angeles")).date() - timedelta(days=90)
 
     conn = get_connection()
     try:
@@ -29,8 +30,8 @@ def generate() -> None:
             """, (window_start,))
             trend_rows = cur.fetchall()
 
-            # Use the most recent snapshot date as "today" — pipeline stores data in UTC
-            # which may differ from local date when generator runs in a different timezone
+            # Use the most recent snapshot date as "today" — pipeline stores dates in PT
+            # so this stays consistent regardless of when/where the generator runs
             latest_date_str = max((r[2] for r in trend_rows), default=None)
             if not latest_date_str:
                 print("[generate_dashboard] No data found.")
