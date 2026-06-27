@@ -31,9 +31,11 @@ _LOT_RE = re.compile(
     r'|\b([2-9]|\d{2,})\s+(booster\s+)?box(es)?\b'   # 2 boxes, 3 booster boxes (not "1 box")
     r'|\bbundle\b'                                   # bundle
     r'|\bcase\s+of\s+\d+'                           # case of 6
+    r'|\bbooster\s+box\s+case\b'                    # "Booster Box Case" = multi-box case
     r'|\bpack\s+of\s+\d+'                           # pack of 3
     r'|\bset\s+of\s+\d+'                            # set of 2
     r'|\bqty\s*:?\s*[2-9]'                          # qty 2, qty: 3
+    r'|\([2-9]\d*\)'                                 # (4), (6), (12) — quantity in parens
     r'|\bteam\s+break\b'                            # team break spot auctions
     r'|\bplayer\s+break\b'                          # player break spot auctions (one slot per player)
     r'|\bcase\s*break\b'                            # case break spot auctions
