@@ -291,7 +291,7 @@ function renderGoneTable(queryId) {
     return;
   }
   const rows = items.map(i => `<tr>
-    <td>${i.title}</td>
+    <td>${i.url ? `<a href="${i.url}" target="_blank" rel="noopener">${i.title}</a>` : i.title}</td>
     <td style="text-align:right">${fmtPrice(i.price)}</td>
     <td style="text-align:right">${buyingTag(i.buying_format)}</td>
     <td style="text-align:right">${i.first_seen}</td>

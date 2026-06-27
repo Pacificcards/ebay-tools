@@ -51,7 +51,7 @@ def generate() -> None:
 
             # Gone items: last_seen = prev_date (not refreshed in latest run)
             cur.execute("""
-                SELECT query_id, item_id, title, price, buying_format, first_seen::text
+                SELECT query_id, item_id, title, price, buying_format, first_seen::text, url
                 FROM market_snapshot_items
                 WHERE last_seen = %s
                 ORDER BY query_id, price
@@ -76,14 +76,20 @@ def generate() -> None:
             """, (latest_date,))
             auction_rows = cur.fetchall()
 
-            # Latest MSRP per query (use MAX to get most recent non-null value)
+            # Latest MSRP, presale_date, release_date per query
             cur.execute("""
-                SELECT query_id, MAX(msrp)
+                SELECT query_id, MAX(msrp), MAX(presale_date)::text, MAX(release_date)::text
                 FROM market_snapshots
-                WHERE msrp IS NOT NULL
+                WHERE msrp IS NOT NULL OR presale_date IS NOT NULL OR release_date IS NOT NULL
                 GROUP BY query_id
             """)
-            msrp_map: dict[str, float] = {r[0]: float(r[1]) for r in cur.fetchall()}
+            msrp_map:         dict[str, float] = {}
+            presale_date_map: dict[str, str]   = {}
+            release_date_map: dict[str, str]   = {}
+            for r in cur.fetchall():
+                if r[1] is not None: msrp_map[r[0]]         = float(r[1])
+                if r[2] is not None: presale_date_map[r[0]] = r[2]
+                if r[3] is not None: release_date_map[r[0]] = r[3]
 
             # Median price of new BIN listings today (first_seen = latest_date)
             cur.execute("""
@@ -121,7 +127,16 @@ def generate() -> None:
         qid, name, row_date = r[0], r[1], r[2]
         if row_date == latest_date_str:
             seen_queries[qid] = name
-    queries = [{"id": qid, "name": name, "msrp": msrp_map.get(qid)} for qid, name in seen_queries.items()]
+    queries = [
+        {
+            "id":           qid,
+            "name":         name,
+            "msrp":         msrp_map.get(qid),
+            "presale_date": presale_date_map.get(qid),
+            "release_date": release_date_map.get(qid),
+        }
+        for qid, name in seen_queries.items()
+    ]
 
     # Trend data by query
     trends: dict[str, list] = {}
@@ -141,7 +156,7 @@ def generate() -> None:
     gone_items: dict[str, list] = {}
     for r in gone_rows:
         gone_items.setdefault(r[0], []).append(
-            {"item_id": r[1], "title": r[2], "price": _f(r[3]), "buying_format": r[4], "first_seen": r[5]}
+            {"item_id": r[1], "title": r[2], "price": _f(r[3]), "buying_format": r[4], "first_seen": r[5], "url": r[6]}
         )
 
     # Current BIN listings by query (also used for histogram)

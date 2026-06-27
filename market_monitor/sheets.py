@@ -5,7 +5,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-EXPECTED_HEADERS = ["Name", "Exclusions", "Category", "Min Price", "Max Price", "Active", "MSRP"]
+EXPECTED_HEADERS = ["Name", "Exclusions", "Category", "Min Price", "Max Price", "Active", "MSRP", "Presale Date", "Release Date"]
 
 # Mapping from plain-English category names (as entered in the sheet) to eBay category IDs.
 # Numeric IDs are also accepted directly (e.g. "261332") for cases not listed here.
@@ -86,13 +86,17 @@ def load_queries(sheet_id: str, creds_json: str) -> list[dict]:
         else:
             print(f"[sheets] WARNING: unknown category '{cat_raw}' for '{name}' — no category filter applied")
             cat_id = None
+        presale_date = str(row.get("Presale Date", "")).strip() or None
+        release_date = str(row.get("Release Date", "")).strip() or None
         queries.append({
-            "id":          _slugify(name),
-            "name":        name,
-            "query":       query,
-            "category_id": cat_id,
-            "min_price":   float(min_p) if min_p else None,
-            "max_price":   float(max_p) if max_p else None,
-            "msrp":        float(msrp) if msrp else None,
+            "id":           _slugify(name),
+            "name":         name,
+            "query":        query,
+            "category_id":  cat_id,
+            "min_price":    float(min_p) if min_p else None,
+            "max_price":    float(max_p) if max_p else None,
+            "msrp":         float(msrp) if msrp else None,
+            "presale_date": presale_date,
+            "release_date": release_date,
         })
     return queries
