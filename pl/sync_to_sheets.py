@@ -323,11 +323,68 @@ def _ensure_new_entries_tab(doc: gspread.Spreadsheet) -> None:
         _reset_header_format(ws)
 
 
+def _backfill_record_ids(ws: gspread.Worksheet, all_rows: list[list]) -> None:
+    """
+    For previously-synced New Entries rows that have a blank record_id, look up
+    the matching DB record by (type, description, date, amount) and populate col 9.
+    Skips rows where the match is ambiguous (multiple results).
+    """
+    backfill_needed = []
+    for i, row in enumerate(all_rows[1:], start=2):
+        row = list(row) + [""] * (len(NEW_ENTRIES_HEADERS) - len(row))
+        status    = row[_STATUS_COL - 1].strip()
+        record_id = row[_RECORD_ID_COL - 1].strip()
+        if status.startswith("✓") and not record_id:
+            backfill_needed.append((i, row))
+
+    if not backfill_needed:
+        return
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            for i, row in backfill_needed:
+                entry_type  = row[2].strip().lower() or "purchase"
+                description = row[1].strip()
+                raw_date    = row[0].strip()
+                raw_amount  = row[3].strip().lstrip("$").replace(",", "") or None
+                try:
+                    date_val = _normalize_date(raw_date)
+                except ValueError:
+                    continue
+
+                if entry_type == "sale":
+                    cur.execute(
+                        """
+                        SELECT order_id FROM orders_raw
+                        WHERE order_id LIKE 'MANUAL-%%' AND title = %s
+                          AND order_date = %s AND sale_price = %s
+                        """,
+                        (description, date_val, raw_amount),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT id::text FROM import_queue
+                        WHERE source = 'manual' AND description = %s
+                          AND purchase_date = %s AND total_cost = %s
+                        """,
+                        (description, date_val, raw_amount),
+                    )
+                results = cur.fetchall()
+                if len(results) == 1:
+                    ws.update_cell(i, _RECORD_ID_COL, results[0][0])
+                    print(f"  [new_entries] backfilled record_id {results[0][0]} for row {i}")
+    finally:
+        conn.close()
+
+
 def process_new_entries(doc: gspread.Spreadsheet) -> int:
     """
     Read the New Entries tab and:
       - Insert blank-status rows into the DB, then stamp status + record_id.
       - Delete rows where status is "Marked for Deletion" using the stored record_id.
+      - Backfill record_id for previously-synced rows that predate this feature.
     Returns the count of rows inserted (deletions not counted).
     """
     try:
@@ -338,6 +395,8 @@ def process_new_entries(doc: gspread.Spreadsheet) -> int:
     all_rows = ws.get_all_values()
     if len(all_rows) <= 1:
         return 0
+
+    _backfill_record_ids(ws, all_rows)
 
     today_str = date.today().isoformat()
     purchase_entries: list[dict] = []
