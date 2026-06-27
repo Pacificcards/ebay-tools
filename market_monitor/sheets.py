@@ -5,16 +5,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-EXPECTED_HEADERS = ["Name", "Exclusions", "Category", "Min Price", "Max Price", "Active", "MSRP", "Presale Date", "Release Date"]
-
-# Mapping from plain-English category names (as entered in the sheet) to eBay category IDs.
-# Numeric IDs are also accepted directly (e.g. "261332") for cases not listed here.
-CATEGORY_ID_MAP: dict[str, str] = {
-    "Sealed Trading Card Boxes":     "261332",
-    "Sealed Trading Card Cases":     "261333",
-    "CCG Sealed Boxes":              "261044",
-    "Trading Card Box & Case Breaks": "261334",
-}
+EXPECTED_HEADERS = ["Name", "Exclusions", "Category", "CategoryID", "Min Price", "Max Price", "Active", "MSRP", "Presale Date", "Release Date"]
 
 
 def _slugify(name: str) -> str:
@@ -30,14 +21,7 @@ def _parse_active(val) -> bool:
 
 
 def _build_exclusions(exclusions_str: str) -> str:
-    """Convert a CSV exclusion list into eBay search exclusion syntax.
-
-    Each comma-separated term becomes a -term or -"phrase" exclusion.
-    Terms already wrapped in quotes in the cell, or terms containing spaces,
-    are treated as phrase exclusions.
-
-    Example: 'lot, bundle, "hobby box"' → '-lot -bundle -"hobby box"'
-    """
+    """Convert a CSV exclusion list into eBay search exclusion syntax."""
     if not exclusions_str.strip():
         return ""
     parts = []
@@ -45,15 +29,12 @@ def _build_exclusions(exclusions_str: str) -> str:
         term = term.strip()
         if not term:
             continue
-        # Explicitly quoted: "hobby box" → -"hobby box"
         if term.startswith('"') and term.endswith('"') and len(term) > 2:
             phrase = term[1:-1].strip()
             if phrase:
                 parts.append(f'-"{phrase}"')
-        # Multi-word without quotes: hobby box → -"hobby box"
         elif " " in term:
             parts.append(f'-"{term}"')
-        # Single word: lot → -lot
         else:
             parts.append(f"-{term}")
     return " ".join(parts)
@@ -71,21 +52,21 @@ def load_queries(sheet_id: str, creds_json: str) -> list[dict]:
         name = str(row.get("Name", "")).strip()
         if not name or not _parse_active(row.get("Active")):
             continue
+
+        cat_id_raw = str(row.get("CategoryID", "")).strip()
+        if not cat_id_raw:
+            cat_id = None
+        elif cat_id_raw.isdigit():
+            cat_id = cat_id_raw
+        else:
+            print(f"[sheets] ERROR: CategoryID '{cat_id_raw}' for '{name}' is not a valid numeric eBay category ID — skipping category filter")
+            cat_id = None
+
         exclusions = _build_exclusions(str(row.get("Exclusions", "")))
         query = f"{name} {exclusions}".strip() if exclusions else name
         min_p = row.get("Min Price")
         max_p = row.get("Max Price")
         msrp  = row.get("MSRP")
-        cat_raw = str(row.get("Category", "")).strip()
-        if not cat_raw:
-            cat_id = None
-        elif cat_raw.isdigit():
-            cat_id = cat_raw
-        elif cat_raw in CATEGORY_ID_MAP:
-            cat_id = CATEGORY_ID_MAP[cat_raw]
-        else:
-            print(f"[sheets] WARNING: unknown category '{cat_raw}' for '{name}' — no category filter applied")
-            cat_id = None
         presale_date = str(row.get("Presale Date", "")).strip() or None
         release_date = str(row.get("Release Date", "")).strip() or None
         queries.append({
