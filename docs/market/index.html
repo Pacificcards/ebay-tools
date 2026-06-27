@@ -49,21 +49,7 @@
 <!-- Overview -->
 <h2>Overview</h2>
 <div class="card">
-  <table id="overview-table">
-    <thead>
-      <tr>
-        <th>Product</th>
-        <th style="text-align:right">Listings</th>
-        <th style="text-align:right">Median Price</th>
-        <th style="text-align:right">vs Yesterday</th>
-        <th style="text-align:right">New Today</th>
-        <th style="text-align:right">New Median</th>
-        <th style="text-align:right">Sold Yesterday</th>
-        <th style="text-align:right">Sold Median</th>
-      </tr>
-    </thead>
-    <tbody id="overview-body"></tbody>
-  </table>
+  <div id="overview-wrap"></div>
 </div>
 
 <hr>
@@ -109,6 +95,7 @@
 <script>
 let DATA = null;
 let countChart = null, priceChart = null, histChart = null;
+let overviewSort = { col: 'name', dir: 1 };
 let binSort     = { col: 'price',    dir: 1 };
 let auctionSort = { col: 'end_time', dir: 1 };
 let currentQueryId = null;
@@ -222,24 +209,75 @@ function buildHistogram(prices) {
 // ── Overview table ────────────────────────────────────────────────────────────
 
 function renderOverview() {
-  const tbody = document.getElementById('overview-body');
+  const wrap = document.getElementById('overview-wrap');
+
   const rows = DATA.queries.map(q => {
     const t = DATA.today[q.id] || {};
     const y = DATA.yesterday[q.id] || {};
-    const newMedian  = (DATA.new_medians  || {})[q.id];
-    const goneMedian = (DATA.gone_medians || {})[q.id];
-    return `<tr>
-      <td style="font-weight:500">${q.name}</td>
-      <td style="text-align:right">${fmtNum(t.listing_count)}</td>
-      <td style="text-align:right">${fmtPrice(t.price_median)}</td>
-      <td style="text-align:right">${fmtPct(pct(t.price_median, y.price_median))}</td>
-      <td style="text-align:right;color:#16a34a;font-weight:500">${fmtNum(t.new_count)}</td>
-      <td style="text-align:right">${newMedian  != null ? fmtPrice(newMedian)  : '<span class="neu">—</span>'}</td>
-      <td style="text-align:right;color:#dc2626;font-weight:500">${fmtNum(t.gone_count)}</td>
-      <td style="text-align:right">${goneMedian != null ? fmtPrice(goneMedian) : '<span class="neu">—</span>'}</td>
-    </tr>`;
+    return {
+      name:         q.name,
+      listing_count: t.listing_count ?? null,
+      price_median:  t.price_median  ?? null,
+      vs_yesterday:  pct(t.price_median, y.price_median),
+      new_count:     t.new_count     ?? null,
+      new_median:    (DATA.new_medians  || {})[q.id] ?? null,
+      gone_count:    t.gone_count    ?? null,
+      gone_median:   (DATA.gone_medians || {})[q.id] ?? null,
+    };
   });
-  tbody.innerHTML = rows.join('') || '<tr><td colspan="8" class="empty">No data yet.</td></tr>';
+
+  const col = overviewSort.col;
+  const dir = overviewSort.dir;
+  rows.sort((a, b) => {
+    const av = a[col], bv = b[col];
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (col === 'name') return av.localeCompare(bv) * dir;
+    return (av - bv) * dir;
+  });
+
+  function arrow(c) {
+    if (overviewSort.col !== c) return ' <span style="color:#d1d5db">↕</span>';
+    return overviewSort.dir === 1 ? ' ↑' : ' ↓';
+  }
+
+  function th(label, c, align) {
+    const style = align === 'right' ? 'text-align:right' : '';
+    return `<th class="sortable" style="${style}" onclick="sortOverview('${c}')">${label}${arrow(c)}</th>`;
+  }
+
+  const htmlRows = rows.map(r => `<tr>
+    <td style="font-weight:500">${r.name}</td>
+    <td style="text-align:right">${fmtNum(r.listing_count)}</td>
+    <td style="text-align:right">${fmtPrice(r.price_median)}</td>
+    <td style="text-align:right">${fmtPct(r.vs_yesterday)}</td>
+    <td style="text-align:right;color:#16a34a;font-weight:500">${fmtNum(r.new_count)}</td>
+    <td style="text-align:right">${r.new_median  != null ? fmtPrice(r.new_median)  : '<span class="neu">—</span>'}</td>
+    <td style="text-align:right;color:#dc2626;font-weight:500">${fmtNum(r.gone_count)}</td>
+    <td style="text-align:right">${r.gone_median != null ? fmtPrice(r.gone_median) : '<span class="neu">—</span>'}</td>
+  </tr>`).join('');
+
+  wrap.innerHTML = `<table id="overview-table"><thead><tr>
+    ${th('Product',        'name',          'left')}
+    ${th('Listings',       'listing_count', 'right')}
+    ${th('Median Price',   'price_median',  'right')}
+    ${th('vs Yesterday',   'vs_yesterday',  'right')}
+    ${th('New Today',      'new_count',     'right')}
+    ${th('New Median',     'new_median',    'right')}
+    ${th('Sold Yesterday', 'gone_count',    'right')}
+    ${th('Sold Median',    'gone_median',   'right')}
+  </tr></thead><tbody>${htmlRows || '<tr><td colspan="8" class="empty">No data yet.</td></tr>'}</tbody></table>`;
+}
+
+function sortOverview(col) {
+  if (overviewSort.col === col) {
+    overviewSort.dir *= -1;
+  } else {
+    overviewSort.col = col;
+    overviewSort.dir = col === 'name' ? 1 : -1;
+  }
+  renderOverview();
 }
 
 // ── Trend charts ──────────────────────────────────────────────────────────────
