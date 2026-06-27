@@ -108,7 +108,8 @@
 <script>
 let DATA = null;
 let countChart = null, priceChart = null, histChart = null;
-let binSort = { col: 'price', dir: 1 };
+let binSort     = { col: 'price',    dir: 1 };
+let auctionSort = { col: 'end_time', dir: 1 };
 let currentQueryId = null;
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -358,19 +359,47 @@ function renderAuctionTable(queryId) {
     wrap.innerHTML = '<p class="empty">No active auctions.</p>';
     return;
   }
-  const rows = items.map(i => `<tr>
+
+  const sorted = [...items].sort((a, b) => {
+    if (auctionSort.col === 'price') {
+      return ((a.price || 0) - (b.price || 0)) * auctionSort.dir;
+    }
+    // end_time: nulls always last
+    if (!a.end_time && !b.end_time) return 0;
+    if (!a.end_time) return 1;
+    if (!b.end_time) return -1;
+    return (new Date(a.end_time) - new Date(b.end_time)) * auctionSort.dir;
+  });
+
+  function sortArrow(col) {
+    if (auctionSort.col !== col) return ' <span style="color:#d1d5db">↕</span>';
+    return auctionSort.dir === 1 ? ' ↑' : ' ↓';
+  }
+
+  const rows = sorted.map(i => `<tr>
     <td><a href="${i.url}" target="_blank">${i.title}</a></td>
     <td style="text-align:right">${i.price > 0 ? fmtPrice(i.price) : '—'}</td>
     <td style="text-align:right">${fmtTimeRemaining(i.end_time)}</td>
   </tr>`).join('');
+
   wrap.innerHTML = `<table>
     <thead><tr>
       <th>Title</th>
-      <th style="text-align:right">Current Bid</th>
-      <th style="text-align:right">Time Remaining</th>
+      <th class="sortable" style="text-align:right" onclick="sortAuction('price')">Current Bid${sortArrow('price')}</th>
+      <th class="sortable" style="text-align:right" onclick="sortAuction('end_time')">Time Remaining${sortArrow('end_time')}</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
+}
+
+function sortAuction(col) {
+  if (auctionSort.col === col) {
+    auctionSort.dir *= -1;
+  } else {
+    auctionSort.col = col;
+    auctionSort.dir = 1;
+  }
+  renderAuctionTable(currentQueryId);
 }
 
 // ── Query selector ────────────────────────────────────────────────────────────
@@ -387,7 +416,8 @@ function updateQuery(queryId) {
   renderTrends(queryId);
   buildHistogram(DATA.prices[queryId]);
   renderGoneTable(queryId);
-  binSort = { col: 'price', dir: 1 };
+  binSort     = { col: 'price',    dir: 1 };
+  auctionSort = { col: 'end_time', dir: 1 };
   renderBinTable(queryId);
   renderAuctionTable(queryId);
 }
