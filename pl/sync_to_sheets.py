@@ -314,13 +314,22 @@ def _normalize_date(val: str) -> str:
 
 
 def _ensure_new_entries_tab(doc: gspread.Spreadsheet) -> None:
-    """Create the New Entries input tab with headers if it doesn't exist yet."""
+    """Create the New Entries tab if it doesn't exist; add any missing header columns."""
     try:
-        doc.worksheet("New Entries")
+        ws = doc.worksheet("New Entries")
     except gspread.WorksheetNotFound:
         ws = doc.add_worksheet(title="New Entries", rows=500, cols=10, index=0)
         ws.update([NEW_ENTRIES_HEADERS], value_input_option="USER_ENTERED")
         _reset_header_format(ws)
+        return
+
+    # Add any header columns that were introduced after the tab was first created
+    existing_headers = ws.row_values(1)
+    for col_name in NEW_ENTRIES_HEADERS:
+        if col_name not in existing_headers:
+            next_col = len(existing_headers) + 1
+            ws.update_cell(1, next_col, col_name)
+            existing_headers.append(col_name)
 
 
 def _backfill_record_ids(ws: gspread.Worksheet, all_rows: list[list]) -> None:
