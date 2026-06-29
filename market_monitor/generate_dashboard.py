@@ -69,7 +69,7 @@ def generate() -> None:
 
             # Current auction listings: last_seen = latest_date
             cur.execute("""
-                SELECT query_id, title, price, url, end_time::text
+                SELECT query_id, title, price, url, end_time::text, bid_count
                 FROM market_snapshot_items
                 WHERE last_seen = %s AND buying_format = 'AUCTION'
                 ORDER BY query_id, end_time NULLS LAST
@@ -176,7 +176,7 @@ def generate() -> None:
     auction_listings: dict[str, list] = {}
     for r in auction_rows:
         auction_listings.setdefault(r[0], []).append(
-            {"title": r[1], "price": _f(r[2]), "url": r[3], "end_time": r[4]}
+            {"title": r[1], "price": _f(r[2]), "url": r[3], "end_time": r[4], "bid_count": r[5]}
         )
 
     # Prices list (floats) derived from BIN listings for histogram

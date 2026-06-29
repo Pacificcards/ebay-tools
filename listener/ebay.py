@@ -87,6 +87,7 @@ def _parse_items(response_json: dict) -> list[dict]:
             "buying_format": "AUCTION" if is_auction else "FIXED_PRICE",
             "url": item.get("itemWebUrl", ""),
             "end_time": item.get("itemEndDate", "") or "",
+            "bid_count": int(item["bidCount"]) if is_auction and item.get("bidCount") is not None else None,
             "seller_feedback_score": seller.get("feedbackScore", ""),
             "seller_feedback_pct": seller.get("feedbackPercentage", ""),
             "item_creation_date": item.get("itemCreationDate", ""),

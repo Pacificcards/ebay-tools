@@ -66,7 +66,7 @@ def _upsert_items(conn, query_id: str, today: date, items: list[dict]) -> None:
             cur,
             """
             INSERT INTO market_snapshot_items
-                (query_id, item_id, title, price, buying_format, url, first_seen, last_seen, end_time)
+                (query_id, item_id, title, price, buying_format, url, first_seen, last_seen, end_time, bid_count)
             VALUES %s
             ON CONFLICT (query_id, item_id) DO UPDATE SET
                 price         = EXCLUDED.price,
@@ -74,12 +74,13 @@ def _upsert_items(conn, query_id: str, today: date, items: list[dict]) -> None:
                 buying_format = EXCLUDED.buying_format,
                 url           = EXCLUDED.url,
                 last_seen     = EXCLUDED.last_seen,
-                end_time      = EXCLUDED.end_time
+                end_time      = EXCLUDED.end_time,
+                bid_count     = EXCLUDED.bid_count
             """,
             [
                 (query_id, item["item_id"], item["title"], item["price"],
                  item["buying_format"], item["url"], today, today,
-                 item.get("end_time") or None)
+                 item.get("end_time") or None, item.get("bid_count"))
                 for item in items
             ],
         )
