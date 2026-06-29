@@ -118,10 +118,10 @@ def generate() -> None:
 
             # Timestamp of the last pipeline run (for computing auction time-remaining)
             cur.execute("""
-                SELECT MAX(fetched_at)::text FROM market_snapshots WHERE date = %s
+                SELECT MAX(fetched_at) FROM market_snapshots WHERE date = %s
             """, (latest_date,))
             fetched_at_row = cur.fetchone()
-            fetched_at = fetched_at_row[0] if fetched_at_row else None
+            fetched_at = fetched_at_row[0].isoformat() if fetched_at_row and fetched_at_row[0] else None
     finally:
         conn.close()
 
