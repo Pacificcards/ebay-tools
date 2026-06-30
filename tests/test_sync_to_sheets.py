@@ -275,13 +275,11 @@ class TestNewEntriesRecordId(unittest.TestCase):
             sts.process_new_entries(doc)
 
         mock_ins.assert_called_once()
-        calls = ws.update_cell.call_args_list
-        # status stamp (col 8) and record_id stamp (col 9) both written for row 2
-        status_call    = next(c for c in calls if c[0][1] == sts._STATUS_COL)
-        record_id_call = next(c for c in calls if c[0][1] == sts._RECORD_ID_COL)
-        self.assertEqual(status_call[0][0],    2)
-        self.assertEqual(record_id_call[0][0], 2)
-        self.assertEqual(record_id_call[0][2], "42")
+        ws.batch_update.assert_called_once()
+        updates = ws.batch_update.call_args[0][0]
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0]["range"], "H2:I2")
+        self.assertIn("42", updates[0]["values"][0])
 
     def test_record_id_stamped_after_sale_insert(self):
         """Successful sale insert writes MANUAL- order_id to col 9."""
@@ -296,9 +294,10 @@ class TestNewEntriesRecordId(unittest.TestCase):
              patch.object(sts, "_insert_manual_sales",   return_value={0: "MANUAL-abc123"}):
             sts.process_new_entries(doc)
 
-        calls = ws.update_cell.call_args_list
-        record_id_call = next(c for c in calls if c[0][1] == sts._RECORD_ID_COL)
-        self.assertEqual(record_id_call[0][2], "MANUAL-abc123")
+        ws.batch_update.assert_called_once()
+        updates = ws.batch_update.call_args[0][0]
+        self.assertEqual(len(updates), 1)
+        self.assertIn("MANUAL-abc123", updates[0]["values"][0])
 
     def test_marked_for_deletion_calls_delete_and_stamps_deleted(self):
         """Row with 'Marked for Deletion' status triggers deletion and stamps 'Deleted …'."""

@@ -475,18 +475,22 @@ def process_new_entries(doc: gspread.Spreadsheet) -> int:
         return 0
 
     synced_count = 0
+    updates: list[dict] = []
 
     if purchase_entries:
         for idx, record_id in _insert_manual_entries(purchase_entries).items():
-            ws.update_cell(purchase_row_numbers[idx], _STATUS_COL, f"✓ Synced {today_str}")
-            ws.update_cell(purchase_row_numbers[idx], _RECORD_ID_COL, record_id)
+            row_num = purchase_row_numbers[idx]
+            updates.append({"range": f"H{row_num}:I{row_num}", "values": [[f"✓ Synced {today_str}", record_id]]})
             synced_count += 1
 
     if sale_entries:
         for idx, record_id in _insert_manual_sales(sale_entries).items():
-            ws.update_cell(sale_row_numbers[idx], _STATUS_COL, f"✓ Synced {today_str}")
-            ws.update_cell(sale_row_numbers[idx], _RECORD_ID_COL, record_id)
+            row_num = sale_row_numbers[idx]
+            updates.append({"range": f"H{row_num}:I{row_num}", "values": [[f"✓ Synced {today_str}", record_id]]})
             synced_count += 1
+
+    if updates:
+        ws.batch_update(updates)
 
     return synced_count
 
