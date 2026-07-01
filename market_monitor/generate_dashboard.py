@@ -96,6 +96,15 @@ def generate() -> None:
                 if r[3] is not None: release_date_map[r[0]] = r[3]
                 if r[4] is not None: type_map[r[0]]         = r[4]
 
+            # True new-listing count: items whose first_seen = today (immune to re-run corruption)
+            cur.execute("""
+                SELECT query_id, COUNT(*)
+                FROM market_snapshot_items
+                WHERE first_seen = %s
+                GROUP BY query_id
+            """, (latest_date,))
+            new_count_map: dict[str, int] = {r[0]: int(r[1]) for r in cur.fetchall()}
+
             # Median price of new BIN listings today (first_seen = latest_date)
             cur.execute("""
                 SELECT query_id,
@@ -157,6 +166,10 @@ def generate() -> None:
         trends.setdefault(qid, []).append(entry)
         if r[2] == latest_date_str:
             today_snap[qid] = entry
+
+    # Override today's new_count with first_seen count — avoids corruption from re-runs
+    for qid, entry in today_snap.items():
+        entry["new_count"] = new_count_map.get(qid, 0)
 
     # Gone items by query
     gone_items: dict[str, list] = {}
