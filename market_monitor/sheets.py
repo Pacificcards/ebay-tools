@@ -1,5 +1,6 @@
 import json
 import re
+from datetime import datetime
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -40,6 +41,22 @@ def _build_exclusions(exclusions_str: str) -> str:
     return " ".join(parts)
 
 
+_DATE_FORMATS = ["%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"]
+
+
+def _parse_date(val: str, field: str, name: str) -> str | None:
+    """Normalize a date string to YYYY-MM-DD. Logs a warning and returns None on failure."""
+    if not val:
+        return None
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(val, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    print(f"[sheets] WARNING: Could not parse {field} '{val}' for '{name}' — skipping field")
+    return None
+
+
 def load_queries(sheet_id: str, creds_json: str) -> list[dict]:
     """Read the Queries tab and return active query configs."""
     creds = Credentials.from_service_account_info(json.loads(creds_json), scopes=SCOPES)
@@ -67,8 +84,8 @@ def load_queries(sheet_id: str, creds_json: str) -> list[dict]:
         min_p = row.get("Min Price")
         max_p = row.get("Max Price")
         msrp  = row.get("MSRP")
-        presale_date = str(row.get("Presale Date", "")).strip() or None
-        release_date = str(row.get("Release Date", "")).strip() or None
+        presale_date = _parse_date(str(row.get("Presale Date", "")).strip(), "Presale Date", name)
+        release_date = _parse_date(str(row.get("Release Date", "")).strip(), "Release Date", name)
         type_val     = str(row.get("Type", "")).strip() or None
         queries.append({
             "id":           _slugify(name),
