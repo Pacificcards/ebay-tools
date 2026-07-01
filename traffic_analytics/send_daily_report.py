@@ -13,9 +13,10 @@ import json
 import os
 import smtplib
 import sys
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from zoneinfo import ZoneInfo
 
 import psycopg2
 from dotenv import load_dotenv
@@ -192,7 +193,7 @@ def main():
         print("ERROR: report_listings.json is empty")
         sys.exit(1)
 
-    today = date.today()
+    today = datetime.now(ZoneInfo("America/Los_Angeles")).date()
     d0 = today - timedelta(days=1)
     d1 = today - timedelta(days=2)
     d7 = today - timedelta(days=8)

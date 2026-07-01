@@ -5,6 +5,7 @@ Set BACKFILL=1 to fetch historical data from BACKFILL_START (default 2026-01-01)
 """
 import os
 from datetime import date, timedelta, timezone, datetime
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -67,7 +68,13 @@ def _paginate(token: str, filter_str: str) -> list[dict]:
 
 def _to_rows(order: dict) -> list[dict]:
     order_id = order.get("orderId")
-    creation_date = order.get("creationDate", "")[:10]
+    # creationDate is UTC — convert to PT so the calendar date matches the seller's day
+    raw_dt = order.get("creationDate", "")
+    creation_date = (
+        datetime.fromisoformat(raw_dt.replace("Z", "+00:00"))
+        .astimezone(ZoneInfo("America/Los_Angeles"))
+        .date().isoformat()
+    ) if raw_dt else ""
 
     pricing = order.get("pricingSummary", {})
     delivery_cost = float(pricing.get("deliveryCost", {}).get("value") or 0)
