@@ -131,6 +131,35 @@ def generate() -> None:
             """, (latest_date,))
             fetched_at_row = cur.fetchone()
             fetched_at = fetched_at_row[0].isoformat() if fetched_at_row and fetched_at_row[0] else None
+
+            # 30-day sold comps — optional, table may not exist until first fetch_sold run
+            sold_comps_map: dict[str, dict] = {}
+            try:
+                cur.execute("""
+                    SELECT
+                        query_id,
+                        COUNT(*),
+                        PERCENTILE_CONT(0.5)  WITHIN GROUP (ORDER BY total_price),
+                        PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY total_price),
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY total_price),
+                        MAX(fetched_at)
+                    FROM market_sold_items
+                    WHERE ended_at >= NOW() - INTERVAL '30 days'
+                      AND total_price IS NOT NULL
+                    GROUP BY query_id
+                """)
+                for r in cur.fetchall():
+                    fetched_dt = r[5]
+                    sold_comps_map[r[0]] = {
+                        "sold_count":     int(r[1]),
+                        "sold_median":    _f(r[2]),
+                        "sold_p25":       _f(r[3]),
+                        "sold_p75":       _f(r[4]),
+                        "sold_fetched_at": fetched_dt.astimezone(ZoneInfo("America/Los_Angeles")).isoformat() if fetched_dt else None,
+                    }
+            except Exception as e:
+                print(f"[generate_dashboard] sold_comps unavailable: {e}")
+                conn.rollback()
     finally:
         conn.close()
 
@@ -211,6 +240,7 @@ def generate() -> None:
         "bin_listings":    bin_listings,
         "auction_listings": auction_listings,
         "prices":          prices,
+        "sold_comps":      sold_comps_map,
     }
 
     os.makedirs(OUT_DIR, exist_ok=True)

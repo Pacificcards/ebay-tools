@@ -220,6 +220,7 @@ function renderOverview() {
   const rows = DATA.queries.map(q => {
     const t = DATA.today[q.id] || {};
     const y = DATA.yesterday[q.id] || {};
+    const sc = (DATA.sold_comps || {})[q.id] || {};
     return {
       name:          q.name,
       type:          q.type || null,
@@ -230,8 +231,17 @@ function renderOverview() {
       new_median:    (DATA.new_medians  || {})[q.id] ?? null,
       gone_count:    t.gone_count    ?? null,
       gone_median:   (DATA.gone_medians || {})[q.id] ?? null,
+      sold_count:    sc.sold_count  ?? null,
+      comps_median:  sc.sold_median ?? null,
     };
   });
+
+  const soldFetchedAt = (() => {
+    const entries = Object.values(DATA.sold_comps || {});
+    if (!entries.length) return null;
+    const ts = entries[0].sold_fetched_at;
+    return ts ? new Date(ts).toLocaleDateString('en-US', {month:'short', day:'numeric'}) : null;
+  })();
 
   const col = overviewSort.col;
   const dir = overviewSort.dir;
@@ -256,12 +266,16 @@ function renderOverview() {
     <td style="text-align:right">${fmtPrice(r.price_median)}</td>
     <td style="text-align:right">${fmtPct(r.vs_yesterday)}</td>
     <td style="text-align:right;color:#16a34a;font-weight:500">${fmtNum(r.new_count)}</td>
-    <td style="text-align:right">${r.new_median  != null ? fmtPrice(r.new_median)  : '<span class="neu">—</span>'}</td>
+    <td style="text-align:right">${r.new_median    != null ? fmtPrice(r.new_median)    : '<span class="neu">—</span>'}</td>
     <td style="text-align:right;color:#dc2626;font-weight:500">${fmtNum(r.gone_count)}</td>
-    <td style="text-align:right">${r.gone_median != null ? fmtPrice(r.gone_median) : '<span class="neu">—</span>'}</td>
+    <td style="text-align:right">${r.gone_median   != null ? fmtPrice(r.gone_median)   : '<span class="neu">—</span>'}</td>
+    <td style="text-align:right">${r.sold_count    != null ? fmtNum(r.sold_count)      : '<span class="neu">—</span>'}</td>
+    <td style="text-align:right">${r.comps_median  != null ? fmtPrice(r.comps_median)  : '<span class="neu">—</span>'}</td>
   </tr>`).join('');
 
-  wrap.innerHTML = `<table id="overview-table"><thead><tr>
+  wrap.innerHTML = `
+    ${soldFetchedAt ? `<div style="text-align:right;font-style:italic;font-size:12px;color:#9ca3af;margin-bottom:6px">Sold comps as of ${soldFetchedAt}</div>` : ''}
+    <table id="overview-table"><thead><tr>
     ${th('Product',        'name',          'left')}
     ${th('Type',           'type',          'left')}
     ${th('Listings',       'listing_count', 'right')}
@@ -271,7 +285,9 @@ function renderOverview() {
     ${th('New Median',     'new_median',    'right')}
     ${th('Sold Yesterday', 'gone_count',    'right')}
     ${th('Sold Median',    'gone_median',   'right')}
-  </tr></thead><tbody>${htmlRows || '<tr><td colspan="9" class="empty">No data yet.</td></tr>'}</tbody></table>`;
+    ${th('Sold (30d)',     'sold_count',    'right')}
+    ${th('Comps Median',   'comps_median',  'right')}
+  </tr></thead><tbody>${htmlRows || '<tr><td colspan="11" class="empty">No data yet.</td></tr>'}</tbody></table>`;
 }
 
 function sortOverview(col) {
