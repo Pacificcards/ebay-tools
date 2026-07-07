@@ -223,16 +223,16 @@ class TestPLTab(unittest.TestCase):
         sts.write_pl_tab(doc, sales_row_count=5, purchases_row_count=3, ad_fees_row_count=10)
 
         written = ws.update.call_args[0][0]
-        self.assertEqual(written[0], ["group", "gross_revenue", "net_revenue", "costs", "profit"])
+        self.assertEqual(written[0], ["group", "net_payout", "costs", "ad_fees", "shipping_cost", "profit"])
 
-    def test_pl_tab_data_row_has_five_formulas(self):
+    def test_pl_tab_data_row_has_six_formulas(self):
         doc, ws = self._make_doc_with_ws()
         sts.write_pl_tab(doc, sales_row_count=5, purchases_row_count=3, ad_fees_row_count=10)
 
         written = ws.update.call_args[0][0]
-        self.assertEqual(len(written[1]), 5)
+        self.assertEqual(len(written[1]), 6)
 
-    def test_pl_tab_formulas_reference_both_tabs(self):
+    def test_pl_tab_formulas_reference_correct_tabs(self):
         doc, ws = self._make_doc_with_ws()
         sts.write_pl_tab(doc, sales_row_count=10, purchases_row_count=7, ad_fees_row_count=20)
 
@@ -241,8 +241,11 @@ class TestPLTab(unittest.TestCase):
 
         self.assertIn("Sales!",     formula_row[0])  # group formula covers Sales
         self.assertIn("Purchases!", formula_row[0])  # group formula covers Purchases
-        self.assertIn("Sales!",     formula_row[1])  # gross_revenue pulls from Sales
-        self.assertIn("Purchases!", formula_row[3])  # costs pull from Purchases
+        self.assertIn("Sales!D",    formula_row[1])  # net_payout pulls from Sales col D
+        self.assertIn("Purchases!", formula_row[2])  # costs pull from Purchases
+        self.assertIn("Ad Fee",     formula_row[3])  # ad_fees filters by "Ad Fee" category
+        self.assertIn("Shipping",   formula_row[4])  # shipping_cost filters by "Shipping" category
+        self.assertIn("B2:B-C2:C-D2:D-E2:E", formula_row[5])  # profit = net - costs - ads - shipping
 
 
 
@@ -351,6 +354,45 @@ class TestNewEntriesRecordId(unittest.TestCase):
 
         status_call = ws.update_cell.call_args_list[0]
         self.assertIn("Not found", status_call[0][2])
+
+    def test_record_id_stamped_after_shipping_insert(self):
+        """Successful shipping insert writes SHIP- txn_id to col 9."""
+        rows = [
+            sts.NEW_ENTRIES_HEADERS,
+            ["2026-06-20", "PirateShip batch", "shipping", "12.50", "", "", "Pokemon Repacks", "", ""],
+        ]
+        ws  = self._make_ws(rows)
+        doc = self._make_doc(ws)
+
+        with patch.object(sts, "_insert_manual_entries",  return_value={}), \
+             patch.object(sts, "_insert_manual_sales",    return_value={}), \
+             patch.object(sts, "_insert_manual_shipping", return_value={0: "SHIP-abc123"}) as mock_ship:
+            sts.process_new_entries(doc)
+
+        mock_ship.assert_called_once()
+        ws.batch_update.assert_called_once()
+        updates = ws.batch_update.call_args[0][0]
+        self.assertEqual(len(updates), 1)
+        self.assertIn("SHIP-abc123", updates[0]["values"][0])
+
+    def test_shipping_deletion_calls_delete_and_stamps_deleted(self):
+        """Row with SHIP- record_id and 'Marked for Deletion' deletes from order_fees."""
+        rows = [
+            sts.NEW_ENTRIES_HEADERS,
+            ["2026-06-20", "PirateShip", "shipping", "12.50", "", "", "Pokemon Repacks", "Marked for Deletion", "SHIP-abc123"],
+        ]
+        ws  = self._make_ws(rows)
+        doc = self._make_doc(ws)
+
+        with patch.object(sts, "_delete_manual_entry", return_value=(True, "")) as mock_del, \
+             patch.object(sts, "_insert_manual_entries",  return_value={}), \
+             patch.object(sts, "_insert_manual_sales",    return_value={}), \
+             patch.object(sts, "_insert_manual_shipping", return_value={}):
+            sts.process_new_entries(doc)
+
+        mock_del.assert_called_once_with("SHIP-abc123")
+        status_call = ws.update_cell.call_args_list[0]
+        self.assertIn("Deleted", status_call[0][2])
 
     def test_already_synced_row_skipped(self):
         """Rows with a non-deletion status are not re-processed."""
