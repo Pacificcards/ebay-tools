@@ -49,11 +49,11 @@ def _make_doc(ws):
 # ── fetch_sales ───────────────────────────────────────────────────────────────
 
 class TestFetchSales(unittest.TestCase):
-    # 9-column schema: order_date | title | gross_sale | net_payout | shipping_cost
-    #                  | order_id | ebay_order_id | group | source
+    # 10-column schema: order_date | title | gross_sale | net_payout | shipping_cost
+    #                   | order_id | ebay_order_id | listing_id | group | source
     FAKE_ROWS = [
-        ("2026-05-20", "Topps Chrome Charizard", "45.00", "39.50", "3.50", "ORD-001", "ORD-001", "", "eBay"),
-        ("2026-05-19", "PSA 10 Pikachu",         "120.00", "104.30", "5.20", "ORD-002", "ORD-002", "", "eBay"),
+        ("2026-05-20", "Topps Chrome Charizard", "45.00", "39.50", "3.50", "ORD-001", "ORD-001", "123456789", "", "eBay"),
+        ("2026-05-19", "PSA 10 Pikachu",         "120.00", "104.30", "5.20", "ORD-002", "ORD-002", "987654321", "", "eBay"),
     ]
 
     def test_returns_list_of_lists(self):
@@ -62,15 +62,15 @@ class TestFetchSales(unittest.TestCase):
         self.assertEqual(len(result), 2)
         self.assertIsInstance(result[0], list)
 
-    def test_each_row_has_nine_columns(self):
+    def test_each_row_has_ten_columns(self):
         conn = _make_conn([self.FAKE_ROWS[0]])
         result = sts.fetch_sales(conn)
-        self.assertEqual(len(result[0]), 9)
+        self.assertEqual(len(result[0]), 10)
 
     def test_group_column_starts_blank(self):
         conn = _make_conn([self.FAKE_ROWS[0]])
         result = sts.fetch_sales(conn)
-        self.assertEqual(result[0][7], "")  # group is index 7
+        self.assertEqual(result[0][8], "")  # group is index 8 (after listing_id at 7)
 
     def test_empty_result_when_no_orders(self):
         conn = _make_conn([])
@@ -120,25 +120,25 @@ class TestBatchPreservation(unittest.TestCase):
     def test_sales_group_values_preserved_on_resync(self):
         # existing sheet rows use the current header-based schema
         existing = [
-            ["order_date", "title", "gross_sale", "net_payout", "shipping_cost", "order_id", "ebay_order_id", "group", "source"],
-            ["2026-05-20", "Card A", "45.00", "39.50", "3.50", "ORD-001", "ORD-001", "May Break", "eBay"],
-            ["2026-05-19", "Card B", "30.00", "26.50", "2.10", "ORD-002", "ORD-002", "",          "eBay"],
+            ["order_date", "title", "gross_sale", "net_payout", "shipping_cost", "order_id", "ebay_order_id", "listing_id", "group", "source"],
+            ["2026-05-20", "Card A", "45.00", "39.50", "3.50", "ORD-001", "ORD-001", "111", "May Break", "eBay"],
+            ["2026-05-19", "Card B", "30.00", "26.50", "2.10", "ORD-002", "ORD-002", "222", "",          "eBay"],
         ]
         ws = _make_worksheet(existing)
         doc = _make_doc(ws)
 
-        # new_rows match the 9-column fetch_sales() output
+        # new_rows match the 10-column fetch_sales() output
         new_rows = [
-            ["2026-05-20", "Card A", "45.00", "39.50", "3.50", "ORD-001", "ORD-001", "", "eBay"],
-            ["2026-05-19", "Card B", "30.00", "26.50", "2.10", "ORD-002", "ORD-002", "", "eBay"],
-            ["2026-05-18", "Card C", "60.00", "52.10", "4.00", "ORD-003", "ORD-003", "", "eBay"],
+            ["2026-05-20", "Card A", "45.00", "39.50", "3.50", "ORD-001", "ORD-001", "111", "", "eBay"],
+            ["2026-05-19", "Card B", "30.00", "26.50", "2.10", "ORD-002", "ORD-002", "222", "", "eBay"],
+            ["2026-05-18", "Card C", "60.00", "52.10", "4.00", "ORD-003", "ORD-003", "333", "", "eBay"],
         ]
 
         sts.write_sales_tab(doc, new_rows)
 
-        self.assertEqual(new_rows[0][7], "May Break")  # ORD-001 preserved
-        self.assertEqual(new_rows[1][7], "")            # ORD-002 had no group
-        self.assertEqual(new_rows[2][7], "")            # ORD-003 is new
+        self.assertEqual(new_rows[0][8], "May Break")  # ORD-001 preserved
+        self.assertEqual(new_rows[1][8], "")            # ORD-002 had no group
+        self.assertEqual(new_rows[2][8], "")            # ORD-003 is new
 
     def test_purchases_group_values_preserved_on_resync(self):
         existing = [
@@ -163,29 +163,29 @@ class TestBatchPreservation(unittest.TestCase):
 
     def test_new_order_gets_empty_group(self):
         existing = [
-            ["order_date", "title", "gross_sale", "net_payout", "shipping_cost", "order_id", "ebay_order_id", "group", "source"],
-            ["2026-05-20", "Card A", "45.00", "39.50", "3.50", "ORD-001", "ORD-001", "May Break", "eBay"],
+            ["order_date", "title", "gross_sale", "net_payout", "shipping_cost", "order_id", "ebay_order_id", "listing_id", "group", "source"],
+            ["2026-05-20", "Card A", "45.00", "39.50", "3.50", "ORD-001", "ORD-001", "111", "May Break", "eBay"],
         ]
         ws = _make_worksheet(existing)
         doc = _make_doc(ws)
 
-        new_rows = [["2026-05-22", "Card Z", "99.00", "86.00", "6.00", "ORD-NEW", "ORD-NEW", "", "eBay"]]
+        new_rows = [["2026-05-22", "Card Z", "99.00", "86.00", "6.00", "ORD-NEW", "ORD-NEW", "999", "", "eBay"]]
 
         sts.write_sales_tab(doc, new_rows)
 
-        self.assertEqual(new_rows[0][7], "")  # brand-new order has no group
+        self.assertEqual(new_rows[0][8], "")  # brand-new order has no group
 
     def test_empty_existing_sheet_does_not_crash(self):
         # First run: sheet has only the header row
-        existing = [["order_date", "title", "gross_sale", "net_payout", "shipping_cost", "order_id", "ebay_order_id", "group", "source"]]
+        existing = [["order_date", "title", "gross_sale", "net_payout", "shipping_cost", "order_id", "ebay_order_id", "listing_id", "group", "source"]]
         ws = _make_worksheet(existing)
         doc = _make_doc(ws)
 
-        new_rows = [["2026-05-20", "Card A", "45.00", "39.50", "3.50", "ORD-001", "ORD-001", "", "eBay"]]
+        new_rows = [["2026-05-20", "Card A", "45.00", "39.50", "3.50", "ORD-001", "ORD-001", "111", "", "eBay"]]
 
         sts.write_sales_tab(doc, new_rows)
 
-        self.assertEqual(new_rows[0][7], "")
+        self.assertEqual(new_rows[0][8], "")
 
     def test_old_6col_schema_groups_preserved(self):
         # Backwards compat: sheet written before the column expansion still preserves groups
@@ -196,11 +196,11 @@ class TestBatchPreservation(unittest.TestCase):
         ws = _make_worksheet(existing)
         doc = _make_doc(ws)
 
-        new_rows = [["2026-05-20", "Card A", "45.00", "39.50", "3.50", "ORD-001", "ORD-001", "", "eBay"]]
+        new_rows = [["2026-05-20", "Card A", "45.00", "39.50", "3.50", "ORD-001", "ORD-001", "111", "", "eBay"]]
 
         sts.write_sales_tab(doc, new_rows)
 
-        self.assertEqual(new_rows[0][7], "May Break")
+        self.assertEqual(new_rows[0][8], "May Break")
 
 
 # ── P&L tab formula construction ─────────────────────────────────────────────

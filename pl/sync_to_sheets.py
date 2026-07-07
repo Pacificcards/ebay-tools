@@ -47,7 +47,7 @@ _STATUS_COL    = NEW_ENTRIES_HEADERS.index("status") + 1     # col 8, 1-indexed 
 _RECORD_ID_COL = NEW_ENTRIES_HEADERS.index("record_id") + 1  # col 9
 
 # Sales: order_date | title | gross_sale | net_payout | shipping_cost | order_id | ebay_order_id | group | source
-SALES_HEADERS     = ["order_date", "title", "gross_sale", "net_payout", "shipping_cost", "order_id", "ebay_order_id", "group", "source"]
+SALES_HEADERS     = ["order_date", "title", "gross_sale", "net_payout", "shipping_cost", "order_id", "ebay_order_id", "listing_id", "group", "source"]
 PURCHASES_HEADERS = ["purchase_date", "description", "vendor", "total_cost", "source", "id", "group"]
 AD_FEES_HEADERS   = ["date", "fee_type", "amount", "order_id", "listing_id", "title", "transaction_id", "group", "category"]
 
@@ -103,6 +103,9 @@ def fetch_sales(conn) -> list[list]:
                 CASE WHEN o.order_id LIKE 'MANUAL-%' THEN ''
                      ELSE SPLIT_PART(o.order_id, '_', 1)
                 END AS ebay_order_id,
+                CASE WHEN o.order_id LIKE 'MANUAL-%' THEN ''
+                     ELSE COALESCE(o.listing_id, '')
+                END AS listing_id,
                 COALESCE(o.group_name, ''),
                 CASE WHEN o.order_id LIKE 'MANUAL-%' THEN 'Manual' ELSE 'eBay' END AS source
             FROM orders_raw o
@@ -179,12 +182,21 @@ def fetch_ad_fees(conn) -> list[list]:
                 fl.billing_transaction_id,
                 COALESCE(
                     fl.group_name,
-                    CASE WHEN fl.fee_type = 'SHIPPING_LABEL' THEN (
-                        SELECT o.group_name FROM orders_raw o
-                        WHERE SPLIT_PART(o.order_id, '_', 1) = fl.order_id
-                          AND o.group_name IS NOT NULL
-                        LIMIT 1
-                    ) ELSE NULL END,
+                    CASE
+                        WHEN fl.fee_type = 'SHIPPING_LABEL' AND fl.order_id IS NOT NULL THEN (
+                            SELECT o.group_name FROM orders_raw o
+                            WHERE SPLIT_PART(o.order_id, '_', 1) = fl.order_id
+                              AND o.group_name IS NOT NULL
+                            LIMIT 1
+                        )
+                        WHEN fl.fee_type = 'NON_SALE_CHARGE' AND fl.resolved_listing_id IS NOT NULL THEN (
+                            SELECT o.group_name FROM orders_raw o
+                            WHERE o.listing_id = fl.resolved_listing_id
+                              AND o.group_name IS NOT NULL
+                            LIMIT 1
+                        )
+                        ELSE NULL
+                    END,
                     ''
                 ) AS group_name,
                 CASE fl.fee_type
@@ -781,7 +793,7 @@ def write_pl_tab(doc: gspread.Spreadsheet, sales_row_count: int, purchases_row_c
     purchases_end = max(purchases_row_count + 1, 2)
     ad_fees_end   = max(ad_fees_row_count + 1, 2)
 
-    sg  = f"Sales!H2:H{sales_end}"           # Sales group col
+    sg  = f"Sales!I2:I{sales_end}"           # Sales group col (col I after listing_id added at H)
     pg  = f"Purchases!G2:G{purchases_end}"   # Purchases group col
     ag  = f"'Ad Fees'!H2:H{ad_fees_end}"     # Ad Fees group col
     ai  = f"'Ad Fees'!I2:I{ad_fees_end}"     # Ad Fees category col
