@@ -243,7 +243,9 @@ class TestPLTab(unittest.TestCase):
         self.assertIn("Purchases!", formula_row[0])  # group formula covers Purchases
         self.assertIn("Sales!D",    formula_row[1])  # net_payout pulls from Sales col D
         self.assertIn("Purchases!", formula_row[2])  # costs pull from Purchases
+        self.assertIn("BYROW",      formula_row[3])  # ad_fees uses BYROW+LAMBDA
         self.assertIn("Ad Fee",     formula_row[3])  # ad_fees filters by "Ad Fee" category
+        self.assertIn("BYROW",      formula_row[4])  # shipping_cost uses BYROW+LAMBDA
         self.assertIn("Shipping",   formula_row[4])  # shipping_cost filters by "Shipping" category
         self.assertIn("B2:B-C2:C-D2:D-E2:E", formula_row[5])  # profit = net - costs - ads - shipping
 

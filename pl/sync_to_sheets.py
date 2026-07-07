@@ -795,8 +795,8 @@ def write_pl_tab(doc: gspread.Spreadsheet, sales_row_count: int, purchases_row_c
             f'=IFERROR(UNIQUE(FILTER({{{sg};{pg};{ag}}},{{{sg};{pg};{ag}}}<>"")),"")',
             f'=IFERROR(ARRAYFORMULA(SUMIF({sg},A2:A,{sd})),"")',
             f'=IFERROR(ARRAYFORMULA(SUMIF({pg},A2:A,{pc})),"")',
-            f'=IFERROR(ARRAYFORMULA(SUMIFS({ac},{ag},A2:A,{ai},"Ad Fee")),"")',
-            f'=IFERROR(ARRAYFORMULA(SUMIFS({ac},{ag},A2:A,{ai},"Shipping")),"")',
+            f'=IFERROR(BYROW(A2:A,LAMBDA(g,IF(g="","",SUMIFS({ac},{ag},g,{ai},"Ad Fee")))),"")' ,
+            f'=IFERROR(BYROW(A2:A,LAMBDA(g,IF(g="","",SUMIFS({ac},{ag},g,{ai},"Shipping")))),"")' ,
             '=IFERROR(B2:B-C2:C-D2:D-E2:E,"")',
         ]
     ]
