@@ -1,6 +1,7 @@
 """Read Supabase and write docs/market/market_data.json for the GitHub Pages dashboard."""
 import json
 import os
+import statistics
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -160,8 +161,55 @@ def generate() -> None:
             except Exception as e:
                 print(f"[generate_dashboard] sold_comps unavailable: {e}")
                 conn.rollback()
+
+            # Individual sold items for daily trend chart + drilldown table
+            sold_item_rows = []
+            try:
+                cur.execute("""
+                    SELECT query_id,
+                           DATE(ended_at AT TIME ZONE 'America/Los_Angeles')::text,
+                           total_price, sold_price, shipping_price,
+                           title, condition, url
+                    FROM market_sold_items
+                    WHERE ended_at >= NOW() - INTERVAL '30 days'
+                      AND total_price IS NOT NULL
+                    ORDER BY query_id, ended_at DESC
+                """)
+                sold_item_rows = cur.fetchall()
+            except Exception as e:
+                print(f"[generate_dashboard] sold_items unavailable: {e}")
+                conn.rollback()
     finally:
         conn.close()
+
+    # Process sold items into trend (per-day medians + prices) and drilldown list
+    _sold_by_date: dict[str, dict[str, list[float]]] = {}
+    sold_items_map: dict[str, list[dict]] = {}
+    for r in sold_item_rows:
+        qid, ended_date, total, sold, ship, title, cond, url = r
+        price = float(total)
+        _sold_by_date.setdefault(qid, {}).setdefault(ended_date, []).append(price)
+        sold_items_map.setdefault(qid, []).append({
+            "date":     ended_date,
+            "price":    round(price, 2),
+            "sold":     round(float(sold), 2) if sold is not None else None,
+            "shipping": round(float(ship), 2) if ship is not None else None,
+            "title":    title,
+            "condition": cond,
+            "url":      url,
+        })
+
+    sold_trends_map: dict[str, list[dict]] = {}
+    for qid, date_prices in _sold_by_date.items():
+        entries = []
+        for d in sorted(date_prices.keys()):
+            prices = sorted(date_prices[d])
+            entries.append({
+                "date":   d,
+                "median": round(statistics.median(prices), 2),
+                "prices": [round(p, 2) for p in prices],
+            })
+        sold_trends_map[qid] = entries
 
     # Build queries list — only include queries that ran on the latest snapshot date
     # (excludes deactivated queries that have historical rows but didn't run in the latest batch)
@@ -241,6 +289,8 @@ def generate() -> None:
         "auction_listings": auction_listings,
         "prices":          prices,
         "sold_comps":      sold_comps_map,
+        "sold_trends":     sold_trends_map,
+        "sold_items":      sold_items_map,
     }
 
     os.makedirs(OUT_DIR, exist_ok=True)

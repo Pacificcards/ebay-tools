@@ -63,7 +63,7 @@
     <div class="chart-wrap"><canvas id="count-chart"></canvas></div>
   </div>
   <div class="card">
-    <div style="font-size:13px;color:#6b7280;font-weight:600;margin-bottom:12px">Median Price ($)</div>
+    <div style="font-size:13px;color:#6b7280;font-weight:600;margin-bottom:12px">Active vs. Sold Prices ($)</div>
     <div class="chart-wrap"><canvas id="price-chart"></canvas></div>
   </div>
 </div>
@@ -73,6 +73,12 @@
 <div class="card">
   <div class="chart-wrap"><canvas id="hist-chart"></canvas></div>
 </div>
+
+<!-- Sold Comps Drilldown -->
+<details>
+  <summary><h2 style="display:inline">Sold Comps <span id="sold-comps-query-label" style="font-weight:400;color:#6b7280"></span></h2></summary>
+  <div class="card" style="margin-top:12px" id="sold-comps-table-wrap"></div>
+</details>
 
 <!-- Sold Yesterday -->
 <details open>
@@ -152,6 +158,7 @@ function fmtTimeRemaining(end_time_str) {
 
 const BLUE   = '#3b82f6';
 const GREEN  = '#10b981';
+const PURPLE = '#8b5cf6';
 const GRID   = '#f3f4f6';
 
 function chartDefaults() {
@@ -222,6 +229,7 @@ function renderOverview() {
     const y = DATA.yesterday[q.id] || {};
     const sc = (DATA.sold_comps || {})[q.id] || {};
     return {
+      id:            q.id,
       name:          q.name,
       type:          q.type || null,
       listing_count: t.listing_count ?? null,
@@ -256,11 +264,16 @@ function renderOverview() {
 
   function th(label, c, align) {
     const style = align === 'right' ? 'text-align:right' : '';
-    return `<th class="sortable" style="${style}" onclick="sortOverview('${c}')">${label}${sortArrow(c, overviewSort)}</th>`;
+    const arrow = sortArrow(c, overviewSort);
+    const lastSpace = label.lastIndexOf(' ');
+    const labelHtml = lastSpace >= 0
+      ? `${label.slice(0, lastSpace + 1)}<span style="white-space:nowrap">${label.slice(lastSpace + 1)}${arrow}</span>`
+      : `<span style="white-space:nowrap">${label}${arrow}</span>`;
+    return `<th class="sortable" style="${style}" onclick="sortOverview('${c}')">${labelHtml}</th>`;
   }
 
   const htmlRows = rows.map(r => `<tr>
-    <td style="font-weight:500">${r.name}</td>
+    <td style="font-weight:500"><a href="#query-select" onclick="scrollAndSelect('${r.id}');return false;" style="color:inherit;text-decoration:underline;text-decoration-color:#d1d5db;text-underline-offset:2px;cursor:pointer">${r.name}</a></td>
     <td>${r.type ?? '<span class="neu">—</span>'}</td>
     <td style="text-align:right">${fmtNum(r.listing_count)}</td>
     <td style="text-align:right">${fmtPrice(r.price_median)}</td>
@@ -303,38 +316,75 @@ function sortOverview(col) {
 // ── Trend charts ──────────────────────────────────────────────────────────────
 
 function renderTrends(queryId) {
-  const series = DATA.trends[queryId] || [];
-  const labels = series.map(r => r.date.slice(5)); // MM-DD
-  const counts  = series.map(r => r.listing_count);
-  const medians = series.map(r => r.price_median);
-  const q = DATA.queries.find(q => q.id === queryId);
+  const series     = DATA.trends[queryId] || [];
+  const soldSeries = (DATA.sold_trends || {})[queryId] || [];
+  const q    = DATA.queries.find(q => q.id === queryId);
   const msrp = q && q.msrp != null ? q.msrp : null;
 
+  // Union of snapshot dates + sold dates, sorted
+  const allDates = Array.from(new Set([
+    ...series.map(r => r.date),
+    ...soldSeries.map(r => r.date),
+  ])).sort();
+  const labels = allDates.map(d => d.slice(5)); // MM-DD
+
+  // Count chart uses only snapshot dates (no sold dates)
+  const snapshotLabels = series.map(r => r.date.slice(5));
+  const counts = series.map(r => r.listing_count);
   if (countChart) countChart.destroy();
-  if (priceChart) priceChart.destroy();
-  countChart = buildLineChart('count-chart', labels, counts, BLUE, {
+  countChart = buildLineChart('count-chart', snapshotLabels, counts, BLUE, {
     ticks: { font: { size: 11 }, precision: 0 },
   });
 
-  const sc = (DATA.sold_comps || {})[queryId] || {};
-  const soldMedian = sc.sold_median != null ? sc.sold_median : null;
+  // Map active medians onto full date array (null on sold-only dates)
+  const snapshotMedianByDate = {};
+  series.forEach(r => snapshotMedianByDate[r.date] = r.price_median);
+  const medians = allDates.map(d => snapshotMedianByDate[d] ?? null);
 
+  // Sold: daily medians array + scatter dots {x: 'MM-DD', y: price}
+  const soldMedianByDate = {};
+  const soldDots = [];
+  soldSeries.forEach(r => {
+    soldMedianByDate[r.date] = r.median;
+    const label = r.date.slice(5);
+    r.prices.forEach(p => soldDots.push({ x: label, y: p }));
+  });
+  const soldMedians = allDates.map(d => soldMedianByDate[d] ?? null);
+
+  if (priceChart) priceChart.destroy();
   const ctx = document.getElementById('price-chart').getContext('2d');
   const datasets = [{
     data: medians, borderColor: GREEN, backgroundColor: GREEN + '22',
-    pointRadius: 2, tension: 0.3, fill: true, label: 'Median Price',
+    pointRadius: 2, tension: 0.3, fill: true, label: 'Active Median',
+    spanGaps: true,
   }];
-  if (soldMedian !== null) {
+
+  if (soldDots.length) {
     datasets.push({
-      data: labels.map(() => soldMedian),
-      borderColor: '#8b5cf6',
+      type: 'scatter',
+      data: soldDots,
+      backgroundColor: PURPLE + '55',
+      pointRadius: 3,
+      pointHoverRadius: 4,
+      borderWidth: 0,
+      label: 'Individual Sales',
+    });
+    datasets.push({
+      data: soldMedians,
+      borderColor: PURPLE,
       borderWidth: 2,
-      borderDash: [6, 4],
-      pointRadius: 0,
+      borderDash: [5, 3],
+      pointRadius: 3,
+      pointBackgroundColor: '#fff',
+      pointBorderColor: PURPLE,
+      pointBorderWidth: 1.5,
+      tension: 0.2,
       fill: false,
-      label: `Comps Median $${soldMedian.toFixed(2)}`,
+      label: 'Sold Median',
+      spanGaps: false,
     });
   }
+
   if (msrp !== null) {
     datasets.push({
       data: labels.map(() => msrp),
@@ -346,9 +396,10 @@ function renderTrends(queryId) {
       label: `MSRP $${msrp.toFixed(2)}`,
     });
   }
+
   const opts = chartDefaults();
   opts.scales.y.ticks = { font: { size: 11 }, callback: v => `$${v}` };
-  if (msrp !== null || soldMedian !== null) {
+  if (soldDots.length || msrp !== null) {
     opts.plugins = { legend: { display: true, labels: { font: { size: 11 }, boxWidth: 20 } } };
   }
   priceChart = new Chart(ctx, { type: 'line', data: { labels, datasets }, options: opts });
@@ -473,19 +524,56 @@ function sortAuction(col) {
   renderAuctionTable(currentQueryId);
 }
 
+// ── Sold Comps drilldown table ────────────────────────────────────────────────
+
+function renderSoldCompsTable(queryId) {
+  const wrap = document.getElementById('sold-comps-table-wrap');
+  const items = (DATA.sold_items || {})[queryId] || [];
+  if (!items.length) {
+    wrap.innerHTML = '<p class="empty">No sold comps data.</p>';
+    return;
+  }
+  const rows = items.map(i => `<tr>
+    <td style="white-space:nowrap">${i.date ? i.date.slice(5) : '—'}</td>
+    <td>${i.url ? `<a href="${i.url}" target="_blank" rel="noopener">${i.title || '—'}</a>` : (i.title || '—')}</td>
+    <td>${i.condition || '—'}</td>
+    <td style="text-align:right">${i.sold != null ? fmtPrice(i.sold) : '—'}</td>
+    <td style="text-align:right">${i.shipping != null ? fmtPrice(i.shipping) : '—'}</td>
+    <td style="text-align:right;font-weight:500">${fmtPrice(i.price)}</td>
+  </tr>`).join('');
+  wrap.innerHTML = `<table>
+    <thead><tr>
+      <th>Date</th><th>Title</th><th>Condition</th>
+      <th style="text-align:right">Sale</th>
+      <th style="text-align:right">Shipping</th>
+      <th style="text-align:right">Total</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
 // ── Query selector ────────────────────────────────────────────────────────────
+
+function scrollAndSelect(queryId) {
+  const sel = document.getElementById('query-select');
+  sel.value = queryId;
+  updateQuery(queryId);
+  sel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 
 function updateQuery(queryId) {
   currentQueryId = queryId;
   const q = DATA.queries.find(q => q.id === queryId);
   const name = q ? ` — ${q.name}` : '';
-  document.getElementById('hist-query-label').textContent    = name;
-  document.getElementById('gone-query-label').textContent    = name;
-  document.getElementById('bin-query-label').textContent     = name;
-  document.getElementById('auction-query-label').textContent = name;
+  document.getElementById('hist-query-label').textContent         = name;
+  document.getElementById('sold-comps-query-label').textContent   = name;
+  document.getElementById('gone-query-label').textContent         = name;
+  document.getElementById('bin-query-label').textContent          = name;
+  document.getElementById('auction-query-label').textContent      = name;
 
   renderTrends(queryId);
   buildHistogram(DATA.prices[queryId]);
+  renderSoldCompsTable(queryId);
   renderGoneTable(queryId);
   binSort     = { col: 'price',    dir: 1 };
   auctionSort = { col: 'end_time', dir: 1 };
