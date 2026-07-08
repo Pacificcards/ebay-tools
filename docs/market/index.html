@@ -341,15 +341,18 @@ function renderTrends(queryId) {
   series.forEach(r => snapshotMedianByDate[r.date] = r.price_median);
   const medians = allDates.map(d => snapshotMedianByDate[d] ?? null);
 
-  // Sold: daily medians array + scatter dots {x: 'MM-DD', y: price}
+  // Sold: daily medians, counts, and scatter dots {x: 'MM-DD', y: price}
   const soldMedianByDate = {};
+  const soldCountByDate  = {};
   const soldDots = [];
   soldSeries.forEach(r => {
     soldMedianByDate[r.date] = r.median;
+    soldCountByDate[r.date]  = r.prices.length;
     const label = r.date.slice(5);
     r.prices.forEach(p => soldDots.push({ x: label, y: p }));
   });
   const soldMedians = allDates.map(d => soldMedianByDate[d] ?? null);
+  const soldCounts  = allDates.map(d => soldCountByDate[d]  ?? null);
 
   if (priceChart) priceChart.destroy();
   const ctx = document.getElementById('price-chart').getContext('2d');
@@ -361,6 +364,17 @@ function renderTrends(queryId) {
 
   if (soldDots.length) {
     datasets.push({
+      type: 'bar',
+      data: soldCounts,
+      backgroundColor: PURPLE + '28',
+      borderColor: PURPLE + '55',
+      borderWidth: 1,
+      borderRadius: 2,
+      yAxisID: 'y1',
+      label: 'Units Sold',
+      order: 3,
+    });
+    datasets.push({
       type: 'scatter',
       data: soldDots,
       backgroundColor: PURPLE + '55',
@@ -368,6 +382,7 @@ function renderTrends(queryId) {
       pointHoverRadius: 4,
       borderWidth: 0,
       label: 'Individual Sales',
+      order: 2,
     });
     datasets.push({
       data: soldMedians,
@@ -382,6 +397,7 @@ function renderTrends(queryId) {
       fill: false,
       label: 'Sold Median',
       spanGaps: false,
+      order: 1,
     });
   }
 
@@ -399,6 +415,15 @@ function renderTrends(queryId) {
 
   const opts = chartDefaults();
   opts.scales.y.ticks = { font: { size: 11 }, callback: v => `$${v}` };
+  if (soldDots.length) {
+    opts.scales.y1 = {
+      type: 'linear',
+      position: 'right',
+      beginAtZero: true,
+      grid: { drawOnChartArea: false },
+      ticks: { font: { size: 11 }, precision: 0, color: PURPLE + 'aa' },
+    };
+  }
   if (soldDots.length || msrp !== null) {
     opts.plugins = { legend: { display: true, labels: { font: { size: 11 }, boxWidth: 20 } } };
   }
