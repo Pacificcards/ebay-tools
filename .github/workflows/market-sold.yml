@@ -1,9 +1,16 @@
 name: Market Sold Comps
 
 on:
-  schedule:
-    - cron: '0 12 * * 0'   # Sundays 12:00 UTC = 5am PT
   workflow_dispatch:
+    inputs:
+      query_ids:
+        description: 'Comma-separated query IDs to update (empty = all)'
+        required: false
+        default: ''
+
+concurrency:
+  group: market-data
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -27,6 +34,7 @@ jobs:
           SUPABASE_DB_URL:            ${{ secrets.SUPABASE_DB_URL }}
           GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
           MARKET_MONITOR_SHEET_ID:   ${{ secrets.MARKET_MONITOR_SHEET_ID }}
+          FETCH_QUERY_IDS:           ${{ github.event.inputs.query_ids }}
         run: python -m market_monitor.fetch_sold
 
       - name: Regenerate dashboard data

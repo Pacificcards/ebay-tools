@@ -10,7 +10,15 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: Arial, sans-serif; background: #f9fafb; color: #111827; padding: 24px; max-width: 1100px; margin: 0 auto; }
     h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
-    .subtitle { color: #6b7280; font-size: 14px; margin-bottom: 28px; }
+    .subtitle { color: #6b7280; font-size: 14px; }
+    .modal-overlay { position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;display:flex;align-items:center;justify-content:center; }
+    .modal-box { background:#fff;border-radius:12px;padding:28px;width:500px;max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3); }
+    .mbtn { font-size:13px;font-weight:600;padding:7px 16px;border-radius:6px;border:1px solid;cursor:pointer; }
+    .mbtn-primary { background:#1d4ed8;color:#fff;border-color:#1d4ed8; }
+    .mbtn-secondary { background:#fff;color:#374151;border-color:#d1d5db; }
+    .mbtn:hover { opacity:.88; }
+    .pstep { padding:8px 0;display:flex;align-items:center;gap:10px;font-size:14px;border-bottom:1px solid #f3f4f6; }
+    .pstep:last-child { border-bottom:none; }
     h2 { font-size: 15px; font-weight: 600; margin: 32px 0 12px; color: #111827; }
     hr { border: none; border-top: 1px solid #e5e7eb; margin: 32px 0; }
     .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin-bottom: 24px; }
@@ -43,8 +51,13 @@
 </head>
 <body>
 
-<h1>Pacific Cards Co. — Market Monitor</h1>
-<p class="subtitle" id="subtitle">Loading…</p>
+<div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:28px">
+  <div>
+    <h1>Pacific Cards Co. — Market Monitor</h1>
+    <p class="subtitle" id="subtitle" style="margin-top:4px">Loading…</p>
+  </div>
+  <button class="mbtn mbtn-secondary" style="margin-top:2px;white-space:nowrap" onclick="openRefreshModal()">↻ Refresh Comps</button>
+</div>
 
 <!-- Overview -->
 <h2>Overview</h2>
@@ -97,6 +110,46 @@
   <summary><h2 style="display:inline">Active Auctions <span id="auction-query-label" style="font-weight:400;color:#6b7280"></span></h2></summary>
   <div class="card" style="margin-top:12px" id="auction-table-wrap"></div>
 </details>
+
+<!-- Refresh Comps modal -->
+<div id="refresh-overlay" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeRefreshModal()">
+  <div class="modal-box">
+    <h2 style="margin:0 0 16px;font-size:16px">Refresh Sold Comps</h2>
+
+    <div id="refresh-setup">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <span style="font-size:13px;font-weight:600">Select queries to update:</span>
+        <div style="display:flex;gap:6px">
+          <button class="mbtn mbtn-secondary" style="padding:3px 10px;font-size:12px" onclick="setAllChecked(true)">All</button>
+          <button class="mbtn mbtn-secondary" style="padding:3px 10px;font-size:12px" onclick="setAllChecked(false)">None</button>
+        </div>
+      </div>
+      <div id="query-checkboxes" style="max-height:220px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px;padding:8px 10px;margin-bottom:16px"></div>
+
+      <div style="margin-bottom:20px">
+        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px">GitHub Token</label>
+        <div style="display:flex;gap:8px">
+          <input id="gh-token-input" type="password" placeholder="github_pat_…"
+            style="flex:1;font-size:13px;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;outline:none">
+          <button id="save-token-btn" class="mbtn mbtn-secondary" onclick="saveToken()">Save</button>
+        </div>
+        <p style="font-size:11px;color:#9ca3af;margin-top:5px">Fine-grained PAT — requires <strong>Actions: write</strong> on Pacificcards/ebay-tools only. Saved in this browser, never transmitted anywhere else.</p>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        <button class="mbtn mbtn-secondary" onclick="closeRefreshModal()">Cancel</button>
+        <button class="mbtn mbtn-primary" onclick="runRefresh()">Run Update</button>
+      </div>
+    </div>
+
+    <div id="refresh-progress" style="display:none">
+      <div id="progress-steps"></div>
+      <div style="margin-top:20px;text-align:right">
+        <button class="mbtn mbtn-secondary" onclick="closeRefreshModal()">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
 let DATA = null;
@@ -604,6 +657,180 @@ function updateQuery(queryId) {
   auctionSort = { col: 'end_time', dir: 1 };
   renderBinTable(queryId);
   renderAuctionTable(queryId);
+}
+
+// ── Refresh Sold Comps ────────────────────────────────────────────────────────
+
+const REPO          = 'Pacificcards/ebay-tools';
+const WORKFLOW_FILE = 'market-sold.yml';
+const GH_API        = 'https://api.github.com';
+
+function getToken() { return localStorage.getItem('gh_pat') || ''; }
+function setToken(t) { t ? localStorage.setItem('gh_pat', t) : localStorage.removeItem('gh_pat'); }
+
+function openRefreshModal() {
+  if (!DATA) { alert('Dashboard not loaded yet.'); return; }
+  document.getElementById('query-checkboxes').innerHTML = (DATA.queries || []).map(q =>
+    `<label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;cursor:pointer">
+      <input type="checkbox" value="${q.id}" checked> ${q.name}
+    </label>`
+  ).join('');
+  document.getElementById('gh-token-input').value = getToken();
+  document.getElementById('refresh-setup').style.display = '';
+  document.getElementById('refresh-progress').style.display = 'none';
+  document.getElementById('refresh-overlay').style.display = 'flex';
+}
+
+function closeRefreshModal() {
+  document.getElementById('refresh-overlay').style.display = 'none';
+}
+
+function setAllChecked(val) {
+  document.querySelectorAll('#query-checkboxes input[type=checkbox]').forEach(el => { el.checked = val; });
+}
+
+function saveToken() {
+  const t = document.getElementById('gh-token-input').value.trim();
+  setToken(t);
+  const btn = document.getElementById('save-token-btn');
+  const orig = btn.textContent;
+  btn.textContent = 'Saved!';
+  setTimeout(() => { btn.textContent = orig; }, 1500);
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+const _STEP_LABELS = ['Dispatching workflow', 'Fetching sold data', 'Updating dashboard', 'Saving changes', 'Refreshing page'];
+const _STEP_ICONS  = { done: '✓', active: '⟳', pending: '○', error: '✗' };
+const _STEP_COLORS = { done: '#16a34a', active: '#2563eb', pending: '#9ca3af', error: '#dc2626' };
+
+function setStep(idx, status, note) {
+  const el = document.getElementById(`pstep-${idx}`);
+  if (!el) return;
+  el.innerHTML =
+    `<span style="color:${_STEP_COLORS[status]};font-weight:700;min-width:18px;display:inline-block">${_STEP_ICONS[status]}</span>` +
+    `<span>${_STEP_LABELS[idx]}</span>` +
+    (note ? `<span style="color:#9ca3af;font-size:12px;margin-left:4px">${note}</span>` : '');
+}
+
+async function runRefresh() {
+  const token = document.getElementById('gh-token-input').value.trim();
+  if (!token) { alert('Please enter your GitHub token first.'); return; }
+  setToken(token);
+
+  const checked = [...document.querySelectorAll('#query-checkboxes input[type=checkbox]:checked')].map(el => el.value);
+  if (!checked.length) { alert('Please select at least one query.'); return; }
+
+  document.getElementById('refresh-setup').style.display = 'none';
+  document.getElementById('refresh-progress').style.display = '';
+  document.getElementById('progress-steps').innerHTML =
+    _STEP_LABELS.map((_, i) => `<div id="pstep-${i}" class="pstep"></div>`).join('');
+  _STEP_LABELS.forEach((_, i) => setStep(i, 'pending', ''));
+
+  // Step 0: Dispatch workflow
+  setStep(0, 'active', '');
+  const dispatchTime = new Date();
+  try {
+    const resp = await fetch(`${GH_API}/repos/${REPO}/actions/workflows/${WORKFLOW_FILE}/dispatches`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github.v3+json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ref: 'main', inputs: { query_ids: checked.join(',') } }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      setStep(0, 'error', err.message || `HTTP ${resp.status}`);
+      return;
+    }
+  } catch (e) {
+    setStep(0, 'error', e.message);
+    return;
+  }
+  setStep(0, 'done', '');
+
+  // Step 1: Poll for the run ID (find run created after dispatch)
+  setStep(1, 'active', 'queued…');
+  let runId = null;
+  for (let i = 0; i < 20; i++) {
+    await sleep(3000);
+    try {
+      const resp = await fetch(
+        `${GH_API}/repos/${REPO}/actions/workflows/${WORKFLOW_FILE}/runs?event=workflow_dispatch&per_page=10`,
+        { headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github.v3+json' } }
+      );
+      const data = await resp.json();
+      const run = (data.workflow_runs || []).find(r => new Date(r.created_at) > dispatchTime);
+      if (run) { runId = run.id; break; }
+    } catch (_) {}
+  }
+  if (!runId) { setStep(1, 'error', 'timed out — check GitHub Actions'); return; }
+
+  // Steps 1–3: Poll run + jobs for step-level status
+  const stepNameMap = {
+    'Fetch sold listings':       1,
+    'Regenerate dashboard data': 2,
+    'Commit market_data.json':   3,
+  };
+  let done = false;
+  while (!done) {
+    await sleep(4000);
+    try {
+      const [runResp, jobsResp] = await Promise.all([
+        fetch(`${GH_API}/repos/${REPO}/actions/runs/${runId}`,
+          { headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github.v3+json' } }),
+        fetch(`${GH_API}/repos/${REPO}/actions/runs/${runId}/jobs`,
+          { headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github.v3+json' } }),
+      ]);
+      const run  = await runResp.json();
+      const jobs = await jobsResp.json();
+
+      for (const step of (jobs.jobs || []).flatMap(j => j.steps || [])) {
+        const idx = stepNameMap[step.name];
+        if (idx == null) continue;
+        if (step.status === 'completed') {
+          setStep(idx, step.conclusion === 'success' ? 'done' : 'error', step.conclusion !== 'success' ? step.conclusion : '');
+        } else if (step.status === 'in_progress') {
+          setStep(idx, 'active', '');
+        }
+      }
+
+      if (run.status === 'completed') {
+        done = true;
+        if (run.conclusion !== 'success') {
+          setStep(4, 'error', run.conclusion || 'workflow failed');
+          return;
+        }
+        [1, 2, 3].forEach(i => setStep(i, 'done', ''));
+      }
+    } catch (_) {}
+  }
+
+  // Step 4: Poll market_data.json until generated_at changes (Pages deploy lag)
+  setStep(4, 'active', 'waiting for deploy…');
+  const oldGeneratedAt = DATA.generated_at;
+  for (let i = 0; i < 30; i++) {
+    await sleep(6000);
+    try {
+      const fresh = await fetch(`./market_data.json?t=${Date.now()}`).then(r => r.json());
+      if (fresh.generated_at !== oldGeneratedAt) {
+        DATA = fresh;
+        setStep(4, 'done', '');
+        document.getElementById('subtitle').textContent = `Last updated: ${DATA.generated_at}`;
+        renderOverview();
+        const sel = document.getElementById('query-select');
+        const prevId = sel.value || (DATA.queries[0] && DATA.queries[0].id);
+        sel.innerHTML = '';
+        DATA.queries.forEach(q => {
+          const opt = document.createElement('option');
+          opt.value = q.id; opt.textContent = q.name;
+          sel.appendChild(opt);
+        });
+        if (prevId) sel.value = prevId;
+        updateQuery(prevId || DATA.queries[0]?.id);
+        return;
+      }
+    } catch (_) {}
+  }
+  setStep(4, 'error', 'timed out — refresh the page manually');
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────

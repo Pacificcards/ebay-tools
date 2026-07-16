@@ -133,7 +133,13 @@ def run() -> None:
         print("[fetch_sold] No active queries found.")
         sys.exit(0)
 
-    print(f"[fetch_sold] {len(queries)} active queries loaded")
+    raw_filter = os.environ.get("FETCH_QUERY_IDS", "").strip()
+    if raw_filter:
+        allowed = {x.strip() for x in raw_filter.split(",") if x.strip()}
+        queries = [q for q in queries if q["id"] in allowed]
+        print(f"[fetch_sold] Filtered to {len(queries)} queries: {', '.join(q['id'] for q in queries)}")
+    else:
+        print(f"[fetch_sold] {len(queries)} active queries loaded")
 
     conn = get_connection()
     total_upserted = 0

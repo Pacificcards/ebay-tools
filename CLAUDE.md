@@ -28,18 +28,27 @@ Google Sheets-based P&L. Script: `pl/sync_to_sheets.py`. Runs daily via `pl-inge
 Sheet tabs: **Sales**, **Purchases**, **Ad Fees**, **P&L by Group**, **New Entries**
 
 #### Column schemas (current)
-- **Sales**: `order_date | title | gross_sale | net_payout | shipping_cost | order_id | ebay_order_id | group | source`
+- **Sales**: `order_date | title | gross_sale | net_payout | shipping_cost | order_id | ebay_order_id | listing_id | group | source`
   - `shipping_cost` (col E) = from `order_fees` SHIPPING_LABEL DEBIT, proportionally split for multi-line orders; blank if label was via Pirateship or not yet reported by eBay
   - `order_id` (col F) = full internal key (e.g. `22-14785-63636_10082049011622`) — used for group persistence
   - `ebay_order_id` (col G) = base order ID (e.g. `22-14785-63636`) — matches Ad Fees tab for cross-reference; blank for manual sales
-  - `group` (col H) = user-editable; resolved by header name in code, not hardcoded index
-  - `source` (col I) = "eBay" or "Manual"
+  - `listing_id` (col H) = eBay listing ID; blank for manual sales; used to trace listing→group relationship
+  - `group` (col I) = user-editable; resolved by header name in code, not hardcoded index
+  - `source` (col J) = "eBay" or "Manual"
 - **Purchases**: `purchase_date | description | vendor | total_cost | source | id | group`
-- **Ad Fees**: `date | fee_type | amount | order_id | listing_id | title | transaction_id | group`
+- **Ad Fees**: `date | fee_type | amount | order_id | listing_id | title | transaction_id | group | category`
   - `order_id` populated for SHIPPING_LABEL rows; blank for NON_SALE_CHARGE (ad spend has no order-level attribution)
   - `listing_id` + `title` populated for most rows; derived from `listing_metadata` or `orders_raw` via join
+  - `group` (col H) auto-populated from matching order (SHIPPING_LABEL) or matching listing (NON_SALE_CHARGE) via SQL COALESCE; user-editable and persisted to `order_fees.group_name`
+  - `category` (col I) auto-computed, not editable: NON_SALE_CHARGE→"Ad Fee", SHIPPING_LABEL/SHIPPING_MANUAL→"Shipping", else→"Other"
+- **P&L by Group**: `group | net_payout | costs | ad_fees | shipping_cost | profit`
+  - `net_payout` = SUMIF(Sales!D) per group
+  - `costs` = SUMIF(Purchases!D) per group
+  - `ad_fees` = BYROW+LAMBDA SUMIFS(Ad Fees!C, group, "Ad Fee") per group
+  - `shipping_cost` = BYROW+LAMBDA SUMIFS(Ad Fees!C, group, "Shipping") per group — includes both eBay SHIPPING_LABEL and manual SHIPPING_MANUAL rows
+  - `profit` = net_payout − costs − ad_fees − shipping_cost
 - **New Entries**: `date | description | type | amount | vendor | payment_method | group | status | record_id`
-  - `record_id` (col 9) — stamped on insert: `MANUAL-{hex}` for sales, numeric `import_queue.id` for purchases
+  - `record_id` (col 9) — stamped on insert: `MANUAL-{hex}` for sales, numeric `import_queue.id` for purchases, `SHIP-{hex}` for shipping
   - Deletion: set `status` to anything containing "mark" + "delet" (e.g. "Marked for Deletion") → hard DELETE from DB, stamp "Deleted {date}"
   - Scope: deletion only works on manual entries (record_id must be present); eBay-sourced rows cannot be deleted via this flow
 
@@ -54,12 +63,16 @@ Sheet tabs: **Sales**, **Purchases**, **Ad Fees**, **P&L by Group**, **New Entri
 - Credentials: `pl/credentials/service_account.json` (gitignored)
 - Service account: `ebay-tools-sheets@pcc-accounting.iam.gserviceaccount.com`
 
-#### Manual sales via New Entries tab
-- Set `type = sale` in the New Entries tab to route a row to the Sales tab (inserts into `orders_raw` with a `MANUAL-` prefixed order_id)
-- Set `type = purchase` or leave blank to route to the Purchases tab (existing behavior)
-- Any other value stamps `✗ Invalid type: '...'` in the status column and skips the row
-- Manual sales: `gross_sale` is blank, `net_payout` = entered amount (no eBay fees)
-- Group assigned in New Entries carries through to the Sales tab correctly
+#### Manual entries via New Entries tab
+| `type` value | Routes to | record_id format | Notes |
+|---|---|---|---|
+| `purchase` or blank | Purchases tab (`import_queue`) | numeric id | default |
+| `sale` | Sales tab (`orders_raw`) | `MANUAL-{hex16}` | gross_sale blank, net_payout = entered amount |
+| `shipping` | Ad Fees tab (`order_fees` as SHIPPING_MANUAL) | `SHIP-{hex16}` | appears with category="Shipping"; flows into P&L shipping_cost |
+| anything else | — | stamps `✗ Invalid type: '...'` | skipped |
+
+- Group assigned in New Entries carries through to the destination tab correctly
+- Required fields for `shipping` type: date, amount, group; description is optional; vendor/payment_method ignored
 
 #### Planned: Listing-level P&L hierarchy (NOT YET BUILT — 2026-06-23)
 Architecture decision: move group assignment from order/fee level to **listing level**.
@@ -142,6 +155,7 @@ Filters by title. Catches: `2x / x2`, `lot of N`, `2+ boxes`, `bundle`, `case of
 **Database tables:**
 - `market_snapshots` — daily aggregate per query: `(query_id, date)` UNIQUE; stores count, new_count, gone_count, price stats, msrp, presale_date, release_date, type, fetched_at
 - `market_snapshot_items` — per-listing lifespan: `(query_id, item_id)` UNIQUE; `first_seen`, `last_seen`, `end_time TIMESTAMPTZ NULL` (auction end from eBay), `url`
+- `market_sold_items` — sold comps from sold-comps.com: `(query_id, item_id)` UNIQUE; `sold_price`, `shipping_price`, `total_price`, `buying_format`, `condition`, `ended_at TIMESTAMPTZ` (PT-normalized), `url`, `bid_count`, `seller_username`, `seller_positive_pct`, `seller_feedback_score`, `fetched_at`; index on `(query_id, ended_at DESC)`
 
 **market_data.json keys:**
 - `generated_at`, `fetched_at` — date string and ISO timestamp of last pipeline run
@@ -152,26 +166,49 @@ Filters by title. Catches: `2x / x2`, `lot of N`, `2+ boxes`, `bundle`, `case of
 - `auction_listings` — `{title, price, url, end_time}` per query
 - `prices` — BIN price floats per query (histogram source)
 - `gone_items` — `{item_id, title, price, buying_format, first_seen, url}` per query
+- `sold_comps` — per query: `{sold_count, sold_median, sold_p25, sold_p75, sold_fetched_at}` from 30-day window of `market_sold_items`; empty dict `{}` if table not yet populated (generate_dashboard.py handles this gracefully)
+- `sold_trends` — per query: array of `{date, median, prices:[]}` for each day in last 30 days (daily sold median + all individual prices; used for time-series on price chart)
+- `sold_items` — per query: array of `{date, price, sold, shipping, title, condition, url}` sorted newest first (full per-listing detail for drilldown table)
 
 **Dashboard (GitHub Pages):**
 URL: `pacificcards.github.io/ebay-tools/market/`
 - Favicon: Pacific Cards Co. circle logo (`docs/market/favicon.png`)
-- Overview table: sortable by any column; columns: Product, Type, Listings, Median Price, vs Yesterday, New Today, New Median, Sold Yesterday, Sold Median
+- Overview table: sortable by 11 columns: Product, Type, Listings, Median Price, vs Yesterday, New Today, New Median, Sold Yesterday, Sold Median, Sold (30d), Comps Median
+- "Sold comps as of [date]" freshness note appears above Overview table when sold data is present
 - `<hr>` separator between Overview and Trend Analysis
-- Trend charts (supply + median price + MSRP dashed line, 90 days); query selector drives all below sections
+- Product names in Overview table are clickable — scrolls to Trend Analysis and selects that query
+- Overview table header sort arrows use nowrap to prevent arrow landing on its own line
+- Trend charts (supply + "Active vs. Sold Prices", 90 days); query selector drives all below sections
+- **Price chart** is a mixed Chart.js chart with 4 datasets:
+  - Green filled line: active listing median (BIN snapshots)
+  - Purple scatter dots: individual sold listings (from `sold_trends`)
+  - Dashed purple line: daily sold median (connects dots)
+  - Light purple bars on right/secondary y-axis (`y1`): daily sold unit count
+  - Amber dashed line: MSRP (when set)
 - Price Distribution — BIN Listings histogram ($5 fixed bins)
+- Sold Comps (collapsible, default collapsed) — per-listing sold detail table: Date, Title (eBay link), Condition, Sale, Shipping, Total; from `sold_items`
 - Sold Yesterday (collapsible, titles link to eBay listing)
 - Active BIN Listings (collapsible, sortable by title or price)
 - Active Auctions (collapsible, sortable by current bid or time remaining; default: ending soonest)
-Reads `docs/market/market_data.json` at page load (Chart.js 4.4.3, no backend).
+Reads `docs/market/market_data.json` at page load (~1.1MB; Chart.js 4.4.3, no backend).
 
 **Key files:**
 - `market_monitor/sheets.py` — `load_queries()`; reads CategoryID (not Category) and Type
 - `market_monitor/fetch_market.py` — main daily fetcher; `_LOT_RE` lot filter
-- `market_monitor/generate_dashboard.py` — writes `market_data.json`
+- `market_monitor/fetch_sold.py` — weekly sold comps fetcher; calls sold-comps.com `/v1/scrape`, applies `_LOT_RE` filter, upserts `market_sold_items`
+- `market_monitor/generate_dashboard.py` — writes `market_data.json`; sold_comps query wrapped in try/except (graceful if table missing)
 - `listener/ebay.py` — `search_all_listings()` (paginated, BIN+auction)
 - `docs/market/index.html` — static dashboard HTML
 - `docs/market/market_data.json` — regenerated daily by pipeline
+
+**Sold comps integration (sold-comps.com):**
+- API: `GET https://api.sold-comps.com/v1/scrape`, Bearer auth (`SOLD_COMPS_API_KEY` secret)
+- Keyword uses `q["query"]` (includes eBay `-exclusion` syntax which the API passes verbatim to eBay's engine — confirmed working)
+- `total_price` (sold + shipping) used for dashboard medians; `sold_price` and `shipping_price` also stored in DB for reference
+- `ended_at` stored as TIMESTAMPTZ, converted to PT in Python before insert
+- Budget: 16 queries × 4 runs/month = 64/month (limit: 100/month)
+- Workflow: `market-sold.yml` — Sundays 12:00 UTC (5am PT); also runs `generate_dashboard.py` and commits updated JSON
+- First run 2026-07-02: 1,748 sold listings upserted across 16 queries
 
 ### 5. Campaign Scheduler (`scheduler/`)
 Pauses/resumes eBay Promoted Listings campaigns on a schedule. Triggered by cron-job.org → `workflow_dispatch` on `campaign-scheduler.yml`.
@@ -216,7 +253,7 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 - `pl/credentials/` is gitignored — never commit
 
 ## GitHub Secrets (org: Pacificcards)
-`EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_REFRESH_TOKEN`, `SUPABASE_DB_URL`, `GOOGLE_SHEETS_CREDENTIALS`, `LISTENER_SHEET_ID`, `PL_SHEETS_DOC_ID`, `MARKET_MONITOR_SHEET_ID`, `DISCORD_WEBHOOK_URL`, `DISCORD_BOT_TOKEN`, `DISCORD_WATCHLIST_CHANNEL_ID`, `ANTHROPIC_API_KEY`, `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`
+`EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_REFRESH_TOKEN`, `SUPABASE_DB_URL`, `GOOGLE_SHEETS_CREDENTIALS`, `LISTENER_SHEET_ID`, `PL_SHEETS_DOC_ID`, `MARKET_MONITOR_SHEET_ID`, `DISCORD_WEBHOOK_URL`, `DISCORD_BOT_TOKEN`, `DISCORD_WATCHLIST_CHANNEL_ID`, `ANTHROPIC_API_KEY`, `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`, `SOLD_COMPS_API_KEY`
 
 ## Constraints
 - Do NOT fetch eBay developer docs from the web — user downloads PDFs and places in `/Users/eastcoastlimited/ClaudeCode/ebay_dev_docs/`
@@ -244,9 +281,9 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 - No open items — orders/qty bug fixed 2026-06-25 (see session log)
 
 ### Market Monitor (live and running)
-Fully operational. Pipeline runs daily at 11:00 UTC (4am PDT) via GHA schedule on `market-monitor.yml`. Dashboard at `pacificcards.github.io/ebay-tools/market/`. 12 active queries as of 2026-06-27.
+Fully operational. Daily pipeline runs at 11:00 UTC (4am PDT) via `market-monitor.yml`. Weekly sold comps run Sundays at 12:00 UTC (5am PT) via `market-sold.yml`. Dashboard at `pacificcards.github.io/ebay-tools/market/`. 17 active queries as of 2026-07-07.
 
-**No pending setup actions.** Auction `end_time` data populates from pipeline run 2026-06-28 onward (existing rows have NULL).
+**No pending setup actions.**
 
 ### Price Check (planned, not yet built)
 New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy-skipping-teapot.md`
@@ -270,6 +307,33 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - Whether to expose raw price range alongside the two recommendations
 
 ## Session Log
+
+### 2026-07-07 to 2026-07-15 — P&L restructure + Market Monitor sold comps visualization
+
+**P&L restructure (completed):**
+- Sales tab: added `listing_id` column between `ebay_order_id` and `group` — now 10 cols; `group` shifted from col H → col I
+- Ad Fees tab: added `category` column (col I, auto-computed, not editable): NON_SALE_CHARGE→"Ad Fee", SHIPPING_LABEL/SHIPPING_MANUAL→"Shipping", else→"Other"
+- Ad Fees group auto-assignment via SQL COALESCE: SHIPPING_LABEL rows use matching order via `order_id`; NON_SALE_CHARGE rows use matching order via `listing_id`; persisted to DB on next sync
+- P&L by Group restructured from 5→6 cols: `group | net_payout | costs | ad_fees | shipping_cost | profit`; SUMIFS for ad_fees/shipping_cost use BYROW+LAMBDA (ARRAYFORMULA+SUMIFS only produces one row on array criteria)
+- New Entries: added `type = shipping` → inserts into `order_fees` as SHIPPING_MANUAL (DEBIT); record_id stamped as `SHIP-{hex16}`; deletion via "mark"+"delet" status removes from `order_fees`
+- 30 tests passing
+
+**Market Monitor sold comps chart (completed):**
+- Price chart redesigned as mixed chart: green filled line (active median) + purple scatter dots (individual sales from `sold_trends`) + dashed purple line (daily sold median) + light purple bars on secondary right y-axis (daily sold count)
+- Chart title: "Median Price ($)" → "Active vs. Sold Prices ($)"
+- Drilldown: collapsible Sold Comps table (below Price Distribution); shows Date, Title (eBay link), Condition, Sale, Shipping, Total for each sold listing in last 30 days
+- Overview QOL: product names clickable → jumps to Trend Analysis with query selected; sort arrows no longer wrap to own line (last word + arrow in nowrap span)
+- `generate_dashboard.py`: added `sold_trends` (daily medians + price arrays) and `sold_items` (full per-listing detail) to market_data.json; total JSON size ~1.1MB
+- Design decision: used daily time-series (not flat 30-day reference line) because density check showed 1–20 sales/day per query — sufficient for a meaningful trend
+
+### 2026-07-02 — Sold comps integration (sold-comps.com → Market Monitor)
+- Built `market_monitor/fetch_sold.py` — weekly fetcher calling sold-comps.com `/v1/scrape`; uses `q["query"]` (eBay exclusion syntax passed verbatim by API); applies `_LOT_RE` client-side; upserts into `market_sold_items`
+- `market_monitor/generate_dashboard.py` — added 30-day sold comps query (total_price percentiles); wrapped in try/except so daily dashboard generation doesn't break if table is absent
+- `docs/market/index.html` — Overview table expanded to 11 columns: added "Sold (30d)" (true sold count) and "Comps Median" (median total_price); "sold comps as of [date]" freshness note
+- `.github/workflows/market-sold.yml` — new weekly workflow; runs fetch_sold then generate_dashboard then commits JSON
+- `market_sold_items` table created in Supabase; `SOLD_COMPS_API_KEY` secret added to Pacificcards org
+- First run 2026-07-02: 1,748 sold listings upserted; 0 listings for Topps Tier One (new/unreleased product, expected)
+- Bug fixes shipped in same session (from prior summary): UTC→PT date fix in `fetch_orders.py` and `send_daily_report.py`; `_parse_date()` graceful handling in `sheets.py`; `new_count` re-run immunity via `first_seen` in `generate_dashboard.py`; `batch_update` fix for P&L 429 rate limit
 
 ### 2026-06-27 (session 3) — Market Monitor dashboard + pipeline hardening
 - Dashboard: Pacific Cards Co. favicon added (`docs/market/favicon.png`)
