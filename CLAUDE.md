@@ -58,6 +58,7 @@ Sheet tabs: **Sales**, **Purchases**, **Ad Fees**, **P&L by Group**, **New Entri
 - Ad Fees `group` assignments flow into P&L by Group costs (alongside Purchases costs)
 - Purchases tab columns: `purchase_date | description | vendor | total_cost | source | id | group`
   - eBay purchases show vendor = "eBay"; manual entries show vendor from New Entries tab
+  - eBay-sourced purchases are fetched by `traffic_analytics/fetch_ebay_purchases.py` (`ebay-purchases.yml`, separate from `analytics-ingest.yml`) — runs **daily** at 10:00 UTC (3am PT), 14-day lookback window, deduped via `ON CONFLICT DO NOTHING` on `(ebay_item_id, transaction_id)`
 - New Entries amounts can include `$` sign — stripped automatically on sync
 - New Entries processing uses savepoints — one bad row won't abort the whole batch
 - Credentials: `pl/credentials/service_account.json` (gitignored)
@@ -309,6 +310,13 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - Whether to expose raw price range alongside the two recommendations
 
 ## Session Log
+
+### 2026-07-22 — eBay purchases import: weekly → daily
+- P&L: found root cause of "purchases not updating daily" complaint — `fetch_ebay_purchases.py` (populates `import_queue`, source of the Purchases tab) ran on its own separate `ebay-purchases.yml` workflow scheduled **weekly (Mondays only)**, not as part of the daily `analytics-ingest.yml` pipeline that Sales/Fees use. P&L sync itself is daily, but had nothing new to sync between Mondays.
+- P&L: changed `ebay-purchases.yml` cron from `0 10 * * 1` (Mondays) to `0 10 * * *` (daily), same 10:00 UTC / 3am PT slot as the analytics pipeline; workflow renamed "eBay purchase import (daily)"
+- P&L: 14-day lookback window in `fetch_ebay_purchases.py` left unchanged — safe for daily runs since inserts dedup via `ON CONFLICT DO NOTHING` on `(ebay_item_id, transaction_id)`
+- P&L: documented actual eBay-purchases fetch cadence in CLAUDE.md (previously undocumented / implied daily incorrectly)
+- P&L: triggered a manual `workflow_dispatch` run to backfill the missing 7/21 purchase immediately
 
 ### 2026-07-07 to 2026-07-15 — P&L restructure + Market Monitor sold comps visualization
 

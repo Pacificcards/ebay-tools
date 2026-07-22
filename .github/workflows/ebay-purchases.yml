@@ -1,8 +1,8 @@
-name: eBay purchase import (weekly)
+name: eBay purchase import (daily)
 
 on:
   schedule:
-    - cron: '0 10 * * 1'  # Mondays at 10am UTC
+    - cron: '0 10 * * *'  # Daily at 10am UTC (3am PT)
   workflow_dispatch:
 
 jobs:
