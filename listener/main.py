@@ -108,10 +108,10 @@ def run():
 
         if epid:
             listings = search_listings_by_epid(token, epid, min_price, max_price)
-            print(f"{description}: {len(listings)} listing(s) by EPID (${min_price}–${max_price}, US, BIN, last 12h)")
+            print(f"{description}: {len(listings)} listing(s) by EPID (${min_price}–${max_price}, US, BIN, ungraded, last 12h)")
         else:
             listings = search_listings_by_keyword(token, description, min_price, max_price)
-            print(f"{description}: {len(listings)} listing(s) by keyword (${min_price}–${max_price}, US, BIN, last 12h)")
+            print(f"{description}: {len(listings)} listing(s) by keyword (${min_price}–${max_price}, US, BIN, ungraded, last 12h)")
 
         for listing in listings:
             # Skip zero-feedback and 0% positive sellers
