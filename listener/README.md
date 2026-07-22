@@ -2,6 +2,8 @@
 
 Monitors eBay for underpriced sports cards and Pokémon cards against a manual price guide. Runs every 15 minutes via GitHub Actions (6am–10pm Pacific), writes qualifying finds to Google Sheets, and fires a Discord alert on each new discovery.
 
+**Raw cards only.** Every search excludes graded/slabbed listings (eBay's `Graded: No` item aspect filter) — the listener does not currently support watching for graded cards. This may be expanded to support graded cards as a distinct capability in the future, but for now every watchlist row is treated as a raw-card target.
+
 Uses the eBay Browse API with application-only auth — no user OAuth required.
 
 ---
@@ -24,7 +26,7 @@ Create a Google Sheet with two tabs:
 
 | Column | Example |
 |--------|---------|
-| Description | Luka Doncic 2018-19 Prizm Silver PSA 10 |
+| Description | Luka Doncic 2018-19 Prizm Silver (raw/ungraded) |
 | Category | sports |
 | Max Price ($) | 150 |
 | Min Price ($) | 50 (optional — listings below this are ignored) |
