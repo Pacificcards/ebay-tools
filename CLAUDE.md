@@ -111,6 +111,7 @@ Scans eBay every 15 minutes for underpriced cards on a watchlist. Fires Discord 
 `Active (Y/N)` | `Description` | `Category` | `Market Price` | `Max Price ($)` | `Min Price ($)` | `Hint URL(s)` | `EPID` | `EPID Status` | `Last Hit` (col J — MAXIFS formula reading Observed Listings tab)
 
 #### Key listener behavior
+- Search filters (both EPID and keyword paths, in `listener/ebay.py`): BIN only (`buyingOptions:{FIXED_PRICE}`), US location only (`itemLocationCountry:US`), listed in last 12h, plus a client-side title-regex filter (`_is_graded`) excluding graded/slabbed cards (PSA/BGS/CGC/SGC/etc., "graded", "slab(bed)", "gem mint")
 - Alert trigger is based on **Max Price**, not Market Price
 - % calculation uses Market Price when set, falls back to Max Price
 - Discord alert: 3-tier emoji 🟢 >5% below / 🟡 within ±5% / 🔴 >5% above market; only when Market Price is set

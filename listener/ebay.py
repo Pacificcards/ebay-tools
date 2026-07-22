@@ -8,6 +8,20 @@ TAXONOMY_BASE = "https://api.ebay.com/commerce/taxonomy/v1"
 TOKEN_URL = "https://api.ebay.com/identity/v1/oauth2/token"
 APP_SCOPE = "https://api.ebay.com/oauth/api_scope"
 
+# Matches graded/slabbed cards by title, so watchlist searches (raw cards only) can exclude them.
+_GRADED_RE = re.compile(
+    r'\b(PSA|BGS|CGC|SGC|CSG|HGA|ISA|GMA|KSA|TAG|GSG|RCG|BVG|BCCG)\b'
+    r'|\bbeckett\b'
+    r'|\bgraded\b'
+    r'|\bslab(bed)?\b'
+    r'|\bgem\s*m(in)?t\b',
+    re.IGNORECASE,
+)
+
+
+def _is_graded(title: str) -> bool:
+    return bool(_GRADED_RE.search(title))
+
 
 def get_app_token(client_id: str, client_secret: str) -> str:
     creds = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
@@ -96,7 +110,7 @@ def _parse_items(response_json: dict) -> list[dict]:
 
 
 def search_listings_by_epid(token: str, epid: str, min_price: float, max_price: float) -> list[dict]:
-    """Return recent BIN listings for an EPID within the price range, cheapest first."""
+    """Return recent BIN listings for an EPID within the price range, cheapest first. Excludes graded/slabbed cards."""
     resp = requests.get(
         f"{BROWSE_BASE}/item_summary/search",
         headers=_headers(token),
@@ -109,7 +123,7 @@ def search_listings_by_epid(token: str, epid: str, min_price: float, max_price: 
     )
     if resp.status_code != 200:
         return []
-    return _parse_items(resp.json())
+    return [item for item in _parse_items(resp.json()) if not _is_graded(item["title"])]
 
 
 def _paginate(token: str, params: dict, max_results: int = 2000) -> list[dict]:
@@ -177,7 +191,7 @@ def search_all_listings(
 
 
 def search_listings_by_keyword(token: str, query: str, min_price: float, max_price: float) -> list[dict]:
-    """Return recent BIN listings matching a keyword query within the price range, cheapest first."""
+    """Return recent BIN listings matching a keyword query within the price range, cheapest first. Excludes graded/slabbed cards."""
     resp = requests.get(
         f"{BROWSE_BASE}/item_summary/search",
         headers=_headers(token),
@@ -190,4 +204,4 @@ def search_listings_by_keyword(token: str, query: str, min_price: float, max_pri
     )
     if resp.status_code != 200:
         return []
-    return _parse_items(resp.json())
+    return [item for item in _parse_items(resp.json()) if not _is_graded(item["title"])]
