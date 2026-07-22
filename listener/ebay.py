@@ -8,19 +8,10 @@ TAXONOMY_BASE = "https://api.ebay.com/commerce/taxonomy/v1"
 TOKEN_URL = "https://api.ebay.com/identity/v1/oauth2/token"
 APP_SCOPE = "https://api.ebay.com/oauth/api_scope"
 
-# Matches graded/slabbed cards by title, so watchlist searches (raw cards only) can exclude them.
-_GRADED_RE = re.compile(
-    r'\b(PSA|BGS|CGC|SGC|CSG|HGA|ISA|GMA|KSA|TAG|GSG|RCG|BVG|BCCG)\b'
-    r'|\bbeckett\b'
-    r'|\bgraded\b'
-    r'|\bslab(bed)?\b'
-    r'|\bgem\s*m(in)?t\b',
-    re.IGNORECASE,
-)
-
-
-def _is_graded(title: str) -> bool:
-    return bool(_GRADED_RE.search(title))
+# Watchlist searches are raw-cards-only. eBay's "Graded" item aspect is scoped per
+# category, so every card is assumed to fall under one of these three trading-card
+# categories and each is searched separately with aspect_filter=Graded:{No}.
+_RAW_CARD_CATEGORY_IDS = ("183050", "183454", "261328")
 
 
 def get_app_token(client_id: str, client_secret: str) -> str:
@@ -109,21 +100,37 @@ def _parse_items(response_json: dict) -> list[dict]:
     return results
 
 
+def _search_raw_cards(token: str, extra_params: dict, min_price: float, max_price: float) -> list[dict]:
+    """Search across the raw-card category set, applying Graded:No per category. Merged, deduped, cheapest first."""
+    base_filter = _build_filter(min_price, max_price)
+    seen: set[str] = set()
+    results: list[dict] = []
+    for category_id in _RAW_CARD_CATEGORY_IDS:
+        resp = requests.get(
+            f"{BROWSE_BASE}/item_summary/search",
+            headers=_headers(token),
+            params={
+                **extra_params,
+                "category_ids": category_id,
+                "filter": base_filter,
+                "aspect_filter": f"categoryId:{category_id},Graded:{{No}}",
+                "limit": 50,
+                "sort": "price",
+            },
+        )
+        if resp.status_code != 200:
+            continue
+        for item in _parse_items(resp.json()):
+            if item["item_id"] not in seen:
+                seen.add(item["item_id"])
+                results.append(item)
+    results.sort(key=lambda item: item["price"])
+    return results
+
+
 def search_listings_by_epid(token: str, epid: str, min_price: float, max_price: float) -> list[dict]:
-    """Return recent BIN listings for an EPID within the price range, cheapest first. Excludes graded/slabbed cards."""
-    resp = requests.get(
-        f"{BROWSE_BASE}/item_summary/search",
-        headers=_headers(token),
-        params={
-            "epid": epid,
-            "filter": _build_filter(min_price, max_price),
-            "limit": 50,
-            "sort": "price",
-        },
-    )
-    if resp.status_code != 200:
-        return []
-    return [item for item in _parse_items(resp.json()) if not _is_graded(item["title"])]
+    """Return recent raw (ungraded) BIN listings for an EPID within the price range, cheapest first."""
+    return _search_raw_cards(token, {"epid": epid}, min_price, max_price)
 
 
 def _paginate(token: str, params: dict, max_results: int = 2000) -> list[dict]:
@@ -191,17 +198,5 @@ def search_all_listings(
 
 
 def search_listings_by_keyword(token: str, query: str, min_price: float, max_price: float) -> list[dict]:
-    """Return recent BIN listings matching a keyword query within the price range, cheapest first. Excludes graded/slabbed cards."""
-    resp = requests.get(
-        f"{BROWSE_BASE}/item_summary/search",
-        headers=_headers(token),
-        params={
-            "q": query,
-            "filter": _build_filter(min_price, max_price),
-            "limit": 50,
-            "sort": "price",
-        },
-    )
-    if resp.status_code != 200:
-        return []
-    return [item for item in _parse_items(resp.json()) if not _is_graded(item["title"])]
+    """Return recent raw (ungraded) BIN listings matching a keyword query within the price range, cheapest first."""
+    return _search_raw_cards(token, {"q": query}, min_price, max_price)

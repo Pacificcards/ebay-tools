@@ -111,7 +111,7 @@ Scans eBay every 15 minutes for underpriced cards on a watchlist. Fires Discord 
 `Active (Y/N)` | `Description` | `Category` | `Market Price` | `Max Price ($)` | `Min Price ($)` | `Hint URL(s)` | `EPID` | `EPID Status` | `Last Hit` (col J — MAXIFS formula reading Observed Listings tab)
 
 #### Key listener behavior
-- Search filters (both EPID and keyword paths, in `listener/ebay.py`): BIN only (`buyingOptions:{FIXED_PRICE}`), US location only (`itemLocationCountry:US`), listed in last 12h, plus a client-side title-regex filter (`_is_graded`) excluding graded/slabbed cards (PSA/BGS/CGC/SGC/etc., "graded", "slab(bed)", "gem mint")
+- **Raw cards only** — search filters (both EPID and keyword paths, via `_search_raw_cards()` in `listener/ebay.py`): BIN only (`buyingOptions:{FIXED_PRICE}`), US location only (`itemLocationCountry:US`), listed in last 12h, plus eBay's native `Graded: No` item-aspect filter. The `Graded` aspect is scoped per category, so each search runs separately against 3 assumed trading-card categories (`_RAW_CARD_CATEGORY_IDS = ("183050", "183454", "261328")`) with `aspect_filter=categoryId:<id>,Graded:{No}`, then results are merged/deduped by item_id. No support yet for watching graded cards — see Open TODOs.
 - Alert trigger is based on **Max Price**, not Market Price
 - % calculation uses Market Price when set, falls back to Max Price
 - Discord alert: 3-tier emoji 🟢 >5% below / 🟡 within ±5% / 🔴 >5% above market; only when Market Price is set
@@ -268,7 +268,8 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 ## Open TODOs
 
 ### Listener
-- No open items — fully operational as of 2026-06-15
+- Raw cards only — watchlist assumes every card is raw/ungraded (2026-07-22, see Session Log). Graded-card watching not yet supported.
+- The 3 hardcoded category IDs in `_RAW_CARD_CATEGORY_IDS` were supplied by the user, not verified live against eBay's API from this environment — confirm the `Graded` aspect actually resolves correctly for all 3 on the first live run.
 
 ### Campaign Scheduler
 - No open items — campaigns.json migration complete and tested 2026-06-15
