@@ -208,8 +208,11 @@ Reads `docs/market/market_data.json` at page load (~1.1MB; Chart.js 4.4.3, no ba
 - Keyword uses `q["query"]` (includes eBay `-exclusion` syntax which the API passes verbatim to eBay's engine — confirmed working)
 - `total_price` (sold + shipping) used for dashboard medians; `sold_price` and `shipping_price` also stored in DB for reference
 - `ended_at` stored as TIMESTAMPTZ, converted to PT in Python before insert
-- Budget: 16 queries × 4 runs/month = 64/month (limit: 100/month)
-- Workflow: `market-sold.yml` — Sundays 12:00 UTC (5am PT); also runs `generate_dashboard.py` and commits updated JSON
+- Budget: 16 queries × N on-demand runs/month (limit: 100/month); was weekly (4/mo); now on-demand
+- Workflow: `market-sold.yml` — **manual only** via "↻ Refresh Comps" button on dashboard (weekly cron removed 2026-07-15); accepts `query_ids` input (comma-separated, empty = all); also runs `generate_dashboard.py` and commits updated JSON
+- Concurrency group `market-data` on `market-sold.yml` prevents race with `market-monitor.yml` committing `market_data.json`
+- Dashboard refresh flow: PAT stored in browser `localStorage` (not source); fine-grained PAT required with **Actions: write** on `Pacificcards/ebay-tools` only (classic PAT needs full `repo` scope — too broad for a public page)
+- Dedup: `UNIQUE(query_id, item_id)` + `ON CONFLICT DO UPDATE` handles all dedup correctly; no watermark needed
 - First run 2026-07-02: 1,748 sold listings upserted across 16 queries
 
 ### 5. Campaign Scheduler (`scheduler/`)
@@ -284,7 +287,7 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 - No open items — orders/qty bug fixed 2026-06-25 (see session log)
 
 ### Market Monitor (live and running)
-Fully operational. Daily pipeline runs at 11:00 UTC (4am PDT) via `market-monitor.yml`. Weekly sold comps run Sundays at 12:00 UTC (5am PT) via `market-sold.yml`. Dashboard at `pacificcards.github.io/ebay-tools/market/`. 17 active queries as of 2026-07-07.
+Fully operational. Daily pipeline runs at 11:00 UTC (4am PDT) via `market-monitor.yml`. Sold comps now fetched **on-demand** via "↻ Refresh Comps" button on the dashboard (weekly cron deprecated). Dashboard at `pacificcards.github.io/ebay-tools/market/`. 17 active queries as of 2026-07-07.
 
 **No pending setup actions.**
 
@@ -317,6 +320,16 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - P&L: 14-day lookback window in `fetch_ebay_purchases.py` left unchanged — safe for daily runs since inserts dedup via `ON CONFLICT DO NOTHING` on `(ebay_item_id, transaction_id)`
 - P&L: documented actual eBay-purchases fetch cadence in CLAUDE.md (previously undocumented / implied daily incorrectly)
 - P&L: triggered a manual `workflow_dispatch` run to backfill the missing 7/21 purchase immediately
+
+### 2026-07-15 to 2026-07-17 — Market Monitor on-demand sold comps refresh
+
+**On-demand sold comps refresh (completed):**
+- Deprecated weekly Sunday cron in `market-sold.yml` (removed `schedule:` block entirely)
+- Added `workflow_dispatch.inputs.query_ids` (comma-separated query IDs, empty = all) and `concurrency: group: market-data`
+- `fetch_sold.py`: reads `FETCH_QUERY_IDS` env var; filters queries list when set
+- Dashboard: "↻ Refresh Comps" button in top-right header → modal with per-query checkboxes (All/None toggles), fine-grained PAT input (saved to `localStorage`), 5-step progress UI (Dispatch → Fetch → Update → Save → Refresh page); polls `market_data.json?t=<cachebust>` until `generated_at` changes, then auto-re-renders entire dashboard in place
+- Fine-grained PAT requires **Actions: write** on `Pacificcards/ebay-tools` only — do NOT use a classic PAT (requires full `repo` scope, too broad for a public GitHub Pages site)
+- Dedup already handled by `UNIQUE(query_id, item_id)` + `ON CONFLICT DO UPDATE`; no MAX(ended_at) watermark needed
 
 ### 2026-07-07 to 2026-07-15 — P&L restructure + Market Monitor sold comps visualization
 
