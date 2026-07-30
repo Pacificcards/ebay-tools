@@ -13,7 +13,8 @@ def compute() -> None:
             cur.execute("""
                 INSERT INTO listing_metrics_computed (
                     listing_id, date,
-                    ctr,
+                    ctr_ebay_search_page,
+                    ctr_calculated,
                     orders, quantity, revenue,
                     conversion_rate,
                     units_per_view, units_per_1k_impr
@@ -21,7 +22,10 @@ def compute() -> None:
                 SELECT
                     r.listing_id,
                     r.date,
-                    r.ctr,
+                    r.ctr_ebay_search_page,
+                    CASE WHEN r.impressions_total > 0
+                         THEN ROUND(COALESCE(r.views_total, 0)::NUMERIC / r.impressions_total, 4)
+                    END                                                             AS ctr_calculated,
                     COALESCE(o.orders, 0)                                          AS orders,
                     COALESCE(o.quantity, 0)                                        AS quantity,
                     COALESCE(o.revenue, 0)                                         AS revenue,
@@ -46,7 +50,8 @@ def compute() -> None:
                     GROUP BY listing_id, order_date
                 ) o USING (listing_id, date)
                 ON CONFLICT (listing_id, date) DO UPDATE SET
-                    ctr              = EXCLUDED.ctr,
+                    ctr_ebay_search_page = EXCLUDED.ctr_ebay_search_page,
+                    ctr_calculated   = EXCLUDED.ctr_calculated,
                     orders           = EXCLUDED.orders,
                     quantity         = EXCLUDED.quantity,
                     revenue          = EXCLUDED.revenue,

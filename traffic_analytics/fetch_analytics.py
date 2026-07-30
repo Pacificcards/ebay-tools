@@ -178,7 +178,7 @@ def _parse(data: dict, as_of_date: date) -> list[dict]:
         rows.append({
             "listing_id": listing_id,
             "date": as_of_date.isoformat(),
-            "ctr":                _float(m.get("CLICK_THROUGH_RATE")),
+            "ctr_ebay_search_page": _float(m.get("CLICK_THROUGH_RATE")),
             "impressions_total":  _int(m.get("LISTING_IMPRESSION_TOTAL")),
             "impressions_search": _int(m.get("LISTING_IMPRESSION_SEARCH_RESULTS_PAGE")),
             "impressions_store":  _int(m.get("LISTING_IMPRESSION_STORE")),
@@ -232,21 +232,21 @@ def _upsert(rows: list[dict]) -> None:
                     """
                     INSERT INTO listing_metrics_raw (
                         listing_id, date,
-                        ctr,
+                        ctr_ebay_search_page,
                         impressions_total, impressions_search, impressions_store,
                         views_total, views_search, views_store,
                         views_direct, views_off_ebay, views_other_ebay,
                         orders
                     ) VALUES (
                         %(listing_id)s, %(date)s,
-                        %(ctr)s,
+                        %(ctr_ebay_search_page)s,
                         %(impressions_total)s, %(impressions_search)s, %(impressions_store)s,
                         %(views_total)s, %(views_search)s, %(views_store)s,
                         %(views_direct)s, %(views_off_ebay)s, %(views_other_ebay)s,
                         %(orders)s
                     )
                     ON CONFLICT (listing_id, date) DO UPDATE SET
-                        ctr               = EXCLUDED.ctr,
+                        ctr_ebay_search_page = EXCLUDED.ctr_ebay_search_page,
                         impressions_total  = EXCLUDED.impressions_total,
                         impressions_search = EXCLUDED.impressions_search,
                         impressions_store  = EXCLUDED.impressions_store,
