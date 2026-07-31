@@ -320,8 +320,8 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 - Legacy scheduler repo at `/Users/eastcoastlimited/ClaudeCode/ebay_campaign_scheduler` — do not touch unless asked
 - cron-job.org API key is in `.claude/settings.local.json` (not in repo)
 - **Supabase schema changes must be pushed atomically with code:** the daily GHA jobs run whatever is on `main`, not local state. A local-only DB migration (e.g. a column rename) will crash the live job the next time it runs until the matching code is pushed. Always commit+push schema-dependent code changes in the same sitting as the migration, staging only the affected files by name (never `git add -A`, since this repo commonly has unrelated WIP sitting uncommitted).
-- **`listing_metrics_raw` / `listing_metrics_computed` CTR columns:** `ctr_ebay_search_page` (renamed from `ctr` 2026-07-29) is eBay's own `CLICK_THROUGH_RATE` metric — search-results-page views ÷ search-results-page impressions only. `ctr_calculated` (new column) is `views_total / impressions_total` — broader, all-sources CTR. They will not match; this is expected, not a bug.
-- **eBay impressions metric trap:** `LISTING_IMPRESSION_TOTAL` (what `fetch_analytics.py` stores as `impressions_total`) is search-results-page + store impressions ONLY, and per eBay's own docs "may or may not match the Seller Hub performance/traffic page." The metric that actually matches Seller Hub is `TOTAL_IMPRESSION_TOTAL` — confirmed empirically 2026-07-29 to run 4-9x higher (extra volume is from promoted placements / other pages, not currently broken out). Not yet added to the pipeline/DB — see Traffic Analytics TODOs.
+- **`listing_metrics_raw` / `listing_metrics_computed` CTR columns:** `ctr_ebay_search_page` (renamed from `ctr` 2026-07-29) is eBay's own `CLICK_THROUGH_RATE` metric — search-results-page views ÷ search-results-page impressions only. `ctr_calculated` (new column) is `views_total / impressions_search_and_store` — broader, all-sources-except-promoted CTR. They will not match; this is expected, not a bug.
+- **`listing_metrics_raw` impressions columns (renamed 2026-07-31 to stop two different columns both being called "total"):** `impressions_search_and_store` (was `impressions_total`) = eBay's `LISTING_IMPRESSION_TOTAL` = search-results-page + store impressions ONLY, despite the misleading eBay metric name. `impressions_all_sources` (new) = eBay's `TOTAL_IMPRESSION_TOTAL` = every placement (search, store, promoted, off-eBay, etc.) — this is the one that matches the Seller Hub traffic page, confirmed empirically 2026-07-29 to run 4-9x higher than `impressions_search_and_store`. Both are now fetched and stored side by side; `ctr_calculated`/`units_per_1k_impr`/the daily email all still key off `impressions_search_and_store` (unchanged behavior) — nothing downstream has been switched to the broader number yet, that's still an open decision (see Traffic Analytics TODOs).
 - **eBay Analytics API (`traffic_report`) rate limit:** hit a persistent 429 after heavy ad-hoc diagnostic pulls (paginated, uncached listing_ids-less calls) on 2026-07-29; did not clear after a 45-min cooldown, only cleared the next day — behaves like a daily quota, not a short burst throttle. When pulling ad-hoc data for a small number of listings, always use the `listing_ids:{id1|id2}` filter (single lightweight call, no pagination) rather than unfiltered `dimension=LISTING` calls that paginate through the full catalog.
 
 ## Open TODOs
@@ -339,8 +339,9 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 3. **Delete workflow** — fully operational as of 2026-06-27: record_id stamped on New Entries insert, backfill complete, fuzzy "mark"+"delet" trigger wired up, tested with Yamamoto Grading (id 337 hard-deleted, purchase count 303 → 302)
 
 ### Traffic Analytics
-1. **Add `TOTAL_IMPRESSION_TOTAL` metric to the pipeline** — this is the eBay metric that actually matches the Seller Hub traffic page (see Constraints section); currently only the narrower `LISTING_IMPRESSION_TOTAL` is fetched/stored. User wants to revisit this and decide how to use the two impressions categories together (not yet decided — hold off on implementing without a decision on naming/columns).
-2. Pipeline outage 2026-07-29→30 (unpushed `ctr` column rename crashed the daily job) is resolved and pushed — no action needed, documented in Constraints/Session Log as a process gotcha to avoid repeating.
+1. **`TOTAL_IMPRESSION_TOTAL` now fetched and stored (2026-07-31)** as `impressions_all_sources`, alongside the renamed `impressions_search_and_store` (was `impressions_total`). Still undecided/not yet implemented: whether `ctr_calculated`, `units_per_1k_impr`, or the daily email should switch to using the broader `impressions_all_sources` number instead of (or alongside) `impressions_search_and_store`. Hold off on that until the user decides — this item only covers fetching + naming.
+2. **Requires a one-time Supabase migration before this lands on `main`** — see the ALTER TABLE statements in the 2026-07-31 Session Log entry. `fetch_analytics.py`/`compute_metrics.py` on this branch write to the new/renamed columns; the live DB must have them before the daily pipeline (or any push-triggered `analytics-ingest.yml` run) touches `listing_metrics_raw`/`listing_metrics_computed`, or it will crash like the 2026-07-29→30 outage.
+3. Pipeline outage 2026-07-29→30 (unpushed `ctr` column rename crashed the daily job) is resolved and pushed — no action needed, documented in Constraints/Session Log as a process gotcha to avoid repeating.
 
 ### Market Monitor (live and running)
 Fully operational. Daily pipeline runs at 11:00 UTC (4am PDT) via `market-monitor.yml`. Sold comps now fetched **on-demand** via "↻ Refresh Comps" button on the dashboard (weekly cron deprecated). Dashboard at `pacificcards.github.io/ebay-tools/market/`. 17 active queries as of 2026-07-07.
@@ -375,6 +376,21 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - Whether to expose raw price range alongside the two recommendations
 
 ## Session Log
+
+### 2026-07-31 — Fetch `TOTAL_IMPRESSION_TOTAL`, rename the two "total impressions" columns
+- Traffic Analytics: added `TOTAL_IMPRESSION_TOTAL` to the metrics pulled in `fetch_analytics.py` — this is the eBay metric confirmed 2026-07-29 to match the Seller Hub traffic page (4-9x higher than what was previously stored)
+- Traffic Analytics: renamed `listing_metrics_raw.impressions_total` → `impressions_search_and_store` (still eBay's `LISTING_IMPRESSION_TOTAL` — search-results-page + store only; renamed because calling it "total" next to the new, actually-comprehensive column was confusing)
+- Traffic Analytics: added `listing_metrics_raw.impressions_all_sources` (eBay's `TOTAL_IMPRESSION_TOTAL` — every placement, matches Seller Hub)
+- Traffic Analytics: updated `compute_metrics.py` (`ctr_calculated`, `units_per_1k_impr`) and `send_daily_report.py` to reference `impressions_search_and_store` — same underlying numbers as before, rename only; nothing was switched to use `impressions_all_sources` yet, that's a separate open decision (see TODOs)
+- Traffic Analytics: updated `dashboard/app.py` (legacy/unused) and `db/schema.sql` to match, same as the prior CTR rename's precedent
+- **Migration required before this branch's code touches the live DB** (not yet run — no DB write access from the dev session this was written in):
+  ```sql
+  ALTER TABLE listing_metrics_raw RENAME COLUMN impressions_total TO impressions_search_and_store;
+  ALTER TABLE listing_metrics_raw ADD COLUMN impressions_all_sources INTEGER;
+  COMMENT ON COLUMN listing_metrics_raw.impressions_search_and_store IS 'eBay LISTING_IMPRESSION_TOTAL: search-results-page + store impressions ONLY, despite the misleading eBay metric name';
+  COMMENT ON COLUMN listing_metrics_raw.impressions_all_sources IS 'eBay TOTAL_IMPRESSION_TOTAL: all placements (search, store, promoted, off-eBay, etc.) — matches Seller Hub traffic page';
+  ```
+  Run this against Supabase (SQL editor or psql) before merging to `main` / before this branch's push-triggered `analytics-ingest.yml` run touches `listing_metrics_raw` — otherwise it's the same `UndefinedColumn` crash class as the 2026-07-29→30 outage.
 
 ### 2026-07-29 to 2026-07-30 — CTR/impressions investigation, pipeline outage, and recovery
 - Traffic Analytics: user working through an external assignment needing Impressions/Clicks/CTR for 3 specific listings (287468232189, 287482256093, 287461336640) — not part of `report_listings.json`, ad-hoc pulls only

@@ -77,7 +77,7 @@ def load_metrics(listing_id: str, start: date, end: date) -> pd.DataFrame:
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT date, impressions_total, views_total, ctr_ebay_search_page, orders
+                SELECT date, impressions_search_and_store, views_total, ctr_ebay_search_page, orders
                 FROM listing_metrics_raw
                 WHERE listing_id = %s AND date BETWEEN %s AND %s
                 ORDER BY date
@@ -85,7 +85,7 @@ def load_metrics(listing_id: str, start: date, end: date) -> pd.DataFrame:
             rows = cur.fetchall()
     finally:
         conn.close()
-    df = pd.DataFrame(rows, columns=["date", "impressions_total", "views_total", "ctr_ebay_search_page", "orders"])
+    df = pd.DataFrame(rows, columns=["date", "impressions_search_and_store", "views_total", "ctr_ebay_search_page", "orders"])
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
     return df
@@ -103,20 +103,20 @@ def load_all_metrics_for_date(target_date: date) -> pd.DataFrame:
                     lm.title,
                     lm.current_price,
                     lm.status,
-                    m.impressions_total,
+                    m.impressions_search_and_store,
                     m.views_total,
                     m.orders
                 FROM listing_metrics_raw m
                 JOIN listing_metadata lm USING (listing_id)
                 WHERE m.date = %s
-                ORDER BY m.impressions_total DESC NULLS LAST
+                ORDER BY m.impressions_search_and_store DESC NULLS LAST
             """, (target_date,))
             rows = cur.fetchall()
     finally:
         conn.close()
     return pd.DataFrame(rows, columns=[
         "listing_id", "title", "current_price", "status",
-        "impressions_total", "views_total", "orders",
+        "impressions_search_and_store", "views_total", "orders",
     ])
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -126,11 +126,11 @@ def add_derived(df: pd.DataFrame) -> pd.DataFrame:
         return df
     df = df.copy()
     df["view_rate"] = df.apply(
-        lambda r: min(r["views_total"] / r["impressions_total"], 1.0)
-        if r["impressions_total"] and r["impressions_total"] > 0 else None, axis=1
+        lambda r: min(r["views_total"] / r["impressions_search_and_store"], 1.0)
+        if r["impressions_search_and_store"] and r["impressions_search_and_store"] > 0 else None, axis=1
     )
     df["impressions_per_order"] = df.apply(
-        lambda r: r["impressions_total"] / r["orders"]
+        lambda r: r["impressions_search_and_store"] / r["orders"]
         if r["orders"] and r["orders"] > 0 else None, axis=1
     )
     df["views_per_order"] = df.apply(
@@ -157,14 +157,14 @@ def make_impressions_views_ctr_chart(current_df: pd.DataFrame, prior_df: pd.Data
 
     if not current_df.empty:
         fig.add_trace(go.Bar(
-            x=current_df["date"], y=current_df["impressions_total"],
+            x=current_df["date"], y=current_df["impressions_search_and_store"],
             name="Impressions", yaxis="y1",
             marker_color="#3d3799",
             hovertemplate="%{x}: %{y:,}<extra>Impressions</extra>",
         ))
     if not prior_df.empty:
         fig.add_trace(go.Bar(
-            x=prior_df["date"], y=prior_df["impressions_total"],
+            x=prior_df["date"], y=prior_df["impressions_search_and_store"],
             name="Impressions (prior week)", yaxis="y1",
             marker_color="#27205e", opacity=0.6,
             hovertemplate="%{x}: %{y:,}<extra>Impressions (prior week)</extra>",
@@ -295,11 +295,11 @@ with tab_mc:
         st.info("No data for yesterday yet — check back after the pipeline runs.")
     else:
         # ── Aggregate KPIs ────────────────────────────────────────────────────
-        tot_impr   = int(today_df["impressions_total"].sum())
+        tot_impr   = int(today_df["impressions_search_and_store"].sum())
         tot_views  = int(today_df["views_total"].sum())
         tot_orders = int(today_df["orders"].sum())
 
-        pri_impr   = int(prior_df_mc["impressions_total"].sum()) if not prior_df_mc.empty else None
+        pri_impr   = int(prior_df_mc["impressions_search_and_store"].sum()) if not prior_df_mc.empty else None
         pri_views  = int(prior_df_mc["views_total"].sum())       if not prior_df_mc.empty else None
         pri_orders = int(prior_df_mc["orders"].sum())            if not prior_df_mc.empty else None
 
@@ -321,11 +321,11 @@ with tab_mc:
         merged = today_df.copy()
         if not prior_df_mc.empty:
             merged = merged.merge(
-                prior_df_mc[["listing_id", "impressions_total", "views_total", "orders"]],
+                prior_df_mc[["listing_id", "impressions_search_and_store", "views_total", "orders"]],
                 on="listing_id", how="left", suffixes=("", "_prior")
             )
         else:
-            merged["impressions_total_prior"] = None
+            merged["impressions_search_and_store_prior"] = None
             merged["views_total_prior"]       = None
             merged["orders_prior"]            = None
 
@@ -337,11 +337,11 @@ with tab_mc:
                 pass
             return None
 
-        merged["impr_cmp"]  = merged.apply(lambda r: cmp_pct(r["impressions_total"], r.get("impressions_total_prior")), axis=1)
+        merged["impr_cmp"]  = merged.apply(lambda r: cmp_pct(r["impressions_search_and_store"], r.get("impressions_search_and_store_prior")), axis=1)
         merged["views_cmp"] = merged.apply(lambda r: cmp_pct(r["views_total"],       r.get("views_total_prior")),       axis=1)
         merged["ctr"]       = merged.apply(
-            lambda r: r["views_total"] / r["impressions_total"]
-            if r["impressions_total"] and r["impressions_total"] > 0 else None, axis=1
+            lambda r: r["views_total"] / r["impressions_search_and_store"]
+            if r["impressions_search_and_store"] and r["impressions_search_and_store"] > 0 else None, axis=1
         )
 
         def flag(row):
@@ -358,7 +358,7 @@ with tab_mc:
 
         # ── Display table ─────────────────────────────────────────────────────
         display = merged[[
-            "title", "impressions_total", "impr_cmp",
+            "title", "impressions_search_and_store", "impr_cmp",
             "views_total", "views_cmp", "ctr", "orders", "flags"
         ]].copy()
 
@@ -469,7 +469,7 @@ with tab_dive:
         st.caption("No data for yesterday yet.")
 
     c1, c2, c3, c4 = st.columns(4)
-    with c1: kpi("Impressions", "impressions_total")
+    with c1: kpi("Impressions", "impressions_search_and_store")
     with c2: kpi("Views",       "views_total")
     with c3: kpi("CTR",         "view_rate", pct=True)
     with c4: kpi("Orders",      "orders")

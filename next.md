@@ -26,7 +26,7 @@
 12. **User setup** — create "Price Check" tab in Listener sheet with headers: Description | Hint URL | EPID | Clearing Price | Holding Price | # Listings | Last Checked.
 
 ## Traffic Analytics
-13. **Decide how to use `TOTAL_IMPRESSION_TOTAL` alongside `LISTING_IMPRESSION_TOTAL`** — confirmed this is the metric that matches Seller Hub (4-9x higher than what we store). User explicitly wants to revisit and decide the approach (new column? replace existing? both fetched and labeled?) rather than have it implemented ad-hoc. Do this before adding any more ad-hoc impressions pulls for the user's assignment.
+13. **Decide whether `ctr_calculated`/`units_per_1k_impr`/the daily email should use `impressions_all_sources`** (eBay `TOTAL_IMPRESSION_TOTAL`, matches Seller Hub) instead of, or alongside, `impressions_search_and_store` (the narrower, previously-only-stored number). Both columns are now fetched and stored (2026-07-31) but all derived metrics still key off the narrower one — no behavior changed yet, this is purely the "how do we use it" decision still pending.
 14. **Revenue metric in daily email** — `orders_raw.sale_price` is available; add a Revenue row to the report. (suggested)
 15. **Weekly summary email** — Monday morning email aggregating the full prior week per listing. (suggested)
 

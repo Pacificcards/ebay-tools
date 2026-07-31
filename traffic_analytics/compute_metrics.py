@@ -23,8 +23,8 @@ def compute() -> None:
                     r.listing_id,
                     r.date,
                     r.ctr_ebay_search_page,
-                    CASE WHEN r.impressions_total > 0
-                         THEN ROUND(COALESCE(r.views_total, 0)::NUMERIC / r.impressions_total, 4)
+                    CASE WHEN r.impressions_search_and_store > 0
+                         THEN ROUND(COALESCE(r.views_total, 0)::NUMERIC / r.impressions_search_and_store, 4)
                     END                                                             AS ctr_calculated,
                     COALESCE(o.orders, 0)                                          AS orders,
                     COALESCE(o.quantity, 0)                                        AS quantity,
@@ -35,8 +35,8 @@ def compute() -> None:
                     CASE WHEN r.views_total > 0
                          THEN ROUND(COALESCE(o.quantity, 0)::NUMERIC / r.views_total, 6)
                     END                                                             AS units_per_view,
-                    CASE WHEN r.impressions_total > 0
-                         THEN ROUND(COALESCE(o.quantity, 0)::NUMERIC / r.impressions_total * 1000, 4)
+                    CASE WHEN r.impressions_search_and_store > 0
+                         THEN ROUND(COALESCE(o.quantity, 0)::NUMERIC / r.impressions_search_and_store * 1000, 4)
                     END                                                             AS units_per_1k_impr
                 FROM listing_metrics_raw r
                 LEFT JOIN (
