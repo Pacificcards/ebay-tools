@@ -36,7 +36,7 @@ def fetch_data(conn, listing_id: str, dates: tuple) -> dict:
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT date, impressions_search_and_store, views_total
+        SELECT date, impressions_all_sources, views_total
         FROM listing_metrics_raw
         WHERE listing_id = %s AND date IN %s
     """, (listing_id, dates))

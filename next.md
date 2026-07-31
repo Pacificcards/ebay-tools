@@ -26,9 +26,10 @@
 12. **User setup** — create "Price Check" tab in Listener sheet with headers: Description | Hint URL | EPID | Clearing Price | Holding Price | # Listings | Last Checked.
 
 ## Traffic Analytics
-13. **Decide whether `ctr_calculated`/`units_per_1k_impr`/the daily email should use `impressions_all_sources`** (eBay `TOTAL_IMPRESSION_TOTAL`, matches Seller Hub) instead of, or alongside, `impressions_search_and_store` (the narrower, previously-only-stored number). Both columns are now fetched and stored (2026-07-31) but all derived metrics still key off the narrower one — no behavior changed yet, this is purely the "how do we use it" decision still pending.
-14. **Revenue metric in daily email** — `orders_raw.sale_price` is available; add a Revenue row to the report. (suggested)
-15. **Weekly summary email** — Monday morning email aggregating the full prior week per listing. (suggested)
+13. **Backfill `impressions_all_sources` for the recent window (~last 10 days)** — it has no data before 2026-07-31, so the email's CTR/Ord-1k DoD/WoW comparisons will show blank until the window ages past that date or this is force-backfilled. `fetch_analytics.py`'s catch-up logic won't do this automatically since it only fetches genuinely missing dates, not missing columns on existing rows. (suggested)
+14. **Verify `views_total` is actually comprehensive** — same `LISTING_*_TOTAL` naming pattern that undersold impressions; not yet checked against Seller Hub or against the sum of the 5 source-breakdown columns. See CLAUDE.md Traffic Analytics TODOs.
+15. **Revenue metric in daily email** — `orders_raw.sale_price` is available; add a Revenue row to the report. (suggested)
+16. **Weekly summary email** — Monday morning email aggregating the full prior week per listing. (suggested)
 
 ## Infra
 16. **Fix `compute-metrics.yml`** — references `python -m analytics.compute_metrics` (wrong module path; should be `traffic_analytics.compute_metrics`). Workflow is also redundant since `analytics-ingest.yml` already runs this step. Either fix the path or delete the workflow. (suggested)
