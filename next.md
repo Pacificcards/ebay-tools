@@ -1,5 +1,10 @@
 # Next Steps
 
+## Listings Publisher
+1. **Sport-to-League mapping coverage** — only Baseball/Football/Basketball mapped; extend `_SPORT_TO_LEAGUE` in `listings-publisher/publish.py` when adding other sports. (suggested)
+2. **Bulk retry error rows** — consider a `--retry-errors` flag that clears Status for all error rows automatically. (suggested)
+3. **Mobile edit limitation** — Inventory API listings can't be edited via eBay mobile app. Reprice via sheet is the current workaround. Trading API migration (`AddFixedPriceItem`) would fully resolve this but was deferred.
+
 ## Market Monitor
 1. **Presale Date / Release Date annotations on trend charts** — both fields are in the sheet, DB, and JSON (`q.presale_date`, `q.release_date`). Wire as vertical dashed-line annotations on the price chart labeled "Presale" / "Release". (suggested)
 2. **Overview table: filter/group by Type** — with 17 queries, a Type filter dropdown above the table would let the user focus on one sport/property. (suggested)
@@ -21,8 +26,9 @@
 12. **User setup** — create "Price Check" tab in Listener sheet with headers: Description | Hint URL | EPID | Clearing Price | Holding Price | # Listings | Last Checked.
 
 ## Traffic Analytics
-13. **Revenue metric in daily email** — `orders_raw.sale_price` is available; add a Revenue row to the report. (suggested)
-14. **Weekly summary email** — Monday morning email aggregating the full prior week per listing. (suggested)
+13. **Decide how to use `TOTAL_IMPRESSION_TOTAL` alongside `LISTING_IMPRESSION_TOTAL`** — confirmed this is the metric that matches Seller Hub (4-9x higher than what we store). User explicitly wants to revisit and decide the approach (new column? replace existing? both fetched and labeled?) rather than have it implemented ad-hoc. Do this before adding any more ad-hoc impressions pulls for the user's assignment.
+14. **Revenue metric in daily email** — `orders_raw.sale_price` is available; add a Revenue row to the report. (suggested)
+15. **Weekly summary email** — Monday morning email aggregating the full prior week per listing. (suggested)
 
 ## Infra
-15. **Fix `compute-metrics.yml`** — references `python -m analytics.compute_metrics` (wrong module path; should be `traffic_analytics.compute_metrics`). Workflow is also redundant since `analytics-ingest.yml` already runs this step. Either fix the path or delete the workflow. (suggested)
+16. **Fix `compute-metrics.yml`** — references `python -m analytics.compute_metrics` (wrong module path; should be `traffic_analytics.compute_metrics`). Workflow is also redundant since `analytics-ingest.yml` already runs this step. Either fix the path or delete the workflow. (suggested)

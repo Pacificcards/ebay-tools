@@ -1,0 +1,212 @@
+EBAY LISTING PUBLISHERS — TECHNICAL SUMMARY
+============================================
+
+OVERVIEW
+--------
+Two CLI tools that publish trading card listings to eBay from a Google Sheet + local
+photo folder. One handles sports cards (ungraded singles), the other handles Pokemon/TCG
+cards. Both share the same core eBay API code.
+
+  - Sports publisher: listings-publisher/publish.py
+  - Pokemon publisher: pokemon-publisher/publish.py
+  - Unified entry point: publish.py (repo root) — asks card type and photo folder path
+
+
+REPOSITORY STRUCTURE
+--------------------
+ebay-tools/
+  publish.py                          # Unified entry point (asks sports/tcg, photo path)
+  listings-publisher/
+    publish.py                        # Sports card publisher (main logic)
+    ebay_api.py                       # Shared eBay API layer (used by both publishers)
+    sheets.py                         # Google Sheets read/write (sports)
+    images.py                         # EXIF sort + eBay Media API upload (shared)
+    listings_template.csv             # 25-column sheet template
+    setup_location.py                 # One-time script to register merchant location
+  pokemon-publisher/
+    publish.py                        # Pokemon/TCG publisher (main logic)
+    sheets.py                         # Google Sheets read/write (Pokemon)
+    pokemon_template.csv              # 23-column sheet template
+  shared/
+    ebay_auth.py                      # OAuth token refresh (used by ebay_api.py)
+  .env                                # Credentials and config (gitignored)
+
+
+HOW IT WORKS — USER FLOW
+-------------------------
+1. User fills in a Google Sheet with card details (one row per listing).
+2. User photographs cards in order (shoot order = row order in sheet).
+3. User runs: python publish.py
+4. Script asks: "Card type [sports/tcg]:" and "Photo folder path:"
+5. Script asks: "How many photos per listing for this batch?"
+6. Script reads pending rows from Google Sheet (rows with a card identifier but no
+   Listing ID), scans the photo folder, and matches photos to rows by EXIF timestamp
+   order.
+7. Script shows a preview of all listings (title, price, condition, photos assigned).
+8. User confirms with "y" to proceed.
+9. For each listing, the script:
+     a. Uploads photos to eBay Media API
+     b. Creates/updates an eBay inventory item
+     c. Creates/updates an eBay offer
+     d. Checks for unexpected seller fees (with confirmation prompt if found)
+     e. Publishes the listing
+     f. Writes the eBay Listing ID and "published" status back to the sheet
+10. Errors are written to the sheet's Status column so the user can fix and retry.
+
+
+EBAY API APPROACH — INVENTORY API
+----------------------------------
+Both publishers use eBay's Inventory API (sell/inventory/v1). This is a 3-step flow:
+
+Step 1: PUT /sell/inventory/v1/inventory_item/{sku}
+  - Creates or replaces an "inventory item" record tied to a SKU.
+  - Contains: title, description, photos (imageUrls), product aspects, condition,
+    conditionDescriptors, availability (quantity + merchant location).
+  - Idempotent — safe to re-run; overwrites the previous inventory item for that SKU.
+
+Step 2: POST /sell/inventory/v1/offer
+  - Creates an "offer" linking the inventory item to a marketplace.
+  - Contains: price, category, quantity, fulfillment/payment/return policy IDs,
+    merchant location key, best offer settings.
+  - If an offer already exists for the SKU (error 25002), the script fetches the
+    existing offer ID and updates it via PUT /sell/inventory/v1/offer/{offerId}.
+
+Step 3: POST /sell/inventory/v1/offer/{offerId}/publish
+  - Publishes the offer as a live eBay listing.
+  - Returns a listingId.
+
+Fee check (between steps 2 and 3):
+  - POST /sell/inventory/v1/offer/get_listing_fees
+  - ListingFee and InsertionFee are ignored (store subscription covers them — confirmed
+    via finance transaction history). Any other non-zero fee triggers a confirmation
+    prompt before publishing.
+
+KNOWN ISSUE: Listings created via the Inventory API are in "inventory managed" state.
+This means the source of truth is the API-side inventory item, not the listing itself.
+Some eBay interfaces (including the mobile app) cannot edit inventory-managed listings.
+The alternative is the older Trading API (AddFixedPriceItem) which creates "plain"
+listings editable from any eBay interface, but that API is deprecated.
+
+Photo upload: POST https://apim.ebay.com/commerce/media/v1_beta/image/create_image_from_file
+  - Multipart upload, returns an i.ebayimg.com URL used in the inventory item.
+
+Auth token: EBAY_REFRESH_TOKEN_WRITE — scope: sell.inventory only.
+  Does NOT cover sell.account (cannot fetch fulfillment policies or selling limits via API).
+
+Merchant location: PCC-MAIN (Santa Monica, CA) — registered once via setup_location.py,
+referenced in the inventory item's availabilityDistributions.
+
+
+CONDITION FIELD — CRITICAL DETAIL
+-----------------------------------
+eBay category 261328 (Sports Trading Card Singles) and 183454 (Pokemon Individual Cards)
+both use conditionId 4000 = "Ungraded". The ConditionEnum that maps to ID 4000 is
+USED_VERY_GOOD. This is sent as a constant for all ungraded cards. The actual grade is
+expressed via conditionDescriptor 40001 (REQUIRED by eBay for both categories).
+
+SPORTS CARDS (category 261328) — condition descriptor values:
+  "near mint or better"  → 400010
+  "excellent"            → 400011
+  "very good"            → 400012
+  "poor"                 → 400013
+
+POKEMON/TCG (category 183454) — condition descriptor values use TCG terminology:
+  "near mint or better"  → 400010
+  "lightly played"       → 400015
+  "moderately played"    → 400016
+  "heavily played"       → 400017
+
+The condition_map is passed as a parameter to create_and_publish() so both publishers
+share the same API function with different condition terminology.
+
+Things that were tried and failed for the condition field:
+  - Sending "4000" as a string → error 2004 "Could not serialize field [condition]"
+  - Sending USED_EXCELLENT (maps to internal ID 3000) → error 25059 "condition 3000 not
+    valid for category 261328"
+  - Per-grade ConditionEnum mapping (different enums per grade) — wrong; only ID 4000
+    (USED_VERY_GOOD) is accepted for ungraded cards in both categories.
+Confirmed via: GET /sell/metadata/v1/marketplace/EBAY_US/get_item_condition_policies
+
+
+GOOGLE SHEETS INTEGRATION
+--------------------------
+Both publishers use the gspread library with a service account.
+Service account: ebay-tools-sheets@pcc-accounting.iam.gserviceaccount.com
+Credentials: pl/credentials/service_account.json (gitignored)
+
+Pending rows are detected by: has a card identifier (Player/Athlete for sports,
+Character for Pokemon) AND no Listing ID.
+
+write_result() uses batch_update (1 API call per listing) to avoid Google Sheets 429
+rate limit. If rate limited, wait 60 seconds.
+
+Sports sheet: LISTINGS_SHEET_ID in .env — "Listings" tab — 25 columns:
+  Title | SKU | Sport | Player/Athlete | Manufacturer | Set | Year | Team |
+  Card Number | Features | Parallel/Variety | Condition | Price | Quantity |
+  Description | Shipping Policy ID | Return Policy ID | Payment Policy ID |
+  Weight (oz) | Length (in) | Width (in) | Height (in) | Best Offer |
+  Listing ID (col 24) | Status (col 25)
+
+Pokemon sheet: POKEMON_SHEET_ID in .env — "pokemon_draft" tab — 23 columns:
+  Game | Language | Title | Price | Character | Card Number | Rarity | Finish |
+  Set | Condition | SKU | Quantity | Description | Shipping Policy ID |
+  Return Policy ID | Payment Policy ID | Weight (oz) | Length (in) | Width (in) |
+  Height (in) | Best Offer | Listing ID (col 22) | Status (col 23)
+
+
+PRODUCT ASPECTS SENT TO EBAY
+------------------------------
+Sports cards (category 261328):
+  Sport, Player/Athlete, Manufacturer, Graded ("No"), League (auto-mapped from sport:
+  Baseball→"Major League Baseball (MLB)", Football→"National Football League (NFL)",
+  Basketball→"National Basketball Association (NBA)"), Set, Season (from Year), Team,
+  Card Number, Features (comma-separated → array), Parallel/Variety
+
+Pokemon cards (category 183454):
+  Game, Language, Character Family (from Character column), Card Number, Rarity,
+  Finish, Set, Graded ("No")
+
+
+SKU GENERATION
+--------------
+If the SKU column is blank, auto-generated as: PCC-{row_index}-{8-char title slug}
+If the SKU column has a value, that value is used as-is.
+Custom SKUs are useful for tracking multiple copies of the same card.
+
+
+PHOTO MATCHING
+--------------
+Photos are sorted by EXIF DateTimeOriginal timestamp (sub-table tag 34665 → 36867),
+with filename as tiebreaker for photos taken in the same second. Photos are then
+grouped sequentially: first N photos → listing 1, next N → listing 2, etc.
+The user must shoot cards in the same order as the sheet rows.
+
+
+ERROR HANDLING
+--------------
+- Per-listing errors are caught, written to the sheet Status column, and the script
+  continues with the next listing.
+- To retry an error row: clear the Status cell and re-run.
+- To permanently skip a row: put any value in the Listing ID column.
+- Validations that abort the entire run (before any publishing):
+    - Photo count doesn't match listings × per_listing
+    - Any title exceeds 80 characters
+    - Required fields missing (Sport/Player/Manufacturer for sports; Character/Game
+      for Pokemon)
+- Per-listing validations that fail that row only:
+    - Missing Shipping Policy ID
+    - Invalid condition value
+    - Unexpected eBay fees (prompts for confirmation)
+
+
+ENVIRONMENT VARIABLES (.env)
+-----------------------------
+EBAY_CLIENT_ID
+EBAY_CLIENT_SECRET
+EBAY_REFRESH_TOKEN_WRITE       # sell.inventory scope
+EBAY_PAYMENT_POLICY_ID         # default fallback (281451764018)
+EBAY_RETURN_POLICY_ID          # default fallback (281451763018)
+EBAY_MERCHANT_LOCATION_KEY     # PCC-MAIN
+LISTINGS_SHEET_ID              # sports card Google Sheet
+POKEMON_SHEET_ID               # Pokemon Google Sheet
+GOOGLE_CREDS_PATH              # path to service account JSON

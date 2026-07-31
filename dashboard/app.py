@@ -77,7 +77,7 @@ def load_metrics(listing_id: str, start: date, end: date) -> pd.DataFrame:
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT date, impressions_total, views_total, ctr, orders
+                SELECT date, impressions_total, views_total, ctr_ebay_search_page, orders
                 FROM listing_metrics_raw
                 WHERE listing_id = %s AND date BETWEEN %s AND %s
                 ORDER BY date
@@ -85,7 +85,7 @@ def load_metrics(listing_id: str, start: date, end: date) -> pd.DataFrame:
             rows = cur.fetchall()
     finally:
         conn.close()
-    df = pd.DataFrame(rows, columns=["date", "impressions_total", "views_total", "ctr", "orders"])
+    df = pd.DataFrame(rows, columns=["date", "impressions_total", "views_total", "ctr_ebay_search_page", "orders"])
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
     return df

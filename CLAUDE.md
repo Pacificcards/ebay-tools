@@ -232,6 +232,57 @@ Pauses/resumes eBay Promoted Listings campaigns on a schedule. Triggered by cron
 | JB Topps Now | 163743927018 |
 | Sealed Boxes | 163206658018 |
 
+### 6. Listings Publisher (`listings-publisher/` + `pokemon-publisher/`)
+Publishes ungraded trading card listings to eBay from a Google Sheet + local photo folder. Run locally via a unified entry point.
+
+**Command:**
+```
+.venv/bin/python publish.py
+```
+Asks: `Card type [sports/tcg]:` then `Photo folder path:` — routes to the correct publisher.
+
+**Flow:** reads pending rows → matches photos by EXIF timestamp order → previews → uploads photos → creates inventory item → creates offer → checks fees → publishes → writes Listing ID + Status back to sheet.
+
+**Mobile edit limitation** — Inventory API creates "inventory managed" listings. These cannot be edited via the eBay mobile app or Seller Hub. Trading API migration was evaluated and deferred. Current workaround: use the REPRICE feature to push price/quantity changes from the sheet.
+
+**REPRICE feature (live):** Set Status = `REPRICE` on any published row (with a Listing ID) to push a price/quantity update on the next run. Leave the photo folder blank to do a reprice-only run. On success, Status resets to `published` and the resolved SKU is written back to the SKU column (speeds up future reprice runs). Rows with blank SKU (legacy) trigger a full inventory_item scan + per-SKU offer lookup on first reprice; subsequent runs use the cached SKU (fast, 1 offer lookup).
+
+#### Sports Cards (`listings-publisher/`)
+- Sheet: `LISTINGS_SHEET_ID` — "Listings" tab, 25 columns:
+  `Title | SKU | Sport | Player/Athlete | Manufacturer | Set | Year | Team | Card Number | Features | Parallel/Variety | Condition | Price | Quantity | Description | Shipping Policy ID | Return Policy ID | Payment Policy ID | Weight (oz) | Length (in) | Width (in) | Height (in) | Best Offer | Listing ID (24) | Status (25)`
+- Category 261328; pending = has Player/Athlete, no Listing ID
+- Condition descriptor IDs: NM=400010, Excellent=400011, VG=400012, Poor=400013
+- League aspect auto-populated: Baseball→MLB, Football→NFL, Basketball→NBA
+- Parallel/Variety aspect from sheet column
+
+#### Pokemon/TCG (`pokemon-publisher/`)
+- Sheet: `POKEMON_SHEET_ID` — "pokemon_draft" tab, 23 columns:
+  `Game | Language | Title | Price | Character | Card Number | Rarity | Finish | Set | Condition | SKU | Quantity | Description | Shipping Policy ID | Return Policy ID | Payment Policy ID | Weight (oz) | Length (in) | Width (in) | Height (in) | Best Offer | Listing ID (22) | Status (23)`
+- Category 183454; pending = has Character, no Listing ID
+- TCG condition terminology: NM=400010, Lightly Played=400015, Moderately Played=400016, Heavily Played=400017
+- Aspects: Game, Language, Character Family, Card Number, Rarity, Finish, Set, Graded=No
+
+#### Shared facts (both publishers)
+- `condition` field: always `USED_VERY_GOOD` (eBay enum = ID 4000 = "Ungraded"); conditionDescriptor `40001` REQUIRED
+- `condition_map` parameter on `create_and_publish()` allows per-publisher terminology
+- Merchant location `PCC-MAIN` (Santa Monica, CA) — ENABLED; `EBAY_MERCHANT_LOCATION_KEY` in `.env`
+- Photos matched by EXIF timestamp (shoot order = row order); N photos per listing asked at runtime
+- Title ≤ 80 chars; auto-generated if blank; no subtitle ever
+- Fulfillment policy per-row; return/payment fall back to `.env` defaults
+- Fee check: `ListingFee` + `InsertionFee` silently ignored (store subscription covers them); other fees prompt for confirmation
+- `write_result(sheet_id, creds_path, row_idx, listing_id, status, sku="")` uses `batch_update` (1 API call); writes SKU column when `sku` is provided (`COL_SKU=2` sports, `COL_SKU=11` Pokemon)
+- Error rows: clear Status to retry; put any value in Listing ID to permanently skip
+- Custom SKU: fill SKU column to override auto-generated `PCC-{row}-{slug}`
+- All 129 sports + 74 Pokemon published rows had blank SKU at time of REPRICE feature launch — first reprice of any legacy row uses `build_listing_offer_map()` (scans all inventory items + offer lookups), then caches SKU in sheet
+
+**Key files:**
+- `publish.py` — unified entry point (routes sports/tcg, asks photo path; photo folder optional for reprice-only runs)
+- `listings-publisher/ebay_api.py` — shared API layer; `create_and_publish()`, `get_offer_for_sku()`, `build_listing_offer_map()`, `bulk_update_price_quantity()`
+- `listings-publisher/images.py` — shared EXIF sort + eBay Media API upload
+- `listing-publishers-summary.txt` — full technical summary for external review
+
+**`EBAY_REFRESH_TOKEN_WRITE`** scope: `sell.inventory` only — does NOT cover `sell.account`.
+
 ## Key Commands
 
 ```bash
@@ -268,6 +319,10 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 - eBay refresh token valid ~Nov 2027. Re-gen: `/Users/eastcoastlimited/ClaudeCode/ebay_campaign_scheduler/get_refresh_token.py`
 - Legacy scheduler repo at `/Users/eastcoastlimited/ClaudeCode/ebay_campaign_scheduler` — do not touch unless asked
 - cron-job.org API key is in `.claude/settings.local.json` (not in repo)
+- **Supabase schema changes must be pushed atomically with code:** the daily GHA jobs run whatever is on `main`, not local state. A local-only DB migration (e.g. a column rename) will crash the live job the next time it runs until the matching code is pushed. Always commit+push schema-dependent code changes in the same sitting as the migration, staging only the affected files by name (never `git add -A`, since this repo commonly has unrelated WIP sitting uncommitted).
+- **`listing_metrics_raw` / `listing_metrics_computed` CTR columns:** `ctr_ebay_search_page` (renamed from `ctr` 2026-07-29) is eBay's own `CLICK_THROUGH_RATE` metric — search-results-page views ÷ search-results-page impressions only. `ctr_calculated` (new column) is `views_total / impressions_total` — broader, all-sources CTR. They will not match; this is expected, not a bug.
+- **eBay impressions metric trap:** `LISTING_IMPRESSION_TOTAL` (what `fetch_analytics.py` stores as `impressions_total`) is search-results-page + store impressions ONLY, and per eBay's own docs "may or may not match the Seller Hub performance/traffic page." The metric that actually matches Seller Hub is `TOTAL_IMPRESSION_TOTAL` — confirmed empirically 2026-07-29 to run 4-9x higher (extra volume is from promoted placements / other pages, not currently broken out). Not yet added to the pipeline/DB — see Traffic Analytics TODOs.
+- **eBay Analytics API (`traffic_report`) rate limit:** hit a persistent 429 after heavy ad-hoc diagnostic pulls (paginated, uncached listing_ids-less calls) on 2026-07-29; did not clear after a 45-min cooldown, only cleared the next day — behaves like a daily quota, not a short burst throttle. When pulling ad-hoc data for a small number of listings, always use the `listing_ids:{id1|id2}` filter (single lightweight call, no pagination) rather than unfiltered `dimension=LISTING` calls that paginate through the full catalog.
 
 ## Open TODOs
 
@@ -284,12 +339,19 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 3. **Delete workflow** — fully operational as of 2026-06-27: record_id stamped on New Entries insert, backfill complete, fuzzy "mark"+"delet" trigger wired up, tested with Yamamoto Grading (id 337 hard-deleted, purchase count 303 → 302)
 
 ### Traffic Analytics
-- No open items — orders/qty bug fixed 2026-06-25 (see session log)
+1. **Add `TOTAL_IMPRESSION_TOTAL` metric to the pipeline** — this is the eBay metric that actually matches the Seller Hub traffic page (see Constraints section); currently only the narrower `LISTING_IMPRESSION_TOTAL` is fetched/stored. User wants to revisit this and decide how to use the two impressions categories together (not yet decided — hold off on implementing without a decision on naming/columns).
+2. Pipeline outage 2026-07-29→30 (unpushed `ctr` column rename crashed the daily job) is resolved and pushed — no action needed, documented in Constraints/Session Log as a process gotcha to avoid repeating.
 
 ### Market Monitor (live and running)
 Fully operational. Daily pipeline runs at 11:00 UTC (4am PDT) via `market-monitor.yml`. Sold comps now fetched **on-demand** via "↻ Refresh Comps" button on the dashboard (weekly cron deprecated). Dashboard at `pacificcards.github.io/ebay-tools/market/`. 17 active queries as of 2026-07-07.
 
 **No pending setup actions.**
+
+### Listings Publisher (sports + Pokemon live; REPRICE feature live)
+- Sports: 130+ listings published, fully operational
+- Pokemon: 74 listings published, fully operational
+- REPRICE: set Status=`REPRICE` on published rows to push price/quantity updates via `bulkUpdatePriceQuantity`; tested and working
+- Mobile edit limitation remains (Inventory API listings can't be edited via mobile app) — Trading API migration deferred
 
 ### Price Check (planned, not yet built)
 New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy-skipping-teapot.md`
@@ -313,6 +375,52 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - Whether to expose raw price range alongside the two recommendations
 
 ## Session Log
+
+### 2026-07-29 to 2026-07-30 — CTR/impressions investigation, pipeline outage, and recovery
+- Traffic Analytics: user working through an external assignment needing Impressions/Clicks/CTR for 3 specific listings (287468232189, 287482256093, 287461336640) — not part of `report_listings.json`, ad-hoc pulls only
+- Traffic Analytics: diagnosed why stored `ctr` looked inconsistent with impressions/views totals — it's eBay's own `CLICK_THROUGH_RATE` metric, scoped to search-results-page traffic only, not derived from `impressions_total`/`views_total`. Confirmed by reproducing it exactly from `views_search / impressions_search`.
+- Traffic Analytics: renamed `listing_metrics_raw.ctr` and `listing_metrics_computed.ctr` → `ctr_ebay_search_page`; added new `listing_metrics_computed.ctr_calculated` (`views_total/impressions_total`); added `COMMENT ON COLUMN` documentation in Postgres; updated `fetch_analytics.py`, `compute_metrics.py`, `dashboard/app.py` (legacy/unused) to match; backfilled all 8,539 historical computed rows
+- Traffic Analytics: separately diagnosed why our impressions numbers don't match the user's eBay Seller Hub traffic page — `LISTING_IMPRESSION_TOTAL` (what we store) explicitly excludes non-search/non-store impressions per eBay's own docs; `TOTAL_IMPRESSION_TOTAL` is the one that matches Seller Hub, confirmed 4-9x higher live. Not yet added to the pipeline — user wants to decide the approach later (see Traffic Analytics TODOs)
+- **Incident:** the `ctr` rename above was made locally but not pushed; the deployed `analytics-ingest.yml` job crashed the next two mornings (`UndefinedColumn: ctr does not exist`), which cascaded into `pl-ingest.yml` being skipped (shows as "skipped" not "failed" — easy to miss). Diagnosed via a background subagent, backfilled `orders_raw`/`order_fees`/P&L sheet manually, then the fix was committed (isolated to the 2 affected files, not `git add -A` — repo has ongoing unrelated WIP) and pushed. Added a Constraints-section gotcha so this class of failure doesn't recur.
+- Traffic Analytics: hit a sustained 429 on eBay's `traffic_report` API from heavy unfiltered diagnostic pulls; behaved like a daily quota (didn't clear after 45 min, cleared overnight). Switched all further ad-hoc pulls to the `listing_ids:{...}` filter (single targeted call per date, no pagination) — worked cleanly with zero further rate-limit errors.
+
+### 2026-07-30 — Pokemon publisher aspect fix
+- Fixed `_build_aspects` in `pokemon-publisher/publish.py`: `Character` column was mapped to eBay aspect `"Character Family"` — corrected to `"Character"`
+
+### 2026-07-27 — REPRICE feature (sheet-driven price/quantity updates)
+- Added REPRICE path to both publishers: set Status=`REPRICE` on a published row to push price/quantity update via `bulkUpdatePriceQuantity` API
+- New functions in `ebay_api.py`: `get_offer_for_sku()` (fast path, SKU known), `build_listing_offer_map()` (legacy path, scans all inventory items + offer lookups, stops early once all requested listing IDs found), `bulk_update_price_quantity()` (up to 25 per call)
+- `read_reprice()` added to both `sheets.py` — returns `(reprice_rows, ambiguous_rows)`; ambiguous = has Listing ID with unexpected Status (not blank/published/REPRICE/error:*)
+- `write_result()` updated in both sheets.py: added optional `sku=""` param; writes SKU column when provided (`COL_SKU=2` sports, `COL_SKU=11` Pokemon); going forward SKU stored in sheet at publish time and on first reprice
+- Both `publish.py` restructured: reads pending + reprice rows together; photo folder now optional (skips new-listing path if blank); single confirm covers both new listings and reprice in same run; progress display during legacy offer map build
+- Root `publish.py`: photo folder prompt updated to indicate it's optional for reprice-only runs
+- Key discovery: `GET /sell/inventory/v1/offer` requires `sku` param (returns 400 error 25707 without it) — can't list all offers. `GET /sell/inventory/v1/inventory_item` works without params and returns all SKUs
+- All 129 sports + 74 Pokemon legacy rows have blank SKU (never written at publish time) — first reprice triggers full scan; SKU cached in sheet for fast future reprices
+- Trading API migration was evaluated (full plan written) but user chose additive reprice approach instead; plan abandoned
+
+### 2026-07-27 — Pokemon Publisher + unified entry point
+- Built `pokemon-publisher/` — category 183454, TCG condition terminology (Lightly Played/Moderately Played/Heavily Played → 400015/400016/400017), aspects: Game, Language, Character Family, Card Number, Rarity, Finish, Set, Graded=No
+- Added `condition_map` param to `ebay_api.create_and_publish()` (backward compatible) so both publishers share one API layer with different condition terminology
+- Created `publish.py` at repo root — unified entry point; asks `Card type [sports/tcg]:` and `Photo folder path:`, routes to correct publisher via `importlib`
+- Pokemon sheet: `POKEMON_SHEET_ID` in `.env`, tab `pokemon_draft`, 23 columns; `COL_LISTING_ID=22`, `COL_STATUS=23`
+- SKU column added to Pokemon template (between Condition and Quantity); custom SKU used if present, auto-generated otherwise
+- All same validations confirmed present in both publishers (photo count, title length, required fields, fee check, shipping policy, proceed confirmation)
+- Created `listing-publishers-summary.txt` — full technical summary for external LLM review
+- **Discovered: Inventory API listings cannot be edited via eBay mobile app** — "inventory managed" state. Decision pending on whether to switch to Trading API.
+
+### 2026-07-25 — Listings Publisher: condition fix + new aspects + fee check
+- Fixed core condition bug: category 261328 only accepts conditionId 4000 (Ungraded). `USED_VERY_GOOD` is the ConditionEnum that maps to ID 4000 — used as a constant for ALL ungraded cards. conditionDescriptor `40001` (REQUIRED) carries the actual grade. Confirmed via `GET /sell/metadata/v1/marketplace/EBAY_US/get_item_condition_policies`.
+- Added `Parallel/Variety` column to sheet template (col 11, between Features and Condition) → `COL_LISTING_ID` 23→24, `COL_STATUS` 24→25; mapped to `Parallel/Variety` aspect
+- Added `League` aspect auto-populated from Sport: Baseball→"Major League Baseball (MLB)", Football→"National Football League (NFL)", Basketball→"National Basketball Association (NBA)"
+- Added fee check via `get_listing_fees` API before publish; `ListingFee` + `InsertionFee` silently ignored (confirmed via 500+ finance transactions: zero such charges ever billed — store subscription covers them); any other non-zero fee shows a confirmation prompt
+- Fixed Google Sheets 429 rate limit: `write_result` changed from 2× `update_cell` to 1× `batch_update`
+- Removed debug print from `ebay_api.py`
+- **130+ listings successfully published**
+
+**Ruled out (condition field):**
+- `"4000"` string → error 2004 "Could not serialize field [condition]" — not a valid ConditionEnum
+- `USED_EXCELLENT` (ID 3000) → error 25059 "condition 3000 not valid for category 261328"
+- Per-grade ConditionEnum mapping (USED_EXCELLENT for NM, USED_GOOD for VG, etc.) — wrong; only ID 4000 is valid for ungraded in this category
 
 ### 2026-07-22 — eBay purchases import: weekly → daily
 - P&L: found root cause of "purchases not updating daily" complaint — `fetch_ebay_purchases.py` (populates `import_queue`, source of the Purchases tab) ran on its own separate `ebay-purchases.yml` workflow scheduled **weekly (Mondays only)**, not as part of the daily `analytics-ingest.yml` pipeline that Sales/Fees use. P&L sync itself is daily, but had nothing new to sync between Mondays.
