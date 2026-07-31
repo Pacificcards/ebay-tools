@@ -17,10 +17,11 @@ CREATE TABLE IF NOT EXISTS listing_metrics_raw (
     id                  SERIAL PRIMARY KEY,
     listing_id          TEXT NOT NULL,
     date                DATE NOT NULL,
-    ctr                 NUMERIC(8,6),
-    impressions_total   INTEGER,
+    ctr_ebay_search_page NUMERIC(8,6),  -- eBay's CLICK_THROUGH_RATE; search-results-page only
+    impressions_search_and_store INTEGER,  -- LISTING_IMPRESSION_TOTAL: search-results-page + store impressions ONLY (misleadingly named "total" by eBay)
     impressions_search  INTEGER,
     impressions_store   INTEGER,
+    impressions_all_sources INTEGER,  -- TOTAL_IMPRESSION_TOTAL: all placements (search, store, promoted, etc.) — matches Seller Hub traffic page
     views_total         INTEGER,
     views_search        INTEGER,
     views_store         INTEGER,
@@ -49,7 +50,8 @@ CREATE TABLE IF NOT EXISTS listing_metrics_computed (
     id                  SERIAL PRIMARY KEY,
     listing_id          TEXT NOT NULL,
     date                DATE NOT NULL,
-    ctr                 NUMERIC(8,6),
+    ctr_ebay_search_page NUMERIC(8,6),  -- eBay's CLICK_THROUGH_RATE; search-results-page only
+    ctr_calculated      NUMERIC(8,6),   -- views_total / impressions_search_and_store
     orders              INTEGER,
     quantity            INTEGER,
     revenue             NUMERIC(10,2),
