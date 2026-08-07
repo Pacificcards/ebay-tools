@@ -99,6 +99,13 @@
     background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px;
     padding: 1px 5px; font-size: 12px; color: var(--text-2);
   }
+  .page-header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+  .jump-btn {
+    appearance: none; border: 1px solid var(--border); background: var(--surface); color: var(--text-2);
+    font: inherit; font-size: 12.5px; font-weight: 600; padding: 7px 14px; border-radius: 8px; cursor: pointer;
+    white-space: nowrap; box-shadow: var(--shadow); flex: none;
+  }
+  .jump-btn:hover { color: var(--text); border-color: var(--border-2); }
 
   /* ---- KPI row ---- */
   .kpi-row {
@@ -304,9 +311,14 @@
 
 <div class="wrap">
   <header class="page">
-    <p class="eyebrow">Pacific Cards Co.</p>
-    <h1>Traffic Dashboard</h1>
-    <p class="sub">All active listings, sourced nightly from eBay Analytics · <code id="listing-count">—</code></p>
+    <div class="page-header-row">
+      <div>
+        <p class="eyebrow">Pacific Cards Co.</p>
+        <h1>Traffic Dashboard</h1>
+        <p class="sub">All active listings, sourced nightly from eBay Analytics · <code id="listing-count">—</code></p>
+      </div>
+      <button class="jump-btn" id="jump-worst-btn">↓ Worst Performers</button>
+    </div>
   </header>
 
   <div class="kpi-row" id="kpi-row">
@@ -394,7 +406,7 @@
     <div class="empty-state" id="empty-state" style="display:none">No listings match your filters.</div>
   </div>
 
-  <div class="section-block">
+  <div class="section-block" id="worst-performers-section">
     <h2 class="section-title">Worst Performers</h2>
     <p class="section-caption" id="worst-caption"></p>
     <div class="worst-tables">
@@ -402,7 +414,13 @@
         <h3 class="worst-card-title">Lowest Impressions <span class="worst-count" id="low-impr-count"></span></h3>
         <div class="worst-scroll-wrap">
           <table class="mini-table">
-            <thead><tr><th style="text-align:left">Listing</th><th>Price</th><th>Impr (7D)</th><th>Views (7D)</th><th>CTR</th></tr></thead>
+            <thead><tr>
+              <th data-sort="listing" style="text-align:left">Listing<span class="arrow">▾</span></th>
+              <th data-sort="price">Price<span class="arrow">▾</span></th>
+              <th data-sort="impr">Impr (7D)<span class="arrow">▾</span></th>
+              <th data-sort="views">Views (7D)<span class="arrow">▾</span></th>
+              <th data-sort="ctr">CTR<span class="arrow">▾</span></th>
+            </tr></thead>
             <tbody id="low-impr-tbody"></tbody>
           </table>
         </div>
@@ -411,7 +429,13 @@
         <h3 class="worst-card-title">Lowest CTR <span class="worst-count" id="low-ctr-count"></span></h3>
         <div class="worst-scroll-wrap">
           <table class="mini-table">
-            <thead><tr><th style="text-align:left">Listing</th><th>Price</th><th>Impr (7D)</th><th>Views (7D)</th><th>CTR</th></tr></thead>
+            <thead><tr>
+              <th data-sort="listing" style="text-align:left">Listing<span class="arrow">▾</span></th>
+              <th data-sort="price">Price<span class="arrow">▾</span></th>
+              <th data-sort="impr">Impr (7D)<span class="arrow">▾</span></th>
+              <th data-sort="views">Views (7D)<span class="arrow">▾</span></th>
+              <th data-sort="ctr">CTR<span class="arrow">▾</span></th>
+            </tr></thead>
             <tbody id="low-ctr-tbody"></tbody>
           </table>
         </div>
@@ -953,11 +977,28 @@
       if (!any) { excluded++; return; }
       rows.push({ l, impr, views, ctr: impr > 0 ? views / impr : null });
     });
-    const lowImpr = rows.filter(r => r.impr <= IMPR_THRESHOLD)
-      .sort((a, b) => (b.l.price || 0) - (a.l.price || 0));
-    const lowCtr = rows.filter(r => r.impr >= CTR_IMPR_FLOOR && r.ctr === 0)
-      .sort((a, b) => (b.l.price || 0) - (a.l.price || 0));
+    const lowImpr = rows.filter(r => r.impr <= IMPR_THRESHOLD);
+    const lowCtr = rows.filter(r => r.impr >= CTR_IMPR_FLOOR && r.ctr === 0);
     return { lowImpr, lowCtr, excluded, tracked: rows.length };
+  }
+
+  const worstSort = {
+    'low-impr': { key: 'price', dir: 'desc' },
+    'low-ctr': { key: 'price', dir: 'desc' },
+  };
+
+  function sortWorstRows(rows, sortState) {
+    const { key, dir } = sortState;
+    const mul = dir === 'asc' ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      let av, bv;
+      if (key === 'listing') { av = (a.l.title || '').toLowerCase(); bv = (b.l.title || '').toLowerCase(); return av < bv ? -mul : av > bv ? mul : 0; }
+      if (key === 'price') { av = a.l.price || 0; bv = b.l.price || 0; }
+      if (key === 'impr') { av = a.impr; bv = b.impr; }
+      if (key === 'views') { av = a.views; bv = b.views; }
+      if (key === 'ctr') { av = a.ctr ?? -1; bv = b.ctr ?? -1; }
+      return (av - bv) * mul;
+    });
   }
 
   function worstRow(r) {
@@ -997,13 +1038,40 @@
   function renderWorstPerformers() {
     const wp = computeWorstPerformers();
     document.getElementById('worst-caption').textContent =
-      'Trailing 7 days (' + fmtDateShort(addDays(maxDate, -6)) + '–' + fmtDateShort(maxDate) + '), in-stock listings only, sorted by price (highest first) so the costliest problems surface. ' +
+      'Trailing 7 days (' + fmtDateShort(addDays(maxDate, -6)) + '–' + fmtDateShort(maxDate) + '), in-stock listings only. Click any column to sort. ' +
       wp.excluded + ' in-stock listings excluded — no traffic data reported at all in this window, which looks like a pipeline gap under investigation, not confirmed zero real-world traffic.';
     document.getElementById('low-impr-count').textContent = wp.lowImpr.length + ' listings ≤ ' + IMPR_THRESHOLD + ' impressions';
     document.getElementById('low-ctr-count').textContent = wp.lowCtr.length + ' listings at 0% CTR (≥ ' + CTR_IMPR_FLOOR + ' impressions)';
-    fillWorstTable('low-impr-tbody', wp.lowImpr, 'No listings currently meet this threshold.');
-    fillWorstTable('low-ctr-tbody', wp.lowCtr, 'No listings currently meet this threshold.');
+    fillWorstTable('low-impr-tbody', sortWorstRows(wp.lowImpr, worstSort['low-impr']), 'No listings currently meet this threshold.');
+    fillWorstTable('low-ctr-tbody', sortWorstRows(wp.lowCtr, worstSort['low-ctr']), 'No listings currently meet this threshold.');
+    updateWorstSortIndicators();
   }
+
+  function updateWorstSortIndicators() {
+    Object.keys(worstSort).forEach(tableId => {
+      const state = worstSort[tableId];
+      const thead = document.getElementById(tableId + '-tbody').closest('table').querySelector('thead');
+      thead.querySelectorAll('th[data-sort]').forEach(th => {
+        th.classList.toggle('sorted', th.dataset.sort === state.key);
+        th.querySelector('.arrow').textContent = state.dir === 'asc' ? '▴' : '▾';
+      });
+    });
+  }
+
+  document.querySelectorAll('.mini-table thead th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+      const tableId = th.closest('table').querySelector('tbody').id.replace('-tbody', '');
+      const state = worstSort[tableId];
+      const key = th.dataset.sort;
+      if (state.key === key) state.dir = state.dir === 'asc' ? 'desc' : 'asc';
+      else { state.key = key; state.dir = key === 'listing' ? 'asc' : 'desc'; }
+      renderWorstPerformers();
+    });
+  });
+
+  document.getElementById('jump-worst-btn').addEventListener('click', () => {
+    document.getElementById('worst-performers-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
 
   renderKPIs();
   renderWorstPerformers();
