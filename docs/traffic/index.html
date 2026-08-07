@@ -126,6 +126,14 @@
     font-size: 14px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; margin-right: 4px;
   }
   .kpi-secondary .metric-delta { font-size: 11px; margin-left: 4px; }
+  .kpi-triple { display: flex; gap: 16px; }
+  .kpi-triple-col { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+  .kpi-triple-label {
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3);
+  }
+  .kpi-triple-val {
+    font-size: 20px; font-weight: 700; color: var(--text); letter-spacing: -0.01em; font-variant-numeric: tabular-nums;
+  }
 
   /* ---- Filter row ---- */
   .filters {
@@ -249,7 +257,7 @@
   .chart-card .chart-caption { font-size: 10.5px; color: var(--text-3); margin-bottom: 6px; }
   .chart-svg-wrap { position: relative; }
   .chart-tooltip {
-    position: fixed; pointer-events: none; background: var(--text); color: var(--bg);
+    position: absolute; pointer-events: none; background: var(--text); color: var(--bg);
     font-size: 11px; padding: 4px 7px; border-radius: 5px; white-space: nowrap; opacity: 0;
     transform: translate(-50%, -110%); transition: opacity 0.08s; z-index: 5; font-variant-numeric: tabular-nums;
   }
@@ -319,9 +327,24 @@
       <p class="kpi-sub" id="kpi-inv-sub"></p>
     </div>
     <div class="kpi-tile">
-      <p class="kpi-label">Views (Yesterday)</p>
-      <p class="kpi-value" id="kpi-views">—</p>
-      <p class="kpi-sub" id="kpi-views-sub"></p>
+      <p class="kpi-label">Traffic (Yesterday)</p>
+      <div class="kpi-triple">
+        <div class="kpi-triple-col">
+          <span class="kpi-triple-label">Impressions</span>
+          <span class="kpi-triple-val" id="kpi-impr">—</span>
+          <span id="kpi-impr-delta"></span>
+        </div>
+        <div class="kpi-triple-col">
+          <span class="kpi-triple-label">Views</span>
+          <span class="kpi-triple-val" id="kpi-views">—</span>
+          <span id="kpi-views-delta"></span>
+        </div>
+        <div class="kpi-triple-col">
+          <span class="kpi-triple-label">CTR</span>
+          <span class="kpi-triple-val" id="kpi-ctr">—</span>
+          <span id="kpi-ctr-delta"></span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -396,8 +419,6 @@
     </div>
   </div>
 </div>
-
-<div class="chart-tooltip" id="tooltip"></div>
 
 <script>
 (async function () {
@@ -514,6 +535,16 @@
     const arrow = dir === 'up' ? '▲' : dir === 'down' ? '▼' : '·';
     const pct = (Math.abs(delta) * 100).toFixed(delta >= 10 ? 0 : 1);
     return '<span class="metric-delta ' + dir + '">' + arrow + ' ' + pct + '%</span>';
+  }
+
+  function deltaAbsHtml(diff, opts) {
+    opts = opts || {};
+    if (diff === null || diff === undefined) return '<span class="metric-sub">vs — n/a</span>';
+    const dir = diff > 0.001 ? 'up' : diff < -0.001 ? 'down' : 'flat';
+    const sign = dir === 'up' ? '+' : dir === 'down' ? '-' : '';
+    const absVal = Math.abs(diff);
+    const formatted = opts.dollar ? '$' + absVal.toFixed(2) : absVal.toLocaleString('en-US');
+    return '<span class="metric-delta ' + dir + '">' + sign + formatted + '</span>';
   }
 
   function sparkSvg(vals, w, h) {
@@ -701,6 +732,7 @@
     cap.textContent = caption;
     const svgWrap = document.createElement('div');
     svgWrap.className = 'chart-svg-wrap';
+    svgWrap.style.position = 'relative';
     svgWrap.appendChild(lineChart(series, fmt));
     card.appendChild(h4); card.appendChild(cap); card.appendChild(svgWrap);
     return card;
@@ -781,7 +813,14 @@
     svg.appendChild(crosshair);
     svg.appendChild(hit);
 
-    const tooltip = document.getElementById('tooltip');
+    // Tooltip lives inside this chart's own container (position:relative), positioned
+    // with plain local coordinates -- not viewport coordinates -- so it can't be thrown
+    // off by a transform on some ancestor further up the page (which would silently
+    // break position:fixed/absolute-relative-to-viewport math).
+    const tooltip = document.createElement('div');
+    tooltip.className = 'chart-tooltip';
+    container.style.position = 'relative';
+
     hit.addEventListener('mousemove', (e) => {
       const rect = svg.getBoundingClientRect();
       const x = (e.clientX - rect.left) * (w / rect.width);
@@ -791,14 +830,15 @@
       if (s.val === null) { crosshair.style.display = 'none'; tooltip.classList.remove('show'); return; }
       crosshair.style.display = '';
       crosshair.setAttribute('x1', pts[idx][0]); crosshair.setAttribute('x2', pts[idx][0]);
-      tooltip.style.left = (rect.left + pts[idx][0] * (rect.width / w)) + 'px';
-      tooltip.style.top = (rect.top + pts[idx][1] * (rect.height / h)) + 'px';
+      tooltip.style.left = (pts[idx][0] * (rect.width / w)) + 'px';
+      tooltip.style.top = (pts[idx][1] * (rect.height / h)) + 'px';
       tooltip.textContent = new Date(s.date + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) + ': ' + fmt(s.val);
       tooltip.classList.add('show');
     });
     hit.addEventListener('mouseleave', () => { crosshair.style.display = 'none'; tooltip.classList.remove('show'); });
 
     container.appendChild(svg);
+    container.appendChild(tooltip);
     return container;
   }
 
@@ -843,13 +883,13 @@
     const salesYday = SALES[addDays(maxDate, -1)] || null;
     document.getElementById('kpi-sales').textContent = fmtPrice(salesToday.revenue);
     document.getElementById('kpi-sales-delta').innerHTML =
-      deltaHtml(salesYday ? pctDelta(salesToday.revenue, salesYday.revenue) : null);
+      deltaAbsHtml(salesYday ? salesToday.revenue - salesYday.revenue : null, { dollar: true });
     document.getElementById('kpi-sales-units').textContent = salesToday.qty.toLocaleString('en-US') + ' ';
     document.getElementById('kpi-sales-units-delta').innerHTML =
-      deltaHtml(salesYday ? pctDelta(salesToday.qty, salesYday.qty) : null);
+      deltaAbsHtml(salesYday ? salesToday.qty - salesYday.qty : null);
     document.getElementById('kpi-sales-orders').textContent = salesToday.orders.toLocaleString('en-US') + ' ';
     document.getElementById('kpi-sales-orders-delta').innerHTML =
-      deltaHtml(salesYday ? pctDelta(salesToday.orders, salesYday.orders) : null);
+      deltaAbsHtml(salesYday ? salesToday.orders - salesYday.orders : null);
 
     // Inventory Value — sum(price * qty) across in-stock active listings (qty > 0),
     // combined with the active-listing count so this one tile carries both facts.
@@ -859,11 +899,21 @@
     document.getElementById('kpi-inv-sub').textContent =
       listings.length.toLocaleString('en-US') + ' active listings · ' + invCount.toLocaleString('en-US') + ' in stock';
 
-    // Views (Yesterday) vs the day before, summed across all active listings
+    // Traffic (Yesterday): Impressions / Views / CTR vs the day before, summed across
+    // all active listings, independent of the table filters below.
+    const imprToday = sumAcrossListings(maxDate, 0);
+    const imprYday = sumAcrossListings(addDays(maxDate, -1), 0);
     const viewsToday = sumAcrossListings(maxDate, 1);
     const viewsYday = sumAcrossListings(addDays(maxDate, -1), 1);
+    const ctrToday = imprToday > 0 ? viewsToday / imprToday : null;
+    const ctrYday = imprYday > 0 ? viewsYday / imprYday : null;
+
+    document.getElementById('kpi-impr').textContent = fmtNum(imprToday);
+    document.getElementById('kpi-impr-delta').innerHTML = deltaHtml(pctDelta(imprToday, imprYday));
     document.getElementById('kpi-views').textContent = fmtNum(viewsToday);
-    document.getElementById('kpi-views-sub').innerHTML = deltaHtml(pctDelta(viewsToday, viewsYday)).replace('metric-sub', 'kpi-sub-inline');
+    document.getElementById('kpi-views-delta').innerHTML = deltaHtml(pctDelta(viewsToday, viewsYday));
+    document.getElementById('kpi-ctr').textContent = fmtPct(ctrToday);
+    document.getElementById('kpi-ctr-delta').innerHTML = deltaHtml(pctDelta(ctrToday, ctrYday));
   }
 
   function sumAcrossListings(date, idx) {
