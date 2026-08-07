@@ -249,7 +249,7 @@
   .chart-card .chart-caption { font-size: 10.5px; color: var(--text-3); margin-bottom: 6px; }
   .chart-svg-wrap { position: relative; }
   .chart-tooltip {
-    position: absolute; pointer-events: none; background: var(--text); color: var(--bg);
+    position: fixed; pointer-events: none; background: var(--text); color: var(--bg);
     font-size: 11px; padding: 4px 7px; border-radius: 5px; white-space: nowrap; opacity: 0;
     transform: translate(-50%, -110%); transition: opacity 0.08s; z-index: 5; font-variant-numeric: tabular-nums;
   }
@@ -791,9 +791,8 @@
       if (s.val === null) { crosshair.style.display = 'none'; tooltip.classList.remove('show'); return; }
       crosshair.style.display = '';
       crosshair.setAttribute('x1', pts[idx][0]); crosshair.setAttribute('x2', pts[idx][0]);
-      const dRect = e.currentTarget.closest('.chart-svg-wrap').getBoundingClientRect();
-      tooltip.style.left = (rect.left - dRect.left + pts[idx][0] * (rect.width / w)) + 'px';
-      tooltip.style.top = (rect.top - dRect.top + pts[idx][1] * (rect.height / h)) + 'px';
+      tooltip.style.left = (rect.left + pts[idx][0] * (rect.width / w)) + 'px';
+      tooltip.style.top = (rect.top + pts[idx][1] * (rect.height / h)) + 'px';
       tooltip.textContent = new Date(s.date + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) + ': ' + fmt(s.val);
       tooltip.classList.add('show');
     });
