@@ -258,6 +258,38 @@
 
   .empty-state { padding: 48px 20px; text-align: center; color: var(--text-3); font-size: 13px; }
 
+  /* ---- Worst Performers ---- */
+  .section-block { margin-top: 28px; }
+  .section-title { font-size: 16px; font-weight: 700; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .section-caption { font-size: 12px; color: var(--text-3); margin: 0 0 14px; max-width: 760px; line-height: 1.5; }
+  .worst-tables { display: flex; flex-direction: column; gap: 16px; }
+  .worst-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: var(--shadow); padding: 14px 16px 4px;
+  }
+  .worst-card-title {
+    font-size: 13px; font-weight: 700; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; color: var(--text);
+  }
+  .worst-count {
+    font-size: 11px; font-weight: 600; color: var(--text-2); background: var(--surface-2);
+    border-radius: 999px; padding: 2px 9px; border: 1px solid var(--border);
+  }
+  .worst-scroll-wrap { max-height: 320px; overflow-y: auto; }
+  .mini-table { width: 100%; border-collapse: collapse; }
+  .mini-table th {
+    position: sticky; top: 0; background: var(--surface);
+    text-align: right; font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--text-3); padding: 6px 10px; border-bottom: 1px solid var(--border);
+  }
+  .mini-table th:first-child { text-align: left; }
+  .mini-table td {
+    padding: 8px 10px; text-align: right; font-variant-numeric: tabular-nums;
+    border-bottom: 1px solid var(--border); font-size: 12.5px;
+  }
+  .mini-table td:first-child { text-align: left; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mini-table tbody tr:last-child td { border-bottom: none; }
+  .mini-table .empty-row td { text-align: center; color: var(--text-3); padding: 20px; }
+
   ::selection { background: var(--accent-wash); }
 </style>
 </head>
@@ -338,6 +370,31 @@
       </table>
     </div>
     <div class="empty-state" id="empty-state" style="display:none">No listings match your filters.</div>
+  </div>
+
+  <div class="section-block">
+    <h2 class="section-title">Worst Performers</h2>
+    <p class="section-caption" id="worst-caption"></p>
+    <div class="worst-tables">
+      <div class="worst-card">
+        <h3 class="worst-card-title">Lowest Impressions <span class="worst-count" id="low-impr-count"></span></h3>
+        <div class="worst-scroll-wrap">
+          <table class="mini-table">
+            <thead><tr><th style="text-align:left">Listing</th><th>Price</th><th>Impr (7D)</th><th>Views (7D)</th><th>CTR</th></tr></thead>
+            <tbody id="low-impr-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="worst-card">
+        <h3 class="worst-card-title">Lowest CTR <span class="worst-count" id="low-ctr-count"></span></h3>
+        <div class="worst-scroll-wrap">
+          <table class="mini-table">
+            <thead><tr><th style="text-align:left">Listing</th><th>Price</th><th>Impr (7D)</th><th>Views (7D)</th><th>CTR</th></tr></thead>
+            <tbody id="low-ctr-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -820,7 +877,88 @@
     return sum;
   }
 
+  // ---- Worst Performers ----
+  // Thresholds picked from this catalog's real distribution (in-stock, currently-tracked
+  // listings only): impressions <= 25 over trailing 7d sits around the bottom decile;
+  // 0% CTR at >=50 impressions isolates listings that ARE getting seen but never clicked,
+  // vs. the median currently-tracked listing which sits well above zero. Both are easy to
+  // re-tune later -- see IMPR_THRESHOLD / CTR_IMPR_FLOOR below.
+  const WORST_WINDOW_DAYS = 7;
+  const IMPR_THRESHOLD = 25;
+  const CTR_IMPR_FLOOR = 50;
+
+  function computeWorstPerformers() {
+    const start = addDays(maxDate, -(WORST_WINDOW_DAYS - 1));
+    const rows = [];
+    let excluded = 0;
+    listings.forEach(l => {
+      if (!(l.qty > 0)) return; // sold-out listings aren't actionable "fix the listing" targets
+      let impr = 0, views = 0, any = false;
+      let d = start;
+      while (d <= maxDate) {
+        const v = l.days[d];
+        if (v) { any = true; impr += (v[0] || 0); views += (v[1] || 0); }
+        d = addDays(d, 1);
+      }
+      // No data at all in the window is a pipeline gap, not a confirmed zero -- exclude
+      // rather than mislabel it a worst performer (see known impressions-ingestion bug).
+      if (!any) { excluded++; return; }
+      rows.push({ l, impr, views, ctr: impr > 0 ? views / impr : null });
+    });
+    const lowImpr = rows.filter(r => r.impr <= IMPR_THRESHOLD)
+      .sort((a, b) => (b.l.price || 0) - (a.l.price || 0));
+    const lowCtr = rows.filter(r => r.impr >= CTR_IMPR_FLOOR && r.ctr === 0)
+      .sort((a, b) => (b.l.price || 0) - (a.l.price || 0));
+    return { lowImpr, lowCtr, excluded, tracked: rows.length };
+  }
+
+  function worstRow(r) {
+    const tr = document.createElement('tr');
+    const tdName = document.createElement('td');
+    const a = document.createElement('a');
+    a.className = 'listing-title';
+    a.style.display = 'inline';
+    a.href = 'https://www.ebay.com/itm/' + encodeURIComponent(r.l.id);
+    a.target = '_blank'; a.rel = 'noopener noreferrer'; a.title = 'Open on eBay';
+    a.textContent = r.l.title || '(untitled)';
+    tdName.appendChild(a);
+    const tdPrice = document.createElement('td'); tdPrice.textContent = fmtPrice(r.l.price);
+    const tdImpr = document.createElement('td'); tdImpr.textContent = fmtNum(r.impr);
+    const tdViews = document.createElement('td'); tdViews.textContent = fmtNum(r.views);
+    const tdCtr = document.createElement('td'); tdCtr.textContent = fmtPct(r.ctr);
+    [tdName, tdPrice, tdImpr, tdViews, tdCtr].forEach(td => tr.appendChild(td));
+    return tr;
+  }
+
+  function fillWorstTable(tbodyId, rows, emptyLabel) {
+    const tbody = document.getElementById(tbodyId);
+    tbody.innerHTML = '';
+    if (!rows.length) {
+      const tr = document.createElement('tr');
+      tr.className = 'empty-row';
+      const td = document.createElement('td');
+      td.colSpan = 5;
+      td.textContent = emptyLabel;
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+      return;
+    }
+    rows.forEach(r => tbody.appendChild(worstRow(r)));
+  }
+
+  function renderWorstPerformers() {
+    const wp = computeWorstPerformers();
+    document.getElementById('worst-caption').textContent =
+      'Trailing 7 days (' + fmtDateShort(addDays(maxDate, -6)) + '–' + fmtDateShort(maxDate) + '), in-stock listings only, sorted by price (highest first) so the costliest problems surface. ' +
+      wp.excluded + ' in-stock listings excluded — no traffic data reported at all in this window, which looks like a pipeline gap under investigation, not confirmed zero real-world traffic.';
+    document.getElementById('low-impr-count').textContent = wp.lowImpr.length + ' listings ≤ ' + IMPR_THRESHOLD + ' impressions';
+    document.getElementById('low-ctr-count').textContent = wp.lowCtr.length + ' listings at 0% CTR (≥ ' + CTR_IMPR_FLOOR + ' impressions)';
+    fillWorstTable('low-impr-tbody', wp.lowImpr, 'No listings currently meet this threshold.');
+    fillWorstTable('low-ctr-tbody', wp.lowCtr, 'No listings currently meet this threshold.');
+  }
+
   renderKPIs();
+  renderWorstPerformers();
   render();
 })();
 </script>
