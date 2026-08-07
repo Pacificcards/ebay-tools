@@ -32,8 +32,78 @@ def sync() -> None:
 
     _upsert(all_items)
     _mark_ended(all_items)
+    _backfill_categories(token)
 
     print("[sync_listings] done")
+
+
+def _backfill_categories(token: str) -> None:
+    """Fetch PrimaryCategory via GetItem for any active listing still missing one.
+
+    Category essentially never changes once a listing is published, so this only
+    costs one extra Trading API call per listing the first time it's seen -- not
+    on every nightly run.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT listing_id FROM listing_metadata WHERE status != 'ended' AND category_name IS NULL"
+            )
+            missing_ids = [row[0] for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+    if not missing_ids:
+        return
+
+    print(f"[sync_listings] backfilling category for {len(missing_ids)} listing(s)")
+    updates = []
+    for listing_id in missing_ids:
+        cat = _fetch_category(token, listing_id)
+        if cat:
+            updates.append((listing_id, cat["id"], cat["name"]))
+
+    if not updates:
+        return
+
+    conn = get_connection()
+    try:
+        with conn, conn.cursor() as cur:
+            for listing_id, cat_id, cat_name in updates:
+                cur.execute(
+                    "UPDATE listing_metadata SET category_id = %s, category_name = %s WHERE listing_id = %s",
+                    (cat_id, cat_name, listing_id),
+                )
+        print(f"[sync_listings] category backfilled for {len(updates)} listing(s)")
+    finally:
+        conn.close()
+
+
+def _fetch_category(token: str, listing_id: str) -> dict | None:
+    body = f"""<?xml version="1.0" encoding="utf-8"?>
+<GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <ItemID>{listing_id}</ItemID>
+  <OutputSelector>Item.PrimaryCategory</OutputSelector>
+</GetItemRequest>"""
+    headers = {
+        "X-EBAY-API-CALL-NAME": "GetItem",
+        "X-EBAY-API-SITEID": "0",
+        "X-EBAY-API-COMPATIBILITY-LEVEL": "967",
+        "X-EBAY-API-IAF-TOKEN": token,
+        "Content-Type": "text/xml",
+    }
+    response = requests.post(TRADING_API_URL, data=body.encode("utf-8"), headers=headers)
+    if not response.ok:
+        print(f"[sync_listings] GetItem HTTP {response.status_code} for {listing_id}: {response.text[:200]}")
+        return None
+
+    root = ET.fromstring(response.text)
+    cat_id = root.findtext(".//e:PrimaryCategory/e:CategoryID", namespaces=NS)
+    cat_name = root.findtext(".//e:PrimaryCategory/e:CategoryName", namespaces=NS)
+    if not cat_id:
+        return None
+    return {"id": cat_id, "name": cat_name}
 
 
 def _fetch_all_active(token: str) -> list[dict]:
@@ -97,6 +167,9 @@ def _parse(xml_text: str) -> tuple[list[dict], int]:
         hide_text = item_el.findtext("e:HideFromSearch", namespaces=NS)
         hide_from_search = hide_text is not None and hide_text.lower() == "true"
 
+        qty_text = item_el.findtext("e:Quantity", namespaces=NS)
+        qty_sold_text = item_el.findtext("e:SellingStatus/e:QuantitySold", namespaces=NS)
+
         items.append({
             "listing_id": listing_id,
             "title": item_el.findtext("e:Title", namespaces=NS),
@@ -105,6 +178,8 @@ def _parse(xml_text: str) -> tuple[list[dict], int]:
             "hide_from_search": hide_from_search,
             "hide_reason": item_el.findtext("e:ReasonHideFromSearch", namespaces=NS),
             "status": "active_hidden" if hide_from_search else "active",
+            "quantity": int(qty_text) if qty_text else None,
+            "quantity_sold": int(qty_sold_text) if qty_sold_text else 0,
         })
 
     total_pages_text = root.findtext(
@@ -136,10 +211,12 @@ def _upsert(items: list[dict]) -> None:
                     INSERT INTO listing_metadata (
                         listing_id, title, sku, current_price,
                         status, hide_from_search, hide_reason,
+                        quantity, quantity_sold,
                         last_synced_at, updated_at
                     ) VALUES (
                         %(listing_id)s, %(title)s, %(sku)s, %(current_price)s,
                         %(status)s, %(hide_from_search)s, %(hide_reason)s,
+                        %(quantity)s, %(quantity_sold)s,
                         %(now)s, %(now)s
                     )
                     ON CONFLICT (listing_id) DO UPDATE SET
@@ -149,6 +226,8 @@ def _upsert(items: list[dict]) -> None:
                         status           = EXCLUDED.status,
                         hide_from_search = EXCLUDED.hide_from_search,
                         hide_reason      = EXCLUDED.hide_reason,
+                        quantity         = EXCLUDED.quantity,
+                        quantity_sold    = EXCLUDED.quantity_sold,
                         last_synced_at   = EXCLUDED.last_synced_at,
                         updated_at       = EXCLUDED.updated_at
                     """,

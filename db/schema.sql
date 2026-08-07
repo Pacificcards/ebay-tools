@@ -9,6 +9,10 @@ CREATE TABLE IF NOT EXISTS listing_metadata (
     status              TEXT,                -- 'active', 'active_hidden', 'ended'
     hide_from_search    BOOLEAN,             -- HideFromSearch from Trading API
     hide_reason         TEXT,               -- ReasonHideFromSearch from Trading API
+    quantity            INTEGER,            -- Quantity from Trading API (original list quantity)
+    quantity_sold       INTEGER,            -- SellingStatus.QuantitySold; remaining = quantity - quantity_sold
+    category_id         TEXT,               -- PrimaryCategory.CategoryID (GetItem; backfilled incrementally, rarely changes)
+    category_name       TEXT,               -- PrimaryCategory.CategoryName, full breadcrumb (e.g. "Toys & Hobbies:...:CCG Individual Cards")
     last_synced_at      TIMESTAMPTZ,        -- when sync_listings last ran
     updated_at          TIMESTAMPTZ DEFAULT NOW()
 );
