@@ -5,6 +5,14 @@ Runs daily. Each run:
   2. Fetches up to CATCHUP_DAYS_PER_RUN of the most-recent missing dates in a
      rolling CATCHUP_WINDOW_DAYS window ending yesterday, working backwards
      until the window is fully populated.
+
+Fetches are scoped to our own known active listing_ids via the `listing_ids`
+filter, batched at the API's documented max of 200 per call -- NOT via
+unfiltered `dimension=LISTING` + `offset` pagination. Confirmed 2026-08-07 that
+`offset` is not honored on this endpoint (every page returns the identical
+first ~200 records regardless of offset, and the point where it starts
+returning empty pages is inconsistent between back-to-back identical calls),
+which had been silently starving ~40% of listings of any data at all.
 """
 import os
 import time
@@ -16,7 +24,7 @@ from shared.db import get_connection
 from shared.ebay_auth import get_access_token
 
 ANALYTICS_URL = "https://api.ebay.com/sell/analytics/v1/traffic_report"
-MARKETPLACE = "EBAY_US"
+LISTING_ID_BATCH_SIZE = 200  # eBay's documented max for the listing_ids filter (error 50028 above this)
 METRICS = ",".join([
     "CLICK_THROUGH_RATE",
     "LISTING_IMPRESSION_TOTAL",
@@ -43,11 +51,11 @@ def fetch_and_store() -> None:
         os.environ["EBAY_REFRESH_TOKEN"],
     )
 
-    active_ids = _get_active_listing_ids()
-    if active_ids:
-        print(f"[fetch_analytics] filtering to {len(active_ids)} active listings")
-    else:
-        print("[fetch_analytics] WARNING: no active listings in listing_metadata — sync_listings may not have run yet. Fetching all listings.")
+    active_ids = sorted(_get_active_listing_ids())
+    if not active_ids:
+        print("[fetch_analytics] WARNING: no active listings in listing_metadata — sync_listings may not have run yet. Skipping.")
+        return
+    print(f"[fetch_analytics] tracking {len(active_ids)} active listings")
 
     yesterday = date.today() - timedelta(days=1)
     catchup_start = yesterday - timedelta(days=CATCHUP_WINDOW_DAYS - 1)
@@ -61,15 +69,13 @@ def fetch_and_store() -> None:
     skipped = []
     for i, d in enumerate(windows):
         try:
-            rows = _fetch_window_with_retry(token, d, d)
+            rows = _fetch_window_with_retry(token, d, d, active_ids)
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 429:
                 print(f"[fetch_analytics] {d}: rate limited after retries, skipping (will retry next run)")
                 skipped.append(d)
                 continue
             raise
-        if active_ids:
-            rows = [r for r in rows if r["listing_id"] in active_ids]
         _upsert(rows)
         total += len(rows)
         print(f"[fetch_analytics] {d}: {len(rows)} rows")
@@ -101,18 +107,24 @@ def _get_missing_dates(start: date, end: date, limit: int) -> list[date]:
     return missing[:limit]
 
 
-def _fetch_window_with_retry(token: str, start_date: date, end_date: date, retries: int = 3) -> list[dict]:
-    for attempt in range(retries):
-        try:
-            return _fetch_window(token, start_date, end_date)
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 429 and attempt < retries - 1:
-                wait = 30 * (attempt + 1)
-                print(f"[fetch_analytics] rate limited, waiting {wait}s before retry...")
-                time.sleep(wait)
-            else:
-                raise
-    return []
+def _fetch_window_with_retry(token: str, start_date: date, end_date: date, listing_ids: list[str], retries: int = 3) -> list[dict]:
+    all_rows = []
+    for i in range(0, len(listing_ids), LISTING_ID_BATCH_SIZE):
+        batch = listing_ids[i:i + LISTING_ID_BATCH_SIZE]
+        for attempt in range(retries):
+            try:
+                all_rows.extend(_fetch_batch(token, start_date, end_date, batch))
+                break
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 429 and attempt < retries - 1:
+                    wait = 30 * (attempt + 1)
+                    print(f"[fetch_analytics] rate limited, waiting {wait}s before retry...")
+                    time.sleep(wait)
+                else:
+                    raise
+        if i + LISTING_ID_BATCH_SIZE < len(listing_ids):
+            time.sleep(1)
+    return all_rows
 
 
 def _date_range(start: date, end: date):
@@ -122,43 +134,21 @@ def _date_range(start: date, end: date):
         d += timedelta(days=1)
 
 
-PAGE_SIZE = 200
-
-
-def _fetch_window(token: str, start_date: date, end_date: date) -> list[dict]:
+def _fetch_batch(token: str, start_date: date, end_date: date, listing_ids: list[str]) -> list[dict]:
+    id_filter = "|".join(listing_ids)
     filter_str = (
-        f"marketplace_ids:%7B{MARKETPLACE}%7D,"
+        f"listing_ids:%7B{id_filter}%7D,"
         f"date_range:%5B{start_date.strftime('%Y%m%d')}..{end_date.strftime('%Y%m%d')}%5D"
     )
-    base_url = (
-        f"{ANALYTICS_URL}"
-        f"?dimension=LISTING"
-        f"&metric={METRICS}"
-        f"&filter={filter_str}"
-        f"&limit={PAGE_SIZE}"
-    )
+    url = f"{ANALYTICS_URL}?dimension=LISTING&metric={METRICS}&filter={filter_str}"
     headers = {"Authorization": f"Bearer {token}", "Content-Language": "en-US"}
 
-    all_rows = []
-    offset = 0
+    response = requests.get(url, headers=headers)
+    if not response.ok:
+        print(f"[fetch_analytics] HTTP {response.status_code}: {response.text}")
+        response.raise_for_status()
 
-    while True:
-        url = f"{base_url}&offset={offset}"
-        response = requests.get(url, headers=headers)
-        if not response.ok:
-            print(f"[fetch_analytics] HTTP {response.status_code}: {response.text}")
-            response.raise_for_status()
-
-        data = response.json()
-        rows = _parse(data, end_date)
-        all_rows.extend(rows)
-
-        # eBay returns `warnings` when there's a next page; stop when we get fewer than a full page
-        if len(rows) < PAGE_SIZE:
-            break
-        offset += PAGE_SIZE
-
-    return all_rows
+    return _parse(response.json(), end_date)
 
 
 def _parse(data: dict, as_of_date: date) -> list[dict]:
