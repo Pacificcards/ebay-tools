@@ -338,6 +338,14 @@
     td.name-cell, .mini-table td:first-child { max-width: 128px; }
     .listing-title { max-width: 128px; }
     .listing-meta { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 128px; }
+    /* The expanded detail panel lives inside the same wide, horizontally-scrolling
+       <table> (min-width 760px for its 7 columns) as a colspan cell, so without this
+       it inherits that 760px+ width -- which is what was making the chart render at
+       roughly double its intended height (aspect-ratio computed off the wrong width).
+       Sticky-pinning it to the left edge of the table's own scroll viewport and
+       sizing it to the actual screen width decouples it from the table's width
+       entirely, regardless of current horizontal scroll position. */
+    .detail-panel { position: sticky; left: 0; width: calc(100vw - 24px); }
   }
 </style>
 </head>
