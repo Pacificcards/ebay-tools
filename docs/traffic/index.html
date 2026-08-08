@@ -268,11 +268,14 @@
     color: var(--text-3);
   }
   .chart-card .chart-caption { font-size: 10.5px; color: var(--text-3); margin-bottom: 6px; }
-  .chart-svg-wrap { position: relative; }
   /* The chart svgs set a fixed pixel width/height attribute (needed for the internal
      viewBox math) but must still render fluidly -- otherwise a 320px-wide chart
-     overflows any container narrower than that, which most phones are. */
-  .chart-svg-wrap svg { width: 100%; height: auto; display: block; }
+     overflows any container narrower than that, which most phones are. Sizing the
+     wrapper via aspect-ratio (not the svg's own height:auto-from-viewBox, which is
+     inconsistent across mobile browsers and was rendering charts oversized enough
+     to block page scroll entirely) keeps this deterministic on every device. */
+  .chart-svg-wrap { position: relative; width: 100%; aspect-ratio: 320 / 110; }
+  .chart-svg-wrap svg { width: 100%; height: 100%; display: block; }
   .chart-tooltip {
     position: absolute; pointer-events: none; background: var(--text); color: var(--bg);
     font-size: 11px; padding: 4px 7px; border-radius: 5px; white-space: nowrap; opacity: 0;
@@ -896,11 +899,11 @@
 
     hit.addEventListener('mousemove', (e) => updateTooltip(e.clientX));
     hit.addEventListener('mouseleave', hideTooltip);
-    // Touch: mousemove never fires from a tap/drag, so wire the same logic to touch
-    // events directly. preventDefault stops the page from scrolling while dragging
-    // a finger across the chart to scrub through it.
-    hit.addEventListener('touchstart', (e) => { e.preventDefault(); updateTooltip(e.touches[0].clientX); }, { passive: false });
-    hit.addEventListener('touchmove', (e) => { e.preventDefault(); updateTooltip(e.touches[0].clientX); }, { passive: false });
+    // Touch: mousemove never fires from a tap. Deliberately NOT calling preventDefault
+    // here -- doing so on touchmove blocks the page from scrolling for as long as a
+    // finger drags across the chart, which reads as the page "freezing." Never being
+    // able to scroll past a chart is worse than losing smooth drag-to-scrub on mobile.
+    hit.addEventListener('touchstart', (e) => updateTooltip(e.touches[0].clientX));
     hit.addEventListener('touchend', hideTooltip);
 
     container.appendChild(svg);
