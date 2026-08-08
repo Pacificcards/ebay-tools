@@ -113,7 +113,7 @@
   }
   .kpi-tile {
     background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-    box-shadow: var(--shadow); padding: 14px 16px;
+    box-shadow: var(--shadow); padding: 14px 16px; min-width: 0;
   }
   .kpi-label {
     font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
@@ -261,6 +261,7 @@
   .detail-charts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
   .chart-card {
     background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px 8px;
+    min-width: 0; /* grid items default to min-content width, which would refuse to shrink the chart svg below its box's natural size and overflow the card on narrow screens */
   }
   .chart-card h4 {
     margin: 0 0 2px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
@@ -268,6 +269,10 @@
   }
   .chart-card .chart-caption { font-size: 10.5px; color: var(--text-3); margin-bottom: 6px; }
   .chart-svg-wrap { position: relative; }
+  /* The chart svgs set a fixed pixel width/height attribute (needed for the internal
+     viewBox math) but must still render fluidly -- otherwise a 320px-wide chart
+     overflows any container narrower than that, which most phones are. */
+  .chart-svg-wrap svg { width: 100%; height: auto; display: block; }
   .chart-tooltip {
     position: absolute; pointer-events: none; background: var(--text); color: var(--bg);
     font-size: 11px; padding: 4px 7px; border-radius: 5px; white-space: nowrap; opacity: 0;
@@ -324,6 +329,12 @@
     .search-box { flex-basis: 100%; }
     .jump-btn { width: 100%; text-align: center; }
     .scroll-hint { display: block; }
+    /* Sticky first column at full desktop width (340px) eats the whole phone screen,
+       leaving nothing visible to scroll to. Cap it much narrower so the point of
+       "sticky" -- seeing the listing name AND other columns at once -- still holds. */
+    td.name-cell, .mini-table td:first-child { max-width: 128px; }
+    .listing-title { max-width: 128px; }
+    .listing-meta { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 128px; }
   }
 </style>
 </head>
@@ -689,8 +700,8 @@
       titleSpan.href = 'https://www.ebay.com/itm/' + encodeURIComponent(r.l.id);
       titleSpan.target = '_blank';
       titleSpan.rel = 'noopener noreferrer';
-      titleSpan.title = 'Open on eBay';
       titleSpan.textContent = r.l.title || '(untitled)';
+      titleSpan.title = (r.l.title || '(untitled)') + ' — open on eBay';
       titleSpan.addEventListener('click', (e) => e.stopPropagation());
       const metaSpan = document.createElement('span');
       metaSpan.className = 'listing-meta';
@@ -1039,8 +1050,9 @@
     a.className = 'listing-title';
     a.style.display = 'inline';
     a.href = 'https://www.ebay.com/itm/' + encodeURIComponent(r.l.id);
-    a.target = '_blank'; a.rel = 'noopener noreferrer'; a.title = 'Open on eBay';
+    a.target = '_blank'; a.rel = 'noopener noreferrer';
     a.textContent = r.l.title || '(untitled)';
+    a.title = (r.l.title || '(untitled)') + ' — open on eBay';
     tdName.appendChild(a);
     const tdPrice = document.createElement('td'); tdPrice.textContent = fmtPrice(r.l.price);
     const tdImpr = document.createElement('td'); tdImpr.textContent = fmtNum(r.impr);
