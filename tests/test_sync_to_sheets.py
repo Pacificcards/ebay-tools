@@ -223,14 +223,14 @@ class TestPLTab(unittest.TestCase):
         sts.write_pl_tab(doc, sales_row_count=5, purchases_row_count=3, ad_fees_row_count=10)
 
         written = ws.update.call_args[0][0]
-        self.assertEqual(written[0], ["group", "net_payout", "costs", "ad_fees", "shipping_cost", "profit"])
+        self.assertEqual(written[0], ["group", "net_payout", "costs", "ad_fees", "shipping_cost", "adjustments", "profit"])
 
-    def test_pl_tab_data_row_has_six_formulas(self):
+    def test_pl_tab_data_row_has_seven_formulas(self):
         doc, ws = self._make_doc_with_ws()
         sts.write_pl_tab(doc, sales_row_count=5, purchases_row_count=3, ad_fees_row_count=10)
 
         written = ws.update.call_args[0][0]
-        self.assertEqual(len(written[1]), 6)
+        self.assertEqual(len(written[1]), 7)
 
     def test_pl_tab_formulas_reference_correct_tabs(self):
         doc, ws = self._make_doc_with_ws()
@@ -239,15 +239,19 @@ class TestPLTab(unittest.TestCase):
         written      = ws.update.call_args[0][0]
         formula_row  = written[1]
 
-        self.assertIn("Sales!",     formula_row[0])  # group formula covers Sales
-        self.assertIn("Purchases!", formula_row[0])  # group formula covers Purchases
-        self.assertIn("Sales!D",    formula_row[1])  # net_payout pulls from Sales col D
-        self.assertIn("Purchases!", formula_row[2])  # costs pull from Purchases
-        self.assertIn("BYROW",      formula_row[3])  # ad_fees uses BYROW+LAMBDA
-        self.assertIn("Ad Fee",     formula_row[3])  # ad_fees filters by "Ad Fee" category
-        self.assertIn("BYROW",      formula_row[4])  # shipping_cost uses BYROW+LAMBDA
-        self.assertIn("Shipping",   formula_row[4])  # shipping_cost filters by "Shipping" category
-        self.assertIn("B2:B-C2:C-D2:D-E2:E", formula_row[5])  # profit = net - costs - ads - shipping
+        self.assertIn("Sales!",       formula_row[0])  # group formula covers Sales
+        self.assertIn("Purchases!",   formula_row[0])  # group formula covers Purchases
+        self.assertIn("Sales!D",      formula_row[1])  # net_payout pulls from Sales col D
+        self.assertIn("Purchases!",   formula_row[2])  # costs pull from Purchases
+        self.assertIn("BYROW",        formula_row[3])  # ad_fees uses BYROW+LAMBDA
+        self.assertIn("Ad Fee",       formula_row[3])  # ad_fees filters by "Ad Fee" category
+        self.assertIn("BYROW",        formula_row[4])  # shipping_cost uses BYROW+LAMBDA
+        self.assertIn("Shipping",     formula_row[4])  # shipping_cost filters by "Shipping" category
+        self.assertIn("BYROW",        formula_row[5])  # adjustments uses BYROW+LAMBDA
+        self.assertIn("Adjustment",   formula_row[5])  # adjustments filters by "Adjustment" category
+        self.assertIn("CREDIT",       formula_row[5])  # adjustments sums credits
+        self.assertIn("DEBIT",        formula_row[5])  # adjustments subtracts debits
+        self.assertIn("B2:B-C2:C-D2:D-E2:E+F2:F", formula_row[6])  # profit = net - costs - ads - shipping + adj
 
 
 
@@ -395,6 +399,64 @@ class TestNewEntriesRecordId(unittest.TestCase):
         mock_del.assert_called_once_with("SHIP-abc123")
         status_call = ws.update_cell.call_args_list[0]
         self.assertIn("Deleted", status_call[0][2])
+
+    def test_record_id_stamped_after_adjustment_insert(self):
+        """Successful adjustment insert writes ADJ- txn_id to col 9."""
+        rows = [
+            sts.NEW_ENTRIES_HEADERS,
+            ["2026-08-08", "PayPal refund - wrong card sent", "adjustment", "25.00", "", "", "Pokemon", "", ""],
+        ]
+        ws  = self._make_ws(rows)
+        doc = self._make_doc(ws)
+
+        with patch.object(sts, "_insert_manual_entries",    return_value={}), \
+             patch.object(sts, "_insert_manual_sales",      return_value={}), \
+             patch.object(sts, "_insert_manual_shipping",   return_value={}), \
+             patch.object(sts, "_insert_manual_adjustment", return_value={0: "ADJ-abc123"}) as mock_adj:
+            sts.process_new_entries(doc)
+
+        mock_adj.assert_called_once()
+        ws.batch_update.assert_called_once()
+        updates = ws.batch_update.call_args[0][0]
+        self.assertEqual(len(updates), 1)
+        self.assertIn("ADJ-abc123", updates[0]["values"][0])
+
+    def test_adjustment_deletion_calls_delete_and_stamps_deleted(self):
+        """Row with ADJ- record_id and 'Marked for Deletion' deletes from order_fees."""
+        rows = [
+            sts.NEW_ENTRIES_HEADERS,
+            ["2026-08-08", "PayPal refund", "adjustment", "25.00", "", "", "Pokemon", "Marked for Deletion", "ADJ-abc123"],
+        ]
+        ws  = self._make_ws(rows)
+        doc = self._make_doc(ws)
+
+        with patch.object(sts, "_delete_manual_entry", return_value=(True, "")) as mock_del, \
+             patch.object(sts, "_insert_manual_entries",    return_value={}), \
+             patch.object(sts, "_insert_manual_sales",      return_value={}), \
+             patch.object(sts, "_insert_manual_shipping",   return_value={}), \
+             patch.object(sts, "_insert_manual_adjustment", return_value={}):
+            sts.process_new_entries(doc)
+
+        mock_del.assert_called_once_with("ADJ-abc123")
+        status_call = ws.update_cell.call_args_list[0]
+        self.assertIn("Deleted", status_call[0][2])
+
+    def test_negative_purchase_amount_accepted(self):
+        """Negative amount (purchase refund) parses correctly and routes to purchases."""
+        rows = [
+            sts.NEW_ENTRIES_HEADERS,
+            ["2026-08-08", "Amazon return - counterfeit card", "purchase", "-$50.00", "", "", "Pokemon", "", ""],
+        ]
+        ws  = self._make_ws(rows)
+        doc = self._make_doc(ws)
+
+        with patch.object(sts, "_insert_manual_entries", return_value={0: "99"}) as mock_ins, \
+             patch.object(sts, "_insert_manual_sales",   return_value={}):
+            sts.process_new_entries(doc)
+
+        mock_ins.assert_called_once()
+        entry = mock_ins.call_args[0][0][0]
+        self.assertEqual(entry["total_cost"], "-50.00")
 
     def test_already_synced_row_skipped(self):
         """Rows with a non-deletion status are not re-processed."""

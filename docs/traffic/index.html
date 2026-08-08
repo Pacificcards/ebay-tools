@@ -211,17 +211,22 @@
     color: var(--text-3); padding: 10px 14px; border-bottom: 1px solid var(--border);
     cursor: pointer; white-space: nowrap; user-select: none;
   }
-  thead th:first-child { text-align: left; }
+  thead th:first-child {
+    text-align: left; position: sticky; left: 0; z-index: 3; border-right: 1px solid var(--border);
+  }
   thead th .arrow { display: inline-block; width: 10px; opacity: 0; font-size: 10px; }
   thead th.sorted .arrow { opacity: 1; }
   thead th:hover { color: var(--text); }
 
   tbody tr.row { border-bottom: 1px solid var(--border); cursor: pointer; }
   tbody tr.row:hover { background: var(--surface-2); }
+  tbody tr.row:hover td.name-cell { background: var(--surface-2); }
   tbody tr.row.expanded { background: var(--accent-wash); }
+  tbody tr.row.expanded td.name-cell { background: var(--accent-wash); }
   tbody td { padding: 10px 14px; text-align: right; font-variant-numeric: tabular-nums; vertical-align: middle; }
   tbody td.name-cell {
     text-align: left; max-width: 340px; font-variant-numeric: normal;
+    position: sticky; left: 0; background: var(--surface); z-index: 1; border-right: 1px solid var(--border);
   }
   .listing-title {
     display: block; font-size: 13px; color: var(--text); font-weight: 500;
@@ -288,23 +293,38 @@
     font-size: 11px; font-weight: 600; color: var(--text-2); background: var(--surface-2);
     border-radius: 999px; padding: 2px 9px; border: 1px solid var(--border);
   }
-  .worst-scroll-wrap { max-height: 320px; overflow-y: auto; }
-  .mini-table { width: 100%; border-collapse: collapse; }
+  .worst-scroll-wrap { max-height: 320px; overflow-y: auto; overflow-x: auto; }
+  .mini-table { width: 100%; min-width: 480px; border-collapse: collapse; }
   .mini-table th {
     position: sticky; top: 0; background: var(--surface);
     text-align: right; font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
     color: var(--text-3); padding: 6px 10px; border-bottom: 1px solid var(--border);
   }
-  .mini-table th:first-child { text-align: left; }
+  .mini-table th:first-child { text-align: left; position: sticky; left: 0; z-index: 2; border-right: 1px solid var(--border); }
   .mini-table td {
     padding: 8px 10px; text-align: right; font-variant-numeric: tabular-nums;
     border-bottom: 1px solid var(--border); font-size: 12.5px;
   }
-  .mini-table td:first-child { text-align: left; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mini-table td:first-child {
+    text-align: left; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    position: sticky; left: 0; background: var(--surface); z-index: 1; border-right: 1px solid var(--border);
+  }
   .mini-table tbody tr:last-child td { border-bottom: none; }
   .mini-table .empty-row td { text-align: center; color: var(--text-3); padding: 20px; }
 
   ::selection { background: var(--accent-wash); }
+
+  .scroll-hint { display: none; font-size: 11px; color: var(--text-3); margin: 6px 0 0; }
+
+  /* ---- Mobile ---- */
+  @media (max-width: 640px) {
+    .wrap { padding: 16px 12px 40px; }
+    .kpi-row { grid-template-columns: 1fr; }
+    .detail-charts { grid-template-columns: 1fr; }
+    .search-box { flex-basis: 100%; }
+    .jump-btn { width: 100%; text-align: center; }
+    .scroll-hint { display: block; }
+  }
 </style>
 </head>
 <body>
@@ -385,6 +405,7 @@
     <span class="count-note" id="count-note"></span>
   </div>
   <p class="data-note" id="data-note"></p>
+  <p class="scroll-hint">↔ Swipe the table sideways to see more columns</p>
 
   <div class="table-card">
     <div class="table-scroll">
@@ -409,6 +430,7 @@
   <div class="section-block" id="worst-performers-section">
     <h2 class="section-title">Worst Performers</h2>
     <p class="section-caption" id="worst-caption"></p>
+    <p class="scroll-hint">↔ Swipe each table sideways to see more columns</p>
     <div class="worst-tables">
       <div class="worst-card">
         <h3 class="worst-card-title">Lowest Impressions <span class="worst-count" id="low-impr-count"></span></h3>
@@ -845,9 +867,9 @@
     tooltip.className = 'chart-tooltip';
     container.style.position = 'relative';
 
-    hit.addEventListener('mousemove', (e) => {
+    function updateTooltip(clientX) {
       const rect = svg.getBoundingClientRect();
-      const x = (e.clientX - rect.left) * (w / rect.width);
+      const x = (clientX - rect.left) * (w / rect.width);
       let idx = Math.round((x - padL) / stepX);
       idx = Math.max(0, Math.min(n - 1, idx));
       const s = series[idx];
@@ -858,8 +880,17 @@
       tooltip.style.top = (pts[idx][1] * (rect.height / h)) + 'px';
       tooltip.textContent = new Date(s.date + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) + ': ' + fmt(s.val);
       tooltip.classList.add('show');
-    });
-    hit.addEventListener('mouseleave', () => { crosshair.style.display = 'none'; tooltip.classList.remove('show'); });
+    }
+    function hideTooltip() { crosshair.style.display = 'none'; tooltip.classList.remove('show'); }
+
+    hit.addEventListener('mousemove', (e) => updateTooltip(e.clientX));
+    hit.addEventListener('mouseleave', hideTooltip);
+    // Touch: mousemove never fires from a tap/drag, so wire the same logic to touch
+    // events directly. preventDefault stops the page from scrolling while dragging
+    // a finger across the chart to scrub through it.
+    hit.addEventListener('touchstart', (e) => { e.preventDefault(); updateTooltip(e.touches[0].clientX); }, { passive: false });
+    hit.addEventListener('touchmove', (e) => { e.preventDefault(); updateTooltip(e.touches[0].clientX); }, { passive: false });
+    hit.addEventListener('touchend', hideTooltip);
 
     container.appendChild(svg);
     container.appendChild(tooltip);

@@ -7,7 +7,7 @@ Tabs:
   - Sales        : all orders from orders_raw (with net_payout), editable 'group' column
   - Purchases    : all import_queue items (non-ignored), editable 'group' column
   - Ad Fees      : all non-SALE transactions by date
-  - P&L by Group : formula-driven summary: net_payout | costs | ad_fees | shipping_cost | profit per group
+  - P&L by Group : formula-driven summary: net_payout | costs | ad_fees | shipping_cost | adjustments | profit per group
 
 Group assignments are persisted to Supabase on each sync so the Sheet is fully regenerable.
 
@@ -49,7 +49,7 @@ _RECORD_ID_COL = NEW_ENTRIES_HEADERS.index("record_id") + 1  # col 9
 # Sales: order_date | title | gross_sale | net_payout | shipping_cost | order_id | ebay_order_id | group | source
 SALES_HEADERS     = ["order_date", "title", "gross_sale", "net_payout", "shipping_cost", "order_id", "ebay_order_id", "listing_id", "group", "source"]
 PURCHASES_HEADERS = ["purchase_date", "description", "vendor", "total_cost", "source", "id", "group"]
-AD_FEES_HEADERS   = ["date", "fee_type", "amount", "order_id", "listing_id", "title", "transaction_id", "group", "category"]
+AD_FEES_HEADERS   = ["date", "fee_type", "amount", "order_id", "listing_id", "title", "transaction_id", "group", "category", "booking_entry"]
 
 PLAIN_FORMAT = {
     "backgroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
@@ -199,12 +199,15 @@ def fetch_ad_fees(conn) -> list[list]:
                     END,
                     ''
                 ) AS group_name,
-                CASE fl.fee_type
-                    WHEN 'NON_SALE_CHARGE' THEN 'Ad Fee'
-                    WHEN 'SHIPPING_LABEL'  THEN 'Shipping'
-                    WHEN 'SHIPPING_MANUAL' THEN 'Shipping'
+                CASE
+                    WHEN fl.fee_type = 'NON_SALE_CHARGE' THEN 'Ad Fee'
+                    WHEN fl.fee_type IN ('SHIPPING_LABEL', 'SHIPPING_MANUAL')
+                         AND COALESCE(fl.booking_entry, '') != 'CREDIT' THEN 'Shipping'
+                    WHEN fl.fee_type IN ('REFUND', 'CREDIT', 'ADJUSTMENT', 'ADJUSTMENT_MANUAL')
+                         OR (fl.fee_type = 'SHIPPING_LABEL' AND fl.booking_entry = 'CREDIT') THEN 'Adjustment'
                     ELSE 'Other'
-                END AS category
+                END AS category,
+                COALESCE(fl.booking_entry, '') AS booking_entry
             FROM fee_listing fl
             ORDER BY fl.transaction_date DESC
         """)
@@ -446,6 +449,8 @@ def process_new_entries(doc: gspread.Spreadsheet) -> int:
     sale_row_numbers: list[int] = []
     shipping_entries: list[dict] = []
     shipping_row_numbers: list[int] = []
+    adjustment_entries: list[dict] = []
+    adjustment_row_numbers: list[int] = []
 
     for i, row in enumerate(all_rows[1:], start=2):
         row = list(row) + [""] * (len(NEW_ENTRIES_HEADERS) - len(row))
@@ -477,14 +482,14 @@ def process_new_entries(doc: gspread.Spreadsheet) -> int:
             continue
 
         entry_type = row[2].strip().lower()
-        if entry_type not in ("sale", "purchase", "shipping", ""):
+        if entry_type not in ("sale", "purchase", "shipping", "adjustment", ""):
             ws.update_cell(i, _STATUS_COL, f"✗ Invalid type: '{row[2].strip()}'")
-            print(f"  [new_entries] invalid type '{row[2].strip()}' for '{description}' — valid values: sale, purchase, shipping")
+            print(f"  [new_entries] invalid type '{row[2].strip()}' for '{description}' — valid values: sale, purchase, shipping, adjustment")
             continue
         if not entry_type:
             entry_type = "purchase"
 
-        raw_amount = row[3].strip().lstrip("$").replace(",", "") or None
+        raw_amount = row[3].strip().replace("$", "").replace(",", "") or None
         entry = {
             "purchase_date":  date_val,
             "description":    description,
@@ -499,11 +504,14 @@ def process_new_entries(doc: gspread.Spreadsheet) -> int:
         elif entry_type == "shipping":
             shipping_entries.append(entry)
             shipping_row_numbers.append(i)
+        elif entry_type == "adjustment":
+            adjustment_entries.append(entry)
+            adjustment_row_numbers.append(i)
         else:
             purchase_entries.append(entry)
             purchase_row_numbers.append(i)
 
-    if not purchase_entries and not sale_entries and not shipping_entries:
+    if not purchase_entries and not sale_entries and not shipping_entries and not adjustment_entries:
         return 0
 
     synced_count = 0
@@ -524,6 +532,12 @@ def process_new_entries(doc: gspread.Spreadsheet) -> int:
     if shipping_entries:
         for idx, record_id in _insert_manual_shipping(shipping_entries).items():
             row_num = shipping_row_numbers[idx]
+            updates.append({"range": f"H{row_num}:I{row_num}", "values": [[f"✓ Synced {today_str}", record_id]]})
+            synced_count += 1
+
+    if adjustment_entries:
+        for idx, record_id in _insert_manual_adjustment(adjustment_entries).items():
+            row_num = adjustment_row_numbers[idx]
             updates.append({"range": f"H{row_num}:I{row_num}", "values": [[f"✓ Synced {today_str}", record_id]]})
             synced_count += 1
 
@@ -551,6 +565,11 @@ def _delete_manual_entry(record_id: str) -> tuple[bool, str]:
             elif record_id.startswith("SHIP-"):
                 cur.execute(
                     "DELETE FROM order_fees WHERE billing_transaction_id = %s AND fee_type = 'SHIPPING_MANUAL'",
+                    (record_id,),
+                )
+            elif record_id.startswith("ADJ-"):
+                cur.execute(
+                    "DELETE FROM order_fees WHERE billing_transaction_id = %s AND fee_type = 'ADJUSTMENT_MANUAL'",
                     (record_id,),
                 )
             else:
@@ -689,6 +708,45 @@ def _insert_manual_shipping(entries: list[dict]) -> dict[int, str]:
     return synced
 
 
+def _insert_manual_adjustment(entries: list[dict]) -> dict[int, str]:
+    """
+    Insert manual adjustments (e.g. buyer refunds paid outside eBay) into order_fees
+    as ADJUSTMENT_MANUAL DEBIT rows.
+    Returns {index: billing_transaction_id} for each successfully inserted entry.
+    """
+    conn = get_connection()
+    synced: dict[int, str] = {}
+    try:
+        with conn.cursor() as cur:
+            for i, entry in enumerate(entries):
+                try:
+                    cur.execute("SAVEPOINT sp")
+                    txn_id = f"ADJ-{uuid.uuid4().hex[:16]}"
+                    cur.execute(
+                        """
+                        INSERT INTO order_fees (
+                            billing_transaction_id, transaction_date, fee_type,
+                            booking_entry, amount, group_name
+                        ) VALUES (%s, %s, 'ADJUSTMENT_MANUAL', 'DEBIT', %s, %s)
+                        """,
+                        (
+                            txn_id,
+                            entry["purchase_date"],
+                            entry["total_cost"],
+                            entry["group_name"],
+                        ),
+                    )
+                    synced[i] = txn_id
+                    cur.execute("RELEASE SAVEPOINT sp")
+                except Exception as e:
+                    cur.execute("ROLLBACK TO SAVEPOINT sp")
+                    print(f"  [new_entries] failed to insert adjustment '{entry['description']}': {e}")
+        conn.commit()
+    finally:
+        conn.close()
+    return synced
+
+
 # ── Sheet writing ─────────────────────────────────────────────────────────────
 
 def _open_sheet(doc_id: str, creds_path: str) -> gspread.Spreadsheet:
@@ -797,11 +855,12 @@ def write_pl_tab(doc: gspread.Spreadsheet, sales_row_count: int, purchases_row_c
     pg  = f"Purchases!G2:G{purchases_end}"   # Purchases group col
     ag  = f"'Ad Fees'!H2:H{ad_fees_end}"     # Ad Fees group col
     ai  = f"'Ad Fees'!I2:I{ad_fees_end}"     # Ad Fees category col
+    ab  = f"'Ad Fees'!J2:J{ad_fees_end}"     # Ad Fees booking_entry col
     sd  = f"Sales!D2:D{sales_end}"           # Sales net_payout
     pc  = f"Purchases!D2:D{purchases_end}"   # Purchases total_cost
     ac  = f"'Ad Fees'!C2:C{ad_fees_end}"     # Ad Fees amount
 
-    headers = [["group", "net_payout", "costs", "ad_fees", "shipping_cost", "profit"]]
+    headers = [["group", "net_payout", "costs", "ad_fees", "shipping_cost", "adjustments", "profit"]]
     data = [
         [
             f'=IFERROR(UNIQUE(FILTER({{{sg};{pg};{ag}}},{{{sg};{pg};{ag}}}<>"")),"")',
@@ -809,7 +868,8 @@ def write_pl_tab(doc: gspread.Spreadsheet, sales_row_count: int, purchases_row_c
             f'=IFERROR(ARRAYFORMULA(SUMIF({pg},A2:A,{pc})),"")',
             f'=IFERROR(BYROW(A2:A,LAMBDA(g,IF(g="","",SUMIFS({ac},{ag},g,{ai},"Ad Fee")))),"")' ,
             f'=IFERROR(BYROW(A2:A,LAMBDA(g,IF(g="","",SUMIFS({ac},{ag},g,{ai},"Shipping")))),"")' ,
-            '=IFERROR(B2:B-C2:C-D2:D-E2:E,"")',
+            f'=IFERROR(BYROW(A2:A,LAMBDA(g,IF(g="","",SUMIFS({ac},{ag},g,{ai},"Adjustment",{ab},"CREDIT")-SUMIFS({ac},{ag},g,{ai},"Adjustment",{ab},"DEBIT")))),"")' ,
+            '=IFERROR(B2:B-C2:C-D2:D-E2:E+F2:F,"")',
         ]
     ]
 

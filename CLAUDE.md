@@ -8,19 +8,22 @@ Monorepo for Pacific Cards Co. eBay operations. Three independent subprojects sh
 Daily pipeline fetching eBay data into Supabase. Runs via `analytics-ingest.yml` at 12:00 UTC (5am PT).
 
 Steps in order:
-1. `sync_listings` — active listings → `listing_metadata`
+1. `sync_listings` — active listings → `listing_metadata` (also backfills `quantity`/`quantity_sold` and, incrementally, `category_id`/`category_name`)
 2. `fetch_analytics` — traffic metrics → `listing_metrics_raw`
 3. `fetch_orders` — order line items → `orders_raw`
 4. `fetch_finances` — all financial transactions → `order_fees`
 5. `compute_metrics` — derived metrics → `listing_metrics_computed`
-6. `send_daily_report` — HTML email with yesterday's metrics for configured listings
+6. `traffic_dashboard.generate_dashboard` — writes `docs/traffic/traffic_data.json`, committed back to the repo by the workflow so GitHub Pages picks it up
 
-**Daily email report:**
-- Listings configured in `traffic_analytics/report_listings.json` (array of `{id, name}` — edit on GitHub to add/remove)
-- Metrics per listing: Impressions, Views, CTR, Orders, Qty Sold, Ord/1k (orders per 1,000 impressions)
-- Each metric shows value + % change vs. day before (DoD) and same day last week (WoW)
-- Green = positive %, red = negative; sends to `GMAIL_ADDRESS` via SMTP
-- No Streamlit dashboard — email replaced it (2026-06-20)
+**Traffic Dashboard (GitHub Pages, `docs/traffic/`)** — live at `pacificcards.github.io/ebay-tools/traffic/`:
+- All active/active_hidden listings in one sortable table: Listing (links to the live eBay item) | Price | Qty | Impressions | Views | CTR | 7-day Views sparkline
+- Date range picker (1D / 7D / Custom, default 1D) controls the table's aggregation window; each metric shows value + delta vs. the equivalent prior period
+- Search box, category filter (from `listing_metadata.category_name`), "hide sold out (qty 0)" toggle (checked by default)
+- Click a row to expand Impressions/Views/CTR detail charts with hover tooltips
+- KPI row: Sales (Yesterday, $ primary + Units/Orders each with their own delta), Inventory Value (combined with active listing count), Traffic (Yesterday: Impressions/Views/CTR side by side)
+- Worst Performers section (jump button in header): Lowest Impressions (≤25 over trailing 7d) and Lowest CTR (0% at ≥50 impressions), both sortable on every column, sorted by price by default so the costliest problems surface first; listings with zero data in the window are excluded rather than mislabeled (see pagination bug below)
+- **Daily email report deprecated 2026-08-08** — this dashboard replaced it; `send_daily_report.py` and `report_listings.json` were deleted, and the workflow step removed
+- Generator: `traffic_dashboard/generate_dashboard.py`
 
 ### 2. P&L Accounting (`pl/`)
 Google Sheets-based P&L. Script: `pl/sync_to_sheets.py`. Runs daily via `pl-ingest.yml` (triggers after analytics ingest). GitHub Action name: **"P&L ingest"** (triggerable manually from Actions tab).
@@ -40,13 +43,14 @@ Sheet tabs: **Sales**, **Purchases**, **Ad Fees**, **P&L by Group**, **New Entri
   - `order_id` populated for SHIPPING_LABEL rows; blank for NON_SALE_CHARGE (ad spend has no order-level attribution)
   - `listing_id` + `title` populated for most rows; derived from `listing_metadata` or `orders_raw` via join
   - `group` (col H) auto-populated from matching order (SHIPPING_LABEL) or matching listing (NON_SALE_CHARGE) via SQL COALESCE; user-editable and persisted to `order_fees.group_name`
-  - `category` (col I) auto-computed, not editable: NON_SALE_CHARGE→"Ad Fee", SHIPPING_LABEL/SHIPPING_MANUAL→"Shipping", else→"Other"
+  - `category` (col I) auto-computed, not editable: NON_SALE_CHARGE→"Ad Fee", SHIPPING_LABEL DEBIT/SHIPPING_MANUAL→"Shipping", REFUND/CREDIT/ADJUSTMENT/SHIPPING_LABEL CREDIT/ADJUSTMENT_MANUAL→"Adjustment" (planned — currently maps to "Other"), else→"Other"
 - **P&L by Group**: `group | net_payout | costs | ad_fees | shipping_cost | profit`
   - `net_payout` = SUMIF(Sales!D) per group
   - `costs` = SUMIF(Purchases!D) per group
   - `ad_fees` = BYROW+LAMBDA SUMIFS(Ad Fees!C, group, "Ad Fee") per group
   - `shipping_cost` = BYROW+LAMBDA SUMIFS(Ad Fees!C, group, "Shipping") per group — includes both eBay SHIPPING_LABEL and manual SHIPPING_MANUAL rows
   - `profit` = net_payout − costs − ad_fees − shipping_cost
+  - **Planned**: add `adjustments` column between `shipping_cost` and `profit`; profit formula becomes `net_payout − costs − ad_fees − shipping_cost + adjustments` (signed column: positive = net credit/refund received, negative = net refund paid out)
 - **New Entries**: `date | description | type | amount | vendor | payment_method | group | status | record_id`
   - `record_id` (col 9) — stamped on insert: `MANUAL-{hex}` for sales, numeric `import_queue.id` for purchases, `SHIP-{hex}` for shipping
   - Deletion: set `status` to anything containing "mark" + "delet" (e.g. "Marked for Deletion") → hard DELETE from DB, stamp "Deleted {date}"
@@ -70,6 +74,7 @@ Sheet tabs: **Sales**, **Purchases**, **Ad Fees**, **P&L by Group**, **New Entri
 | `purchase` or blank | Purchases tab (`import_queue`) | numeric id | default |
 | `sale` | Sales tab (`orders_raw`) | `MANUAL-{hex16}` | gross_sale blank, net_payout = entered amount |
 | `shipping` | Ad Fees tab (`order_fees` as SHIPPING_MANUAL) | `SHIP-{hex16}` | appears with category="Shipping"; flows into P&L shipping_cost |
+| `adjustment` | Ad Fees tab (`order_fees` as ADJUSTMENT_MANUAL DEBIT) | `ADJ-{hex16}` | **planned** — appears with category="Adjustment"; flows into P&L adjustments |
 | anything else | — | stamps `✗ Invalid type: '...'` | skipped |
 
 - Group assigned in New Entries carries through to the destination tab correctly
@@ -321,9 +326,10 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 - cron-job.org API key is in `.claude/settings.local.json` (not in repo)
 - **Supabase schema changes must be pushed atomically with code:** the daily GHA jobs run whatever is on `main`, not local state. A local-only DB migration (e.g. a column rename) will crash the live job the next time it runs until the matching code is pushed. Always commit+push schema-dependent code changes in the same sitting as the migration, staging only the affected files by name (never `git add -A`, since this repo commonly has unrelated WIP sitting uncommitted).
 - **`listing_metrics_raw` / `listing_metrics_computed` CTR columns:** `ctr_ebay_search_page` (renamed from `ctr` 2026-07-29) is eBay's own `CLICK_THROUGH_RATE` metric — search-results-page views ÷ search-results-page impressions only. `ctr_calculated` is `views_total / impressions_all_sources` (as of 2026-07-31 — previously divided by the narrower `impressions_search_and_store`). They will not match; this is expected, not a bug.
-- **`listing_metrics_raw` impressions columns (renamed 2026-07-31 to stop two different columns both being called "total"):** `impressions_search_and_store` (was `impressions_total`) = eBay's `LISTING_IMPRESSION_TOTAL` = search-results-page + store impressions ONLY, despite the misleading eBay metric name. `impressions_all_sources` (new) = eBay's `TOTAL_IMPRESSION_TOTAL` = every placement (search, store, promoted, off-eBay, etc.) — this is the one that matches the Seller Hub traffic page, confirmed empirically 2026-07-29 to run 4-9x higher than `impressions_search_and_store`. User decision (2026-07-31): `impressions_all_sources` is the one that matters — it's now the denominator for `ctr_calculated`, `units_per_1k_impr`, and the daily email's Impressions/CTR/Ord-1k rows. `impressions_search_and_store` is still fetched/stored but no longer feeds any derived metric.
+- **`listing_metrics_raw` impressions columns (renamed 2026-07-31 to stop two different columns both being called "total"):** `impressions_search_and_store` (was `impressions_total`) = eBay's `LISTING_IMPRESSION_TOTAL` = search-results-page + store impressions ONLY, despite the misleading eBay metric name. `impressions_all_sources` (new) = eBay's `TOTAL_IMPRESSION_TOTAL` = every placement (search, store, promoted, off-eBay, etc.) — this is the one that matches the Seller Hub traffic page, confirmed empirically 2026-07-29 to run 4-9x higher than `impressions_search_and_store`. User decision (2026-07-31): `impressions_all_sources` is the one that matters — it's now the denominator for `ctr_calculated`, `units_per_1k_impr`, and the traffic dashboard's KPIs/table. `impressions_search_and_store` is still fetched/stored but no longer feeds any derived metric.
 - **`impressions_all_sources` has no history before 2026-07-31** — it only started populating the day it was added; `fetch_analytics.py`'s catch-up logic only backfills genuinely *missing* dates, so existing rows in the last 30 days won't retroactively get this column filled just because it now exists. Expect `ctr_calculated`/`units_per_1k_impr`/the email's CTR & Ord-1k DoD/WoW columns to show blank for comparisons that reach back before 2026-07-31, until either the window ages past it naturally or someone force-backfills.
 - **eBay Analytics API (`traffic_report`) rate limit:** hit a persistent 429 after heavy ad-hoc diagnostic pulls (paginated, uncached listing_ids-less calls) on 2026-07-29; did not clear after a 45-min cooldown, only cleared the next day — behaves like a daily quota, not a short burst throttle. When pulling ad-hoc data for a small number of listings, always use the `listing_ids:{id1|id2}` filter (single lightweight call, no pagination) rather than unfiltered `dimension=LISTING` calls that paginate through the full catalog.
+- **`offset` is NOT honored by `traffic_report` for `dimension=LISTING` — do not use offset-based pagination on this endpoint, ever.** Confirmed live 2026-08-07: `offset=0` and `offset=200` return byte-identical results (same first ~200 records every time), and the point where pages start coming back empty shifts between back-to-back identical calls with no `warnings` field populated to signal it. This silently starved ~40% of active listings of any traffic data for weeks (whichever ~200 listings the API's default ordering happened to surface first got fetched every night; everyone else got nothing, invisibly). `fetch_analytics.py` was rewritten to query via the `listing_ids` filter instead, batched at eBay's documented max of 200 IDs per call (error 50028 above that), using our own known active listing_ids from `listing_metadata` — no pagination needed since we're asking for exactly the listings we want. If you ever see `dimension=LISTING` combined with `offset=` in this codebase again, it's a regression.
 
 ## Open TODOs
 
@@ -336,15 +342,13 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 
 ### P&L
 1. **Listing-level hierarchy refactor** — Group > Listing > Order; new `listing_groups` table; design complete, not yet built (see full spec in P&L section above)
-2. Handle refunds — refunded orders show as positive revenue in Sales tab
+2. **Adjustments feature** — design complete (2026-08-07), not yet built. New "Adjustment" category in Ad Fees tab captures: `REFUND` (buyer refunds), `CREDIT` (eBay credits), `ADJUSTMENT` (eBay misc), `ADJUSTMENT_MANUAL` (New Entries), `SHIPPING_LABEL` CREDIT (refunded labels). Requires: (a) new `booking_entry` col J in Ad Fees tab; (b) updated category CASE in `fetch_ad_fees()` SQL; (c) new `adjustments` column in P&L by Group (CREDIT sum − DEBIT sum per group, signed — positive = net money back); (d) `adjustment` type in New Entries → `ADJUSTMENT_MANUAL` DEBIT in `order_fees`, `ADJ-{hex16}` record_id; (e) profit formula = net_payout − costs − ad_fees − shipping_cost + adjustments. Also fixes current bug: SHIPPING_LABEL CREDIT rows currently inflate `shipping_cost` (treated as Shipping category regardless of booking_entry).
 3. **Delete workflow** — fully operational as of 2026-06-27: record_id stamped on New Entries insert, backfill complete, fuzzy "mark"+"delet" trigger wired up, tested with Yamamoto Grading (id 337 hard-deleted, purchase count 303 → 302)
 
 ### Traffic Analytics
-1. **`TOTAL_IMPRESSION_TOTAL` now fetched, stored, and wired in as the primary impressions denominator (2026-07-31)** — `impressions_all_sources`. `ctr_calculated`, `units_per_1k_impr`, and the daily email's Impressions/CTR/Ord-1k rows all use it now. `impressions_search_and_store` (the old, narrower number) is still fetched/stored but no longer feeds anything downstream.
-2. **`impressions_all_sources` needs a backfill decision** — it has no data before 2026-07-31 (see Constraints), so DoD/WoW comparisons for CTR and Ord-1k in the email will show blank until the window ages past that date or someone runs a manual backfill. Not yet decided whether to force-backfill.
-3. Migration for the 2026-07-31 rename/add was applied to Supabase and confirmed via a successful push-triggered `analytics-ingest.yml` run (id 30597459145) — no action needed, resolved.
-4. Pipeline outage 2026-07-29→30 (unpushed `ctr` column rename crashed the daily job) is resolved and pushed — no action needed, documented in Constraints/Session Log as a process gotcha to avoid repeating.
-5. **Open question: is `views_total` actually comprehensive?** Same naming-trap concern as impressions (`LISTING_VIEWS_TOTAL` mirrors the `LISTING_IMPRESSION_TOTAL` pattern that turned out to be the narrow one). Not verified — no eBay docs access from this environment, no working DB connection from this sandbox to check whether `views_search + views_store + views_direct + views_off_ebay + views_other_ebay` sums to `views_total`. User wants to check this later by comparing `views_total` against the Seller Hub traffic page, the same way the impressions gap was originally caught.
+1. **Backfill the 8/6 gap** — the 2026-08-07 pagination-bug backfill (see Constraints) covered 7/24–8/5 in full but hit the eBay API's daily rate limit partway through 8/6, leaving it partially stale. Low priority per user ("if we need more specific backfills later, I will request it") — re-run the same corrected `_fetch_window_with_retry` loop for just that date when convenient.
+2. **Open question: is `views_total` actually comprehensive?** Same naming-trap concern as impressions (`LISTING_VIEWS_TOTAL` mirrors the `LISTING_IMPRESSION_TOTAL` pattern that turned out to be the narrow one) — not yet verified against Seller Hub. Worth checking now that the `listing_ids`-filter fetch method (see Constraints) is proven reliable for this kind of live comparison.
+3. `impressions_search_and_store` (the narrow, non-Seller-Hub-matching impressions number) is still fetched/stored for reference but doesn't feed anything downstream; `impressions_all_sources` is the one used everywhere (CTR, dashboard, KPIs).
 
 ### Market Monitor (live and running)
 Fully operational. Daily pipeline runs at 11:00 UTC (4am PDT) via `market-monitor.yml`. Sold comps now fetched **on-demand** via "↻ Refresh Comps" button on the dashboard (weekly cron deprecated). Dashboard at `pacificcards.github.io/ebay-tools/market/`. 17 active queries as of 2026-07-07.
@@ -379,6 +383,27 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - Whether to expose raw price range alongside the two recommendations
 
 ## Session Log
+
+### 2026-08-07 to 2026-08-08 — Traffic Dashboard built, shipped, and pagination bug found/fixed; daily email deprecated
+- Traffic Analytics: designed and shipped the all-listing Traffic Dashboard (GitHub Pages, `docs/traffic/`) — mockup iterated live as a Claude Artifact first (URL kept stable across ~15 rounds of feedback), then ported to production once approved. Same fetch-script → JSON → GHA-commit → Pages pattern as Market Monitor.
+- Traffic Analytics: added `quantity`, `quantity_sold`, `category_id`, `category_name` to `listing_metadata` — quantity comes free from the existing `GetMyeBaySelling` call (was fetched but never parsed/stored); category requires a separate `GetItem` call per listing (confirmed `GetMyeBaySelling` cannot return `PrimaryCategory` even with `OutputSelector`), so `sync_listings.py` now backfills it incrementally — one `GetItem` call per listing only the first time it's seen, not nightly for everyone, since category essentially never changes after publish. One-time backfill for all 445 listings done via a live batch pull, reusing the same data for both the mockup and the real DB.
+- Traffic Analytics: **major bug found and fixed — eBay's `traffic_report` endpoint does not honor `offset` for `dimension=LISTING`.** Confirmed live: `offset=0` and `offset=200` returned byte-identical results, and the point where pages went empty shifted between back-to-back identical calls. This meant `fetch_analytics.py` had been silently re-fetching the same ~200 listings every night since the pipeline was built, while the rest (192-200 of 457 active listings, ~40%) got zero data — not reported-as-zero, just never fetched, which read as "no traffic" in the dashboard/email. Root cause found via a forked subagent (`/subtask`) that spot-checked 5 "zero impression" listings against the live API and found real nonzero traffic. Fix: rewrote `_fetch_window`/`fetch_and_store` to query via the `listing_ids` filter (max 200 per call, confirmed via error 50028) using our own known active listing_ids, instead of unfiltered `dimension=LISTING` + broken offset pagination. Verified 445/445 coverage post-fix (was ~200). See Constraints for the permanent gotcha.
+- Traffic Analytics: backfilled the last 14 days with the corrected fetch logic (user explicitly capped scope at 14 days, not the full 30-day catch-up window — "it's fine if we're missing some data"). 13 of 14 days reached full coverage; 8/6 stayed partial after hitting the API's daily rate limit mid-backfill, left for a later on-request retry.
+- Traffic Analytics: added a "Worst Performers" section (built by a forked subagent) — Lowest Impressions (≤25 over trailing 7d) and Lowest CTR (0% at ≥50 impressions, chosen after a flat percentage cutoff proved too loose against this catalog's low CTR distribution), both sortable on every column, both explicitly excluding listings with zero data-points in the window rather than mislabeling the pagination bug's victims as genuine zero-traffic listings.
+- Traffic Analytics: fixed a real cross-environment bug in the detail-chart tooltips — the shared tooltip `<div>` wasn't a descendant of any chart's own container, so its `position:fixed`-computed-from-viewport-coordinates math broke specifically when rendered inside the Claude Artifact viewer (which applies a transform to an ancestor, redefining the containing block for fixed/absolute descendants — a general CSS gotcha, not Artifact-specific in cause). Fixed by giving each chart its own tooltip nested in its own `position:relative` container with purely local coordinates, which can't be affected by anything happening outside that box.
+- Traffic Analytics: **daily email deprecated** — user decided the GitHub Pages dashboard fully replaces it ("just as easy for me to visit the github dashboard"). Deleted `traffic_analytics/send_daily_report.py` and `traffic_analytics/report_listings.json` (orphaned, only ever used by the deleted script); removed the "Send daily report" step from `analytics-ingest.yml`.
+- Traffic Analytics: numerous dashboard UI iterations from user feedback — KPI row restructured multiple times (Sales $/Units/Orders each with own delta; Active Listings + Inventory Value merged into one tile; Views tile expanded to Impressions/Views/CTR side by side), value+delta stacked and right-aligned for scannability, Sales deltas switched from percentage to absolute $/unit change, KPI row kept at 3 columns instead of collapsing to 1 at narrow widths, delta arrow+percentage kept on one line via `white-space:nowrap`, default sort changed to Views descending, default date preset changed to 1D, jump-to-Worst-Performers button added.
+- Every production push in this session hit the same pattern at least twice: the automated pipeline (or another session) committed a fresh `docs/traffic/traffic_data.json` snapshot between local edits and push — resolved each time by rebasing and regenerating the JSON fresh rather than attempting to merge the blob.
+
+### 2026-08-07 — Adjustments feature design
+- P&L: diagnosed how cancelled/refunded eBay sales are currently handled: cancelled orders stay in `orders_raw` → show in Sales tab as positive revenue; REFUND transactions land in `order_fees` → appear in Ad Fees tab as category "Other" → excluded from all P&L formulas. Net: refunded sales overstate profit.
+- P&L: designed new "Adjustments" feature. Scope: REFUND (buyer refunds), CREDIT (eBay credits incl. shipping label refunds), ADJUSTMENT (eBay misc), ADJUSTMENT_MANUAL (manual entries), SHIPPING_LABEL+CREDIT (currently mis-categorized as Shipping, inflating shipping_cost). Design decisions:
+  - `booking_entry` added as col J to Ad Fees tab — needed to sign the P&L formula
+  - `adjustments` = SUMIFS(category="Adjustment" AND booking_entry="CREDIT") − SUMIFS(...="DEBIT") per group — signed: positive = net credit, negative = net cost
+  - profit = net_payout − costs − ad_fees − shipping_cost + adjustments
+  - New Entries `type = adjustment` → ADJUSTMENT_MANUAL DEBIT into `order_fees`, record_id = ADJ-{hex16}
+  - SHIPPING_LABEL CREDIT moves from "Shipping" to "Adjustment" (bug fix)
+- Implementation not started — plan captured in CLAUDE.md and next.md
 
 ### 2026-07-31 (continued) — Switch CTR/Ord-1k denominator to the comprehensive impressions number
 - Traffic Analytics: user decision — `impressions_all_sources` (eBay `TOTAL_IMPRESSION_TOTAL`) is "the impressions metric that matters"; switched `compute_metrics.py`'s `ctr_calculated` and `units_per_1k_impr`, plus `send_daily_report.py`'s Impressions/CTR/Ord-1k rows, from `impressions_search_and_store` to `impressions_all_sources`
