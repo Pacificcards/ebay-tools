@@ -43,14 +43,6 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: python -m traffic_analytics.compute_metrics
 
-      - name: Send daily report
-        if: github.event_name != 'push'
-        env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-        run: python -m traffic_analytics.send_daily_report
-
       - name: Generate traffic dashboard
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
