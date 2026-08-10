@@ -28,7 +28,7 @@ def generate() -> None:
                 SELECT lm.listing_id, lm.title, lm.current_price,
                        COALESCE(lm.quantity, 0) - COALESCE(lm.quantity_sold, 0) AS qty_remaining,
                        lm.category_name,
-                       r.date, r.impressions_all_sources, r.views_total
+                       r.date, r.impressions_all_sources, r.views_total, r.impressions_search_and_store
                 FROM listing_metadata lm
                 JOIN listing_metrics_raw r ON r.listing_id = lm.listing_id
                 WHERE lm.status IN ('active', 'active_hidden')
@@ -37,7 +37,7 @@ def generate() -> None:
             rows = cur.fetchall()
 
             listings: dict = {}
-            for lid, title, price, qty, category, d, impr, views in rows:
+            for lid, title, price, qty, category, d, impr, views, impr_narrow in rows:
                 entry = listings.setdefault(lid, {
                     "title": title,
                     "price": float(price) if price is not None else None,
@@ -45,7 +45,7 @@ def generate() -> None:
                     "category": category,
                     "days": {},
                 })
-                entry["days"][d.isoformat()] = [impr, views]
+                entry["days"][d.isoformat()] = [impr, views, impr_narrow]
 
             # Include active listings with no traffic rows yet (e.g. brand new) so they
             # still show up in the table with qty/price/category, just with an empty trend.

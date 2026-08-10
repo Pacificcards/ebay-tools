@@ -243,7 +243,9 @@
   .qty-pill.zero { background: color-mix(in srgb, var(--critical) 12%, var(--surface)); color: var(--critical); border-color: color-mix(in srgb, var(--critical) 35%, var(--border)); }
 
   .metric-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
-  .metric-val { font-size: 13.5px; font-weight: 600; color: var(--text); line-height: 1.3; }
+  .metric-val { font-size: 13.5px; font-weight: 600; color: var(--text); line-height: 1.3; white-space: nowrap; }
+  .metric-pair { display: inline-flex; align-items: center; white-space: nowrap; }
+  .metric-divider { color: var(--text-3); font-weight: 400; margin: 0 4px; }
   .metric-delta { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; font-weight: 600; line-height: 1.3; white-space: nowrap; }
   .metric-delta.up { color: var(--good); }
   .metric-delta.down { color: var(--critical); }
@@ -437,7 +439,7 @@
             <th data-sort="title" style="text-align:left">Listing<span class="arrow">▾</span></th>
             <th data-sort="price">Price<span class="arrow">▾</span></th>
             <th data-sort="qty">Qty<span class="arrow">▾</span></th>
-            <th data-sort="impressions">Impressions<span class="arrow">▾</span></th>
+            <th data-sort="impressions">Impr (Narrow|All)<span class="arrow">▾</span></th>
             <th data-sort="views">Views<span class="arrow">▾</span></th>
             <th data-sort="ctr">CTR<span class="arrow">▾</span></th>
             <th>Views Trend (7D)</th>
@@ -575,8 +577,10 @@
     const [pStart, pEnd] = priorWindow(start, end);
     const impr = sumRange(l.days, start, end, 0);
     const views = sumRange(l.days, start, end, 1);
+    const imprNarrow = sumRange(l.days, start, end, 2);
     const imprP = sumRange(l.days, pStart, pEnd, 0);
     const viewsP = sumRange(l.days, pStart, pEnd, 1);
+    const imprNarrowP = sumRange(l.days, pStart, pEnd, 2);
     const ctr = (impr && impr > 0) ? views / impr : null;
     const ctrP = (imprP && imprP > 0) ? viewsP / imprP : null;
     // sparkline: fixed last-7-days window of views, independent of the picker
@@ -589,10 +593,11 @@
       d = addDays(d, 1);
     }
     return {
-      l, impr, views, ctr,
+      l, impr, views, ctr, imprNarrow,
       imprDelta: pctDelta(impr, imprP),
       viewsDelta: pctDelta(views, viewsP),
       ctrDelta: pctDelta(ctr, ctrP),
+      imprNarrowDelta: pctDelta(imprNarrow, imprNarrowP),
       sparkVals,
     };
   }
@@ -666,7 +671,7 @@
     const [start, end] = windowFor(state.preset);
     document.getElementById('data-note').textContent =
       'Showing ' + fmtDateShort(start) + '–' + fmtDateShort(end) +
-      '. Impressions (all-sources) tracked from ' + fmtDateLong(IMPR_START) + ' — earlier dates show views only.';
+      '. Impressions shown as narrow|all-sources — narrow is search+store only; all-sources is the one that matches Seller Hub and is tracked from ' + fmtDateLong(IMPR_START) + ' onward (earlier dates show narrow only).';
 
     let rows = listings.map(computeRow);
 
@@ -730,7 +735,10 @@
       tdQty.appendChild(qtyPill);
 
       const tdImpr = document.createElement('td');
-      tdImpr.innerHTML = '<div class="metric-stack"><span class="metric-val">' + fmtNum(r.impr) + '</span>' + deltaHtml(r.imprDelta) + '</div>';
+      tdImpr.innerHTML = '<div class="metric-stack">' +
+        '<span class="metric-val">' + fmtNum(r.imprNarrow) + '<span class="metric-divider">|</span>' + fmtNum(r.impr) + '</span>' +
+        '<span class="metric-pair">' + deltaHtml(r.imprNarrowDelta) + '<span class="metric-divider">|</span>' + deltaHtml(r.imprDelta) + '</span>' +
+        '</div>';
 
       const tdViews = document.createElement('td');
       tdViews.innerHTML = '<div class="metric-stack"><span class="metric-val">' + fmtNum(r.views) + '</span>' + deltaHtml(r.viewsDelta) + '</div>';
