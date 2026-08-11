@@ -584,7 +584,27 @@
         dom.takehomeValue.disabled = false;
       }
     });
+
+    syncBreakdownHeights();
   }
+
+  // Breakdown line count differs by family (Dealernet's is shorter than eBay's) and even within a
+  // family (the low-tier/credit lines only appear conditionally), so its natural height varies per
+  // column. Everything below it (the variable rows) needs to start on the same line across every
+  // column regardless, so force all breakdowns to match the tallest one currently on screen.
+  function syncBreakdownHeights() {
+    if (columns.length === 0) return;
+    columns.forEach((col) => { col.dom.breakdown.style.minHeight = '0px'; });
+    let maxH = 0;
+    columns.forEach((col) => { maxH = Math.max(maxH, col.dom.breakdown.scrollHeight); });
+    columns.forEach((col) => { col.dom.breakdown.style.minHeight = `${maxH}px`; });
+  }
+
+  let resizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(syncBreakdownHeights, 100);
+  });
 
   // ---- Add-scenario control (now in the page header) ----
   const addBtnEl = document.getElementById('add-btn');
