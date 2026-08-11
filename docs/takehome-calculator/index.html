@@ -374,6 +374,7 @@
       if (r.feeCreditPct > 0) {
         html += `<div class="row sub credit"><span>FVF credit ${r.feeCreditPct}%</span><span>+${fmt(r.creditAmt)}</span></div>`;
       }
+      html += `<div class="row neg"><span>Total eBay Fee</span><span>-${fmt(r.fee)}</span></div>`;
     } else {
       html += `<div class="row sub neg"><span>Fee ${fmt(r.grossReceipt - r.tax)} × ${r.feeRatePct}%</span><span>-${fmt(r.fee)}</span></div>`;
     }
