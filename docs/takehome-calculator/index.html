@@ -146,7 +146,7 @@
     .takehome-row .value.na { color: var(--ink-faint); font-size: 12.5px; font-weight: 600; font-family: var(--font-sans); cursor: default; }
 
     /* ---- Vertical variable list ---- */
-    .var-list { display: flex; flex-direction: column; gap: 10px; padding: 12px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+    .var-list { display: flex; flex-direction: column; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
     .var-row { display: flex; flex-direction: column; gap: 4px; }
     .var-label { font-size: 10.5px; color: var(--ink-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
     .var-label .unit { font-weight: 400; text-transform: none; color: var(--ink-faint); margin-left: 3px; }
@@ -161,13 +161,19 @@
 
     /* ---- Collapsed advanced fields (same disclosure idiom as the Market Monitor dashboard) ---- */
     .advanced { margin: 0 0 12px; }
-    .advanced summary { cursor: pointer; list-style: none; font-size: 11px; font-weight: 700; color: var(--ink-muted); text-transform: uppercase; letter-spacing: .03em; padding: 2px 0; }
+    .advanced summary {
+      cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px;
+      font-size: 11px; font-weight: 700; color: var(--ink-muted); text-transform: uppercase; letter-spacing: .03em; padding: 3px 0;
+    }
+    .advanced summary:hover { color: var(--ink); }
     .advanced summary::-webkit-details-marker { display: none; }
-    .advanced summary::before { content: '▸ '; font-size: 9px; color: var(--ink-faint); }
-    .advanced[open] summary::before { content: '▾ '; }
+    .advanced summary::before {
+      content: '▶'; font-size: 10px; color: var(--ink-faint); transition: transform .15s; display: inline-block;
+    }
+    .advanced[open] summary::before { transform: rotate(90deg); }
     .advanced-fields { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
 
-    .breakdown { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-muted); border-top: 1px solid var(--border); padding-top: 10px; }
+    .breakdown { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-muted); border-top: 1px solid var(--border); padding-top: 10px; padding-bottom: 12px; }
     .breakdown .row { display: flex; justify-content: space-between; gap: 8px; padding: 2.5px 0; font-variant-numeric: tabular-nums; }
     .breakdown .row > span:first-child { font-family: var(--font-sans); color: var(--ink-muted); }
     .breakdown .sub > span:first-child { padding-left: 10px; color: var(--ink-faint); }
@@ -397,8 +403,11 @@
       </div>
       <div class="price-caption"></div>
       <div class="takehome-row"><span class="label">Takehome</span><button type="button" class="value" title="Click to anchor on this scenario">$—</button></div>
+      <div class="breakdown"></div>
       <div class="var-list"></div>
     `;
+
+    const breakdownEl = el.querySelector('.breakdown');
 
     const varList = el.querySelector('.var-list');
     defs.basic.forEach((fd) => varList.appendChild(buildFieldRow(col, fd)));
@@ -411,10 +420,6 @@
       defs.advanced.forEach((fd) => advList.appendChild(buildFieldRow(col, fd)));
       el.appendChild(details);
     }
-
-    const breakdownEl = document.createElement('div');
-    breakdownEl.className = 'breakdown';
-    el.appendChild(breakdownEl);
 
     const priceInput = el.querySelector('[data-price]');
     priceInput.value = col.price.toFixed(2);
