@@ -114,9 +114,18 @@
 
     .price-qty-row { display: flex; gap: 8px; align-items: flex-end; }
     .price-field { flex: 1; min-width: 0; }
-    .qty-field { width: 56px; flex-shrink: 0; }
+    .qty-field { width: 76px; flex-shrink: 0; }
 
     .price-label { display: block; font-size: 10.5px; color: var(--ink-muted); font-weight: 700; text-transform: uppercase; letter-spacing: .03em; margin-bottom: 5px; }
+    .label-row { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 5px; }
+    .label-row .price-label, .label-row .var-label { margin-bottom: 0; }
+
+    .sync-btn {
+      flex-shrink: 0; width: 16px; height: 16px; padding: 0; border: none; background: transparent;
+      color: var(--ink-faint); font-size: 11px; line-height: 1; cursor: pointer; border-radius: 3px;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .sync-btn:hover { color: var(--ink); background: var(--surface); }
     .price-input-wrap { display: flex; align-items: baseline; border: 1px solid var(--border); border-radius: 3px; background: var(--bg); padding: 6px 10px; }
     .price-input-wrap .currency { font-family: var(--font-mono); font-size: 19px; color: var(--ink-faint); margin-right: 2px; }
     .price-input { font-family: var(--font-mono); width: 100%; font-size: 22px; font-weight: 700; border: none; background: transparent; color: var(--ink); font-variant-numeric: tabular-nums; }
@@ -276,10 +285,10 @@
   const FIELD_DEFS = {
     ebay: {
       basic: [
-        { key: 'discountPct', label: 'List Discount', unit: '%', step: '0.01' },
-        { key: 'taxPct', label: 'Tax', unit: '%', step: '0.01' },
-        { key: 'shippingPaid', label: 'Shipping Paid', unit: '$', step: '0.01' },
-        { key: 'shippingCost', label: 'Shipping Cost', unit: '$', step: '0.01' },
+        { key: 'discountPct', label: 'List Discount', unit: '%', step: '0.01', sync: true },
+        { key: 'taxPct', label: 'Tax', unit: '%', step: '0.01', sync: true },
+        { key: 'shippingPaid', label: 'Shipping Paid', unit: '$', step: '0.01', sync: true },
+        { key: 'shippingCost', label: 'Shipping Cost', unit: '$', step: '0.01', sync: true },
         { key: 'feeCreditPct', label: 'FVF Credit', unit: '%', step: '0.01', note: 'Credit applied to the calculated Final Value Fee (e.g. the Same Day seller credit).' }
       ],
       advanced: [
@@ -291,9 +300,9 @@
     },
     dealernet: {
       basic: [
-        { key: 'taxPct', label: 'Tax', unit: '%', step: '0.01', note: 'Cancels out of Takehome — shown on Gross Receipt only.' },
-        { key: 'shippingPaid', label: 'Shipping Paid', unit: '$', step: '0.01' },
-        { key: 'shippingCost', label: 'Shipping Cost', unit: '$', step: '0.01' },
+        { key: 'taxPct', label: 'Tax', unit: '%', step: '0.01', note: 'Cancels out of Takehome — shown on Gross Receipt only.', sync: true },
+        { key: 'shippingPaid', label: 'Shipping Paid', unit: '$', step: '0.01', sync: true },
+        { key: 'shippingCost', label: 'Shipping Cost', unit: '$', step: '0.01', sync: true },
         { key: 'feeRatePct', label: 'Fee Rate', unit: '%', step: '0.01' }
       ],
       advanced: []
@@ -359,11 +368,37 @@
     dom.breakdown.innerHTML = html;
   }
 
+  // Copies one field's current value from `sourceCol` to every other live column that has that
+  // field (e.g. List Discount only exists on eBay columns, so Dealernet columns are skipped).
+  function syncField(sourceCol, fd) {
+    const value = sourceCol.vars[fd.key];
+    columns.forEach((col) => {
+      if (!(fd.key in col.vars)) return;
+      col.vars[fd.key] = value;
+      const input = col.dom.root.querySelector(`[data-var="${fd.key}"]`);
+      if (input) input.value = fmtField(fd, value); // also normalizes the source field's own display
+    });
+    recompute();
+  }
+
+  function syncQty(sourceCol) {
+    const value = sourceCol.qty;
+    columns.forEach((col) => {
+      col.qty = value;
+      const input = col.dom.root.querySelector('[data-qty]');
+      if (input) input.value = value;
+    });
+    recompute();
+  }
+
   function buildFieldRow(col, fd) {
     const fieldRow = document.createElement('label');
     fieldRow.className = 'var-row';
     fieldRow.innerHTML = `
-      <span class="var-label">${fd.label}<span class="unit">${fd.unit}</span></span>
+      <span class="label-row">
+        <span class="var-label">${fd.label}<span class="unit">${fd.unit}</span></span>
+        ${fd.sync ? `<button type="button" class="sync-btn" title="Sync ${fd.label} to all scenarios" aria-label="Sync ${fd.label} to all scenarios">↻</button>` : ''}
+      </span>
       <input type="number" step="${fd.step}" min="0" data-var="${fd.key}">
       ${fd.note ? `<span class="field-note">${fd.note}</span>` : ''}
     `;
@@ -376,6 +411,13 @@
     });
     if (fd.unit === '$') {
       input.addEventListener('blur', () => { input.value = fmtField(fd, col.vars[fd.key]); });
+    }
+    if (fd.sync) {
+      fieldRow.querySelector('.sync-btn').addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        syncField(col, fd);
+      });
     }
     return fieldRow;
   }
@@ -397,7 +439,10 @@
           <div class="price-input-wrap"><span class="currency">$</span><input type="number" step="0.01" min="0" class="price-input" data-price></div>
         </div>
         <div class="qty-field">
-          <span class="price-label">Qty</span>
+          <span class="label-row">
+            <span class="price-label">Qty</span>
+            <button type="button" class="sync-btn" title="Sync Qty to all scenarios" aria-label="Sync Qty to all scenarios">↻</button>
+          </span>
           <input type="number" step="1" min="1" class="qty-input" data-qty>
         </div>
       </div>
@@ -436,6 +481,11 @@
       const val = parseInt(qtyInput.value, 10);
       col.qty = isNaN(val) || val < 1 ? 1 : val;
       recompute();
+    });
+    el.querySelector('.qty-field .sync-btn').addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      syncQty(col);
     });
 
     el.querySelector('.col-name').addEventListener('input', (e) => { col.name = e.target.value; });
