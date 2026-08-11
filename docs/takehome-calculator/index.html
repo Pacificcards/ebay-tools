@@ -58,6 +58,7 @@
     input:focus-visible, button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 
     /* ---- Header ---- */
+    .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
     .brand-kicker { font-size: 11px; font-weight: 700; letter-spacing: .08em; color: var(--ink-faint); text-transform: uppercase; margin-bottom: 6px; }
     h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
     .subtitle { color: var(--ink-muted); font-size: 14.5px; margin-top: 6px; max-width: 66ch; line-height: 1.5; }
@@ -65,8 +66,27 @@
     .how-it-works { margin-top: 22px; border: 1px solid var(--border); border-left: 3px solid var(--ink-faint); padding: 12px 16px; font-size: 12.5px; color: var(--ink-muted); line-height: 1.6; background: var(--surface); }
     .how-it-works b { color: var(--ink); font-weight: 600; }
 
+    /* ---- Add-scenario control (header, top-right) ---- */
+    .add-tile { position: relative; flex-shrink: 0; margin-top: 2px; }
+    .add-btn {
+      font-family: var(--font-sans); font-size: 13px; font-weight: 600; padding: 8px 14px; border-radius: 6px;
+      border: 1px solid var(--border); background: var(--surface); color: var(--ink); cursor: pointer; white-space: nowrap;
+    }
+    .add-btn:hover { border-color: var(--ink-faint); }
+    .add-menu {
+      position: absolute; top: 100%; right: 0; margin-top: 6px; width: 220px; background: var(--surface); border: 1px solid var(--border);
+      border-radius: 6px; box-shadow: 0 8px 24px rgba(16,26,46,.12); overflow: hidden; z-index: 10;
+    }
+    .add-menu button {
+      display: block; width: 100%; text-align: left; padding: 10px 12px; border: none; background: transparent;
+      font-family: var(--font-sans); font-size: 12.5px; color: var(--ink); cursor: pointer; border-bottom: 1px solid var(--border);
+    }
+    .add-menu button:last-child { border-bottom: none; }
+    .add-menu button:hover { background: var(--bg); }
+    .add-menu .menu-label { padding: 8px 12px 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-faint); }
+
     /* ---- Columns row ---- */
-    .columns-row { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 28px; align-items: flex-start; }
+    .columns-row { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 24px; align-items: flex-start; }
 
     .slip { background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--border); border-radius: 4px; padding: 16px; flex: 1 1 240px; max-width: 300px; transition: border-color .15s, box-shadow .15s; }
     .slip.family-ebay { border-top-color: var(--ebay); }
@@ -92,6 +112,10 @@
     .family-ebay .family-tag { color: var(--ebay); }
     .family-dealernet .family-tag { color: var(--dealernet); }
 
+    .price-qty-row { display: flex; gap: 8px; align-items: flex-end; }
+    .price-field { flex: 1; min-width: 0; }
+    .qty-field { width: 56px; flex-shrink: 0; }
+
     .price-label { display: block; font-size: 10.5px; color: var(--ink-muted); font-weight: 700; text-transform: uppercase; letter-spacing: .03em; margin-bottom: 5px; }
     .price-input-wrap { display: flex; align-items: baseline; border: 1px solid var(--border); border-radius: 3px; background: var(--bg); padding: 6px 10px; }
     .price-input-wrap .currency { font-family: var(--font-mono); font-size: 19px; color: var(--ink-faint); margin-right: 2px; }
@@ -100,10 +124,29 @@
     .price-input-wrap:has(.price-input:focus-visible) { outline: 2px solid var(--ink); outline-offset: 1px; }
     .price-input:focus-visible { outline: none; }
 
-    .price-caption { font-size: 10.5px; color: var(--ink-faint); margin: 5px 0 16px; min-height: 13px; line-height: 1.35; }
+    .qty-input {
+      width: 100%; font-family: var(--font-mono); font-size: 16px; font-weight: 700; text-align: center;
+      padding: 8px 4px; border: 1px solid var(--border); border-radius: 3px; background: var(--bg); color: var(--ink);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .price-caption { font-size: 10.5px; color: var(--ink-faint); margin: 5px 0 0; min-height: 13px; line-height: 1.35; }
+
+    /* ---- Takehome: promoted directly under price ---- */
+    .takehome-row {
+      display: flex; justify-content: space-between; align-items: baseline; background: var(--bg);
+      border: 1px solid var(--border); border-radius: 3px; padding: 9px 12px; margin: 10px 0 14px;
+    }
+    .takehome-row .label { font-family: var(--font-sans); font-size: 11px; font-weight: 700; color: var(--ink-muted); text-transform: uppercase; letter-spacing: .03em; }
+    .takehome-row .value {
+      font-family: var(--font-mono); font-size: 20px; font-weight: 700; color: var(--positive); font-variant-numeric: tabular-nums;
+      border: none; background: transparent; padding: 0; cursor: pointer;
+    }
+    .takehome-row .value:not(:disabled):hover { text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
+    .takehome-row .value.na { color: var(--ink-faint); font-size: 12.5px; font-weight: 600; font-family: var(--font-sans); cursor: default; }
 
     /* ---- Vertical variable list ---- */
-    .var-list { display: flex; flex-direction: column; gap: 10px; padding: 12px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+    .var-list { display: flex; flex-direction: column; gap: 10px; padding: 12px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-bottom: 4px; }
     .var-row { display: flex; flex-direction: column; gap: 4px; }
     .var-label { font-size: 10.5px; color: var(--ink-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
     .var-label .unit { font-weight: 400; text-transform: none; color: var(--ink-faint); margin-left: 3px; }
@@ -116,49 +159,45 @@
     input[type=number]::-webkit-outer-spin-button, input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
     input[type=number] { -moz-appearance: textfield; }
 
-    .breakdown { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-muted); }
+    /* ---- Collapsed advanced fields (same disclosure idiom as the Market Monitor dashboard) ---- */
+    .advanced { margin: 0 0 12px; }
+    .advanced summary { cursor: pointer; list-style: none; font-size: 11px; font-weight: 700; color: var(--ink-muted); text-transform: uppercase; letter-spacing: .03em; padding: 2px 0; }
+    .advanced summary::-webkit-details-marker { display: none; }
+    .advanced summary::before { content: '▸ '; font-size: 9px; color: var(--ink-faint); }
+    .advanced[open] summary::before { content: '▾ '; }
+    .advanced-fields { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+
+    .breakdown { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-muted); border-top: 1px solid var(--border); padding-top: 10px; }
     .breakdown .row { display: flex; justify-content: space-between; gap: 8px; padding: 2.5px 0; font-variant-numeric: tabular-nums; }
     .breakdown .row > span:first-child { font-family: var(--font-sans); color: var(--ink-muted); }
     .breakdown .sub > span:first-child { padding-left: 10px; color: var(--ink-faint); }
     .breakdown .neg { color: var(--negative); }
     .breakdown .neg > span:first-child { color: var(--negative); opacity: .85; }
-
-    .takehome-row { display: flex; justify-content: space-between; align-items: baseline; border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px; }
-    .takehome-row .label { font-family: var(--font-sans); font-size: 12px; font-weight: 700; color: var(--ink); text-transform: uppercase; letter-spacing: .03em; }
-    .takehome-row .value { font-family: var(--font-mono); font-size: 21px; font-weight: 700; color: var(--positive); font-variant-numeric: tabular-nums; }
-    .takehome-row .value.na { color: var(--ink-faint); font-size: 13px; font-weight: 600; font-family: var(--font-sans); }
-
-    /* ---- Add scenario tile ---- */
-    .add-tile { position: relative; flex: 1 1 240px; max-width: 300px; }
-    .add-btn {
-      width: 100%; height: 100%; min-height: 120px; border: 1px dashed var(--border); border-radius: 4px; background: transparent;
-      color: var(--ink-faint); font-family: var(--font-sans); font-size: 13px; font-weight: 600; cursor: pointer;
-    }
-    .add-btn:hover { border-color: var(--ink-faint); color: var(--ink-muted); }
-    .add-menu {
-      position: absolute; top: 0; left: 0; width: 100%; background: var(--surface); border: 1px solid var(--border);
-      border-radius: 4px; box-shadow: 0 8px 24px rgba(16,26,46,.12); overflow: hidden; z-index: 10;
-    }
-    .add-menu button {
-      display: block; width: 100%; text-align: left; padding: 10px 12px; border: none; background: transparent;
-      font-family: var(--font-sans); font-size: 12.5px; color: var(--ink); cursor: pointer; border-bottom: 1px solid var(--border);
-    }
-    .add-menu button:last-child { border-bottom: none; }
-    .add-menu button:hover { background: var(--bg); }
-    .add-menu .menu-label { padding: 8px 12px 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-faint); }
+    .breakdown .credit { color: var(--positive); }
+    .breakdown .credit > span:first-child { color: var(--positive); opacity: .85; }
   </style>
 </head>
 <body>
 
-<div class="brand-kicker">Pacific Cards Co.</div>
-<h1>Takehome Calculator</h1>
-<p class="subtitle">Find the listing price on eBay and Dealernet that puts the same amount in your pocket, across each platform's fee scenarios.</p>
+<div class="page-head">
+  <div>
+    <div class="brand-kicker">Pacific Cards Co.</div>
+    <h1>Takehome Calculator</h1>
+    <p class="subtitle">Find the listing price on eBay and Dealernet that puts the same amount in your pocket, across each platform's fee scenarios.</p>
+  </div>
+  <div class="add-tile" id="add-tile">
+    <button class="add-btn" id="add-btn" aria-haspopup="true" aria-expanded="false">+ Add scenario</button>
+    <div class="add-menu" id="add-menu" hidden>
+      <div class="menu-label">Start from a preset</div>
+    </div>
+  </div>
+</div>
 
 <div class="how-it-works">
   Type a price at the top of any column — that column becomes the <b>anchor</b>. Columns using the same fee formula
   mirror that exact price, so you can compare how takehome differs by scenario. Columns using the other formula
-  solve for the price that nets the <b>same takehome</b> as the anchor. Every field is editable, and <b>+ Add scenario</b>
-  starts a new column from one of the four presets so you can tweak it independently.
+  solve for the price that nets the <b>same takehome</b> as the anchor. Advanced fee-structure fields are collapsed
+  by default — expand to edit them.
 </div>
 
 <div class="columns-row" id="columns-row"></div>
@@ -174,6 +213,7 @@
     const lowRate = v.lowRatePct / 100;
     const flat = v.flatFee;
     const rate = v.ratePct / 100;
+    const credit = v.feeCreditPct / 100;
 
     const E = P * (1 - discount);
     const Tax = (E + Sp) * t;
@@ -182,11 +222,13 @@
     const lowBase = Math.max(0, E - threshold);
     const highFee = highBase * rate;
     const lowFee = lowBase * lowRate;
-    const fvf = highFee + lowFee + flat;
-    const takehome = grossReceipt - Tax - fvf - Sc;
+    const fvfGross = highFee + lowFee + flat;
+    const creditAmt = fvfGross * credit;
+    const fvfNet = fvfGross - creditAmt;
+    const takehome = grossReceipt - Tax - fvfNet - Sc;
 
     return { grossReceipt, highBase, highFee, lowBase, lowFee, flat, rate: v.ratePct, lowRatePct: v.lowRatePct,
-             fee: fvf, tax: Tax, shippingCost: Sc, takehome };
+             fvfGross, creditAmt, feeCreditPct: v.feeCreditPct, fee: fvfNet, tax: Tax, shippingCost: Sc, takehome };
   }
 
   function dealernetForward(P, v) {
@@ -203,8 +245,10 @@
     return { grossReceipt, fee, feeRatePct: v.feeRatePct, tax: Tax, shippingCost: Sc, takehome };
   }
 
-  function forward(col, price) {
-    return col.family === 'ebay' ? ebayForward(price, col.vars) : dealernetForward(price, col.vars);
+  function forward(col, unitPrice) {
+    const totalPrice = unitPrice * col.qty;
+    const r = col.family === 'ebay' ? ebayForward(totalPrice, col.vars) : dealernetForward(totalPrice, col.vars);
+    return { ...r, unitPrice, totalPrice };
   }
 
   // Generic bisection solver: find price such that forward(price).takehome == target
@@ -222,32 +266,41 @@
     return (lo + hi) / 2;
   }
 
-  // ---- Field definitions (drive the vertical variable list per family) ----
+  // ---- Field definitions: basic fields render open; advanced fields render inside a collapsed <details> ----
   const FIELD_DEFS = {
-    ebay: [
-      { key: 'discountPct', label: 'Discount', unit: '%', step: '0.01' },
-      { key: 'taxPct', label: 'Tax', unit: '%', step: '0.01' },
-      { key: 'shippingPaid', label: 'Shipping Paid', unit: '$', step: '0.01' },
-      { key: 'shippingCost', label: 'Shipping Cost', unit: '$', step: '0.01' },
-      { key: 'ratePct', label: 'FVF Rate', unit: '%', step: '0.01' },
-      { key: 'threshold', label: 'Tier Threshold', unit: '$', step: '1' },
-      { key: 'lowRatePct', label: 'Low Tier Rate', unit: '%', step: '0.01', note: "eBay's public rate is 2.35% — defaulted to 2.5% per your spec, edit if needed." },
-      { key: 'flatFee', label: 'Flat Fee', unit: '$', step: '0.01' }
-    ],
-    dealernet: [
-      { key: 'taxPct', label: 'Tax', unit: '%', step: '0.01', note: 'Cancels out of Takehome — shown on Gross Receipt only.' },
-      { key: 'shippingPaid', label: 'Shipping Paid', unit: '$', step: '0.01' },
-      { key: 'shippingCost', label: 'Shipping Cost', unit: '$', step: '0.01' },
-      { key: 'feeRatePct', label: 'Fee Rate', unit: '%', step: '0.01' }
-    ]
+    ebay: {
+      basic: [
+        { key: 'discountPct', label: 'List Discount', unit: '%', step: '0.01' },
+        { key: 'taxPct', label: 'Tax', unit: '%', step: '0.01' },
+        { key: 'shippingPaid', label: 'Shipping Paid', unit: '$', step: '0.01' },
+        { key: 'shippingCost', label: 'Shipping Cost', unit: '$', step: '0.01' },
+        { key: 'feeCreditPct', label: 'FVF Credit', unit: '%', step: '0.01', note: 'Credit applied to the calculated Final Value Fee (e.g. the Same Day seller credit).' }
+      ],
+      advanced: [
+        { key: 'ratePct', label: 'FVF Rate', unit: '%', step: '0.01' },
+        { key: 'threshold', label: 'Tier Threshold', unit: '$', step: '1' },
+        { key: 'lowRatePct', label: 'Low Tier Rate', unit: '%', step: '0.01' },
+        { key: 'flatFee', label: 'Flat Fee', unit: '$', step: '0.01' }
+      ]
+    },
+    dealernet: {
+      basic: [
+        { key: 'taxPct', label: 'Tax', unit: '%', step: '0.01', note: 'Cancels out of Takehome — shown on Gross Receipt only.' },
+        { key: 'shippingPaid', label: 'Shipping Paid', unit: '$', step: '0.01' },
+        { key: 'shippingCost', label: 'Shipping Cost', unit: '$', step: '0.01' },
+        { key: 'feeRatePct', label: 'Fee Rate', unit: '%', step: '0.01' }
+      ],
+      advanced: []
+    }
   };
 
-  // ---- Presets (the 4 fixed starting points; also seed the initial 4 live columns) ----
+  // ---- Presets: eBay's real published FVF (12.35% high tier / 2.35% low tier above $2,500) applies to both
+  // scenarios equally -- Presale gets no credit, Same Day gets a 10% credit on the calculated fee. ----
   const PRESETS = [
     { key: 'dealernet-paypal', family: 'dealernet', name: 'Dealernet — PayPal', price: 500, vars: { taxPct: 0, shippingPaid: 0, shippingCost: 9, feeRatePct: 2.99 } },
     { key: 'dealernet-eft', family: 'dealernet', name: 'Dealernet — EFT', price: 500, vars: { taxPct: 0, shippingPaid: 0, shippingCost: 9, feeRatePct: 0 } },
-    { key: 'ebay-sameday', family: 'ebay', name: 'eBay — Same Day', price: 500, vars: { discountPct: 0, taxPct: 7.5, shippingPaid: 0, shippingCost: 9, ratePct: 11.5, threshold: 2500, lowRatePct: 2.5, flatFee: 0.40 } },
-    { key: 'ebay-presale', family: 'ebay', name: 'eBay — Presale', price: 500, vars: { discountPct: 0, taxPct: 7.5, shippingPaid: 0, shippingCost: 9, ratePct: 12.5, threshold: 2500, lowRatePct: 2.5, flatFee: 0.40 } }
+    { key: 'ebay-presale', family: 'ebay', name: 'eBay — Presale', price: 500, vars: { discountPct: 0, taxPct: 7.5, shippingPaid: 0, shippingCost: 9, ratePct: 12.35, threshold: 2500, lowRatePct: 2.35, flatFee: 0.40, feeCreditPct: 0 } },
+    { key: 'ebay-sameday', family: 'ebay', name: 'eBay — Same Day', price: 500, vars: { discountPct: 0, taxPct: 7.5, shippingPaid: 0, shippingCost: 9, ratePct: 12.35, threshold: 2500, lowRatePct: 2.35, flatFee: 0.40, feeCreditPct: 10 } }
   ];
 
   // ---- Live state ----
@@ -257,13 +310,17 @@
 
   function clonePreset(preset) {
     colSeq += 1;
-    return { id: `${preset.key}-${colSeq}`, family: preset.family, name: preset.name, price: preset.price, vars: { ...preset.vars }, dom: null };
+    return { id: `${preset.key}-${colSeq}`, family: preset.family, name: preset.name, price: preset.price, qty: 1, vars: { ...preset.vars }, dom: null };
   }
 
   function fmt(n) {
     if (n === null || n === undefined || isNaN(n)) return '—';
     const sign = n < 0 ? '-' : '';
     return sign + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function fmtField(fd, raw) {
+    return fd.unit === '$' ? Number(raw).toFixed(2) : String(raw);
   }
 
   function escapeHtml(s) {
@@ -275,22 +332,50 @@
   function renderBreakdown(col, r) {
     const dom = col.dom;
     let html = '';
+    if (r.totalPrice !== r.unitPrice) {
+      html += `<div class="row"><span>${fmt(r.unitPrice)} × ${col.qty}</span><span>${fmt(r.totalPrice)}</span></div>`;
+    }
     html += `<div class="row"><span>Gross Receipt</span><span>${fmt(r.grossReceipt)}</span></div>`;
     if (col.family === 'ebay') {
-      html += `<div class="row sub"><span>High tier ${fmt(r.highBase)} × ${r.rate}%</span><span>${fmt(r.highFee)}</span></div>`;
+      html += `<div class="row sub neg"><span>High tier ${fmt(r.highBase)} × ${r.rate}%</span><span>-${fmt(r.highFee)}</span></div>`;
       if (r.lowBase > 0.005) {
-        html += `<div class="row sub"><span>Low tier ${fmt(r.lowBase)} × ${r.lowRatePct}%</span><span>${fmt(r.lowFee)}</span></div>`;
+        html += `<div class="row sub neg"><span>Low tier ${fmt(r.lowBase)} × ${r.lowRatePct}%</span><span>-${fmt(r.lowFee)}</span></div>`;
       }
-      html += `<div class="row sub"><span>Flat fee</span><span>${fmt(r.flat)}</span></div>`;
+      html += `<div class="row sub neg"><span>Flat fee</span><span>-${fmt(r.flat)}</span></div>`;
+      if (r.feeCreditPct > 0) {
+        html += `<div class="row sub credit"><span>FVF credit ${r.feeCreditPct}%</span><span>+${fmt(r.creditAmt)}</span></div>`;
+      }
     } else {
-      html += `<div class="row sub"><span>Fee ${fmt(r.grossReceipt - r.tax)} × ${r.feeRatePct}%</span><span>${fmt(r.fee)}</span></div>`;
+      html += `<div class="row sub neg"><span>Fee ${fmt(r.grossReceipt - r.tax)} × ${r.feeRatePct}%</span><span>-${fmt(r.fee)}</span></div>`;
     }
     html += `<div class="row neg"><span>Tax</span><span>-${fmt(r.tax)}</span></div>`;
     html += `<div class="row neg"><span>Shipping cost</span><span>-${fmt(r.shippingCost)}</span></div>`;
     dom.breakdown.innerHTML = html;
   }
 
+  function buildFieldRow(col, fd) {
+    const fieldRow = document.createElement('label');
+    fieldRow.className = 'var-row';
+    fieldRow.innerHTML = `
+      <span class="var-label">${fd.label}<span class="unit">${fd.unit}</span></span>
+      <input type="number" step="${fd.step}" min="0" data-var="${fd.key}">
+      ${fd.note ? `<span class="field-note">${fd.note}</span>` : ''}
+    `;
+    const input = fieldRow.querySelector('input');
+    input.value = fmtField(fd, col.vars[fd.key]);
+    input.addEventListener('input', () => {
+      const val = parseFloat(input.value);
+      col.vars[fd.key] = isNaN(val) ? 0 : val;
+      recompute();
+    });
+    if (fd.unit === '$') {
+      input.addEventListener('blur', () => { input.value = fmtField(fd, col.vars[fd.key]); });
+    }
+    return fieldRow;
+  }
+
   function buildColumnEl(col) {
+    const defs = FIELD_DEFS[col.family];
     const el = document.createElement('article');
     el.className = `slip family-${col.family}`;
     el.dataset.colId = col.id;
@@ -300,32 +385,36 @@
         <button class="col-remove" title="Remove column" aria-label="Remove column">×</button>
       </div>
       <div class="family-tag">${col.family === 'ebay' ? 'eBay formula' : 'Dealernet formula'}</div>
-      <span class="price-label">Sales Price</span>
-      <div class="price-input-wrap"><span class="currency">$</span><input type="number" step="0.01" min="0" class="price-input" data-price></div>
+      <div class="price-qty-row">
+        <div class="price-field">
+          <span class="price-label">Unit Price</span>
+          <div class="price-input-wrap"><span class="currency">$</span><input type="number" step="0.01" min="0" class="price-input" data-price></div>
+        </div>
+        <div class="qty-field">
+          <span class="price-label">Qty</span>
+          <input type="number" step="1" min="1" class="qty-input" data-qty>
+        </div>
+      </div>
       <div class="price-caption"></div>
+      <div class="takehome-row"><span class="label">Takehome</span><button type="button" class="value" title="Click to anchor on this scenario">$—</button></div>
       <div class="var-list"></div>
-      <div class="breakdown"></div>
-      <div class="takehome-row"><span class="label">Takehome</span><span class="value">$—</span></div>
     `;
 
     const varList = el.querySelector('.var-list');
-    FIELD_DEFS[col.family].forEach((fd) => {
-      const fieldRow = document.createElement('label');
-      fieldRow.className = 'var-row';
-      fieldRow.innerHTML = `
-        <span class="var-label">${fd.label}<span class="unit">${fd.unit}</span></span>
-        <input type="number" step="${fd.step}" min="0" data-var="${fd.key}">
-        ${fd.note ? `<span class="field-note">${fd.note}</span>` : ''}
-      `;
-      const input = fieldRow.querySelector('input');
-      input.value = col.vars[fd.key];
-      input.addEventListener('input', () => {
-        const val = parseFloat(input.value);
-        col.vars[fd.key] = isNaN(val) ? 0 : val;
-        recompute();
-      });
-      varList.appendChild(fieldRow);
-    });
+    defs.basic.forEach((fd) => varList.appendChild(buildFieldRow(col, fd)));
+
+    if (defs.advanced.length) {
+      const details = document.createElement('details');
+      details.className = 'advanced';
+      details.innerHTML = `<summary>Advanced fee settings</summary><div class="advanced-fields"></div>`;
+      const advList = details.querySelector('.advanced-fields');
+      defs.advanced.forEach((fd) => advList.appendChild(buildFieldRow(col, fd)));
+      el.appendChild(details);
+    }
+
+    const breakdownEl = document.createElement('div');
+    breakdownEl.className = 'breakdown';
+    el.appendChild(breakdownEl);
 
     const priceInput = el.querySelector('[data-price]');
     priceInput.value = col.price.toFixed(2);
@@ -334,15 +423,33 @@
       col.price = parseFloat(priceInput.value) || 0;
       recompute();
     });
+    priceInput.addEventListener('blur', () => recompute());
+
+    const qtyInput = el.querySelector('[data-qty]');
+    qtyInput.value = col.qty;
+    qtyInput.addEventListener('input', () => {
+      const val = parseInt(qtyInput.value, 10);
+      col.qty = isNaN(val) || val < 1 ? 1 : val;
+      recompute();
+    });
 
     el.querySelector('.col-name').addEventListener('input', (e) => { col.name = e.target.value; });
     el.querySelector('.col-remove').addEventListener('click', () => removeColumn(col.id));
+
+    const takehomeValue = el.querySelector('.takehome-row .value');
+    takehomeValue.addEventListener('click', () => {
+      if (takehomeValue.disabled) return;
+      // Re-anchor on this column's current price -- only Sales Price on other columns should move;
+      // this column's own price/vars are untouched, so its takehome stays exactly what was clicked.
+      anchorId = col.id;
+      recompute();
+    });
 
     col.dom = {
       root: el,
       priceInput,
       priceCaption: el.querySelector('.price-caption'),
-      breakdown: el.querySelector('.breakdown'),
+      breakdown: breakdownEl,
       takehomeValue: el.querySelector('.takehome-row .value')
     };
 
@@ -363,8 +470,7 @@
     if (!preset) return;
     const col = clonePreset(preset);
     columns.push(col);
-    const el = buildColumnEl(col);
-    columnsRowEl.insertBefore(el, addTileEl);
+    columnsRowEl.appendChild(buildColumnEl(col));
     recompute();
   }
 
@@ -400,46 +506,47 @@
       dom.priceInput.classList.toggle('solved', !sameFamily);
       dom.priceCaption.textContent = unreachable
         ? 'No non-negative price reaches this takehome with current fees.'
-        : (sameFamily ? '' : `Price needed to match ${fmt(target)} takehome`);
+        : (sameFamily ? '' : `Unit price needed to match ${fmt(target)} takehome`);
 
       if (unreachable) {
         dom.breakdown.innerHTML = '';
         dom.takehomeValue.textContent = '—';
         dom.takehomeValue.classList.add('na');
+        dom.takehomeValue.disabled = true;
       } else {
         renderBreakdown(col, result);
         dom.takehomeValue.textContent = fmt(result.takehome);
         dom.takehomeValue.classList.remove('na');
+        dom.takehomeValue.disabled = false;
       }
     });
   }
 
-  // ---- Add-scenario tile ----
-  const addTileEl = document.createElement('div');
-  addTileEl.className = 'add-tile';
-  addTileEl.innerHTML = `
-    <button class="add-btn" id="add-btn" aria-haspopup="true" aria-expanded="false">+ Add scenario</button>
-    <div class="add-menu" id="add-menu" hidden>
-      <div class="menu-label">Start from a preset</div>
-      ${PRESETS.map((p) => `<button type="button" data-preset="${p.key}">${escapeHtml(p.name)}</button>`).join('')}
-    </div>
-  `;
-  const addBtnEl = addTileEl.querySelector('#add-btn');
-  const addMenuEl = addTileEl.querySelector('#add-menu');
+  // ---- Add-scenario control (now in the page header) ----
+  const addBtnEl = document.getElementById('add-btn');
+  const addMenuEl = document.getElementById('add-menu');
+  PRESETS.forEach((p) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.dataset.preset = p.key;
+    btn.textContent = p.name;
+    btn.addEventListener('click', () => {
+      addColumnFromPreset(p.key);
+      addMenuEl.hidden = true;
+      addBtnEl.setAttribute('aria-expanded', 'false');
+    });
+    addMenuEl.appendChild(btn);
+  });
   addBtnEl.addEventListener('click', () => {
     const open = !addMenuEl.hidden;
     addMenuEl.hidden = open;
     addBtnEl.setAttribute('aria-expanded', String(!open));
   });
-  addMenuEl.querySelectorAll('button[data-preset]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      addColumnFromPreset(btn.getAttribute('data-preset'));
+  document.addEventListener('click', (e) => {
+    if (!document.getElementById('add-tile').contains(e.target)) {
       addMenuEl.hidden = true;
       addBtnEl.setAttribute('aria-expanded', 'false');
-    });
-  });
-  document.addEventListener('click', (e) => {
-    if (!addTileEl.contains(e.target)) { addMenuEl.hidden = true; addBtnEl.setAttribute('aria-expanded', 'false'); }
+    }
   });
 
   // ---- Init: seed the 4 presets as live columns, Dealernet PayPal as default anchor ----
@@ -449,7 +556,6 @@
     columnsRowEl.appendChild(buildColumnEl(col));
   });
   anchorId = columns[0].id; // Dealernet — PayPal: the known asking price you're starting from
-  columnsRowEl.appendChild(addTileEl);
 
   recompute();
 </script>
