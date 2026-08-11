@@ -245,7 +245,8 @@
     const takehome = grossReceipt - Tax - fvfNet - Sc;
 
     return { grossReceipt, highBase, highFee, lowBase, lowFee, flat, rate: v.ratePct, lowRatePct: v.lowRatePct,
-             fvfGross, creditAmt, feeCreditPct: v.feeCreditPct, fee: fvfNet, tax: Tax, shippingCost: Sc, takehome };
+             fvfGross, creditAmt, feeCreditPct: v.feeCreditPct, fee: fvfNet, tax: Tax, shippingCost: Sc, takehome,
+             effPrice: E, discountPct: v.discountPct, discountAmt: P - E, shippingPaid: Sp };
   }
 
   function dealernetForward(P, v) {
@@ -259,7 +260,7 @@
     const fee = (P + Sp) * feeRate;
     const takehome = grossReceipt - Tax - fee - Sc;
 
-    return { grossReceipt, fee, feeRatePct: v.feeRatePct, tax: Tax, shippingCost: Sc, takehome };
+    return { grossReceipt, fee, feeRatePct: v.feeRatePct, tax: Tax, shippingCost: Sc, takehome, shippingPaid: Sp };
   }
 
   function forward(col, unitPrice) {
@@ -356,6 +357,12 @@
     let html = '';
     if (r.totalPrice !== r.unitPrice) {
       html += `<div class="row"><span>${fmt(r.unitPrice)} × ${col.qty}</span><span>${fmt(r.totalPrice)}</span></div>`;
+    }
+    if (col.family === 'ebay' && r.discountPct > 0) {
+      html += `<div class="row sub neg"><span>List discount ${r.discountPct}%</span><span>-${fmt(r.discountAmt)}</span></div>`;
+    }
+    if (r.shippingPaid > 0) {
+      html += `<div class="row sub credit"><span>Shipping paid by buyer</span><span>+${fmt(r.shippingPaid)}</span></div>`;
     }
     html += `<div class="row"><span>Gross Receipt</span><span>${fmt(r.grossReceipt)}</span></div>`;
     if (col.family === 'ebay') {
