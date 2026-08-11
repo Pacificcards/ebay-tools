@@ -15,15 +15,10 @@
       --ink-faint: #8B97AC;
 
       --ebay: #2C4BAE;
-      --ebay-wash: #EAF0FC;
       --dealernet: #147B6F;
-      --dealernet-wash: #E6F4F1;
 
       --positive: #1E8F5E;
       --negative: #A6392F;
-
-      --chip-muted-bg: #EEF1F5;
-      --chip-muted-text: #5A6B85;
 
       --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
@@ -39,15 +34,10 @@
         --ink-faint: #6C7994;
 
         --ebay: #7C9CF2;
-        --ebay-wash: rgba(124, 156, 242, 0.10);
         --dealernet: #52C4B2;
-        --dealernet-wash: rgba(82, 196, 178, 0.10);
 
         --positive: #4ADE94;
         --negative: #E2897E;
-
-        --chip-muted-bg: #1F2740;
-        --chip-muted-text: #96A3BD;
       }
     }
 
@@ -61,81 +51,72 @@
       background: var(--bg);
       color: var(--ink);
       padding: 32px 24px 56px;
-      max-width: 1120px;
+      max-width: 1200px;
       margin: 0 auto;
     }
 
-    input:focus-visible, a:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-
-    .tabular { font-variant-numeric: tabular-nums; }
+    input:focus-visible, button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 
     /* ---- Header ---- */
     .brand-kicker { font-size: 11px; font-weight: 700; letter-spacing: .08em; color: var(--ink-faint); text-transform: uppercase; margin-bottom: 6px; }
     h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
-    .subtitle { color: var(--ink-muted); font-size: 14.5px; margin-top: 6px; max-width: 62ch; line-height: 1.5; }
+    .subtitle { color: var(--ink-muted); font-size: 14.5px; margin-top: 6px; max-width: 66ch; line-height: 1.5; }
 
     .how-it-works { margin-top: 22px; border: 1px solid var(--border); border-left: 3px solid var(--ink-faint); padding: 12px 16px; font-size: 12.5px; color: var(--ink-muted); line-height: 1.6; background: var(--surface); }
     .how-it-works b { color: var(--ink); font-weight: 600; }
 
-    /* ---- Ledger layout ---- */
-    .ledger-wrap { display: grid; grid-template-columns: 1fr auto 1fr; gap: 20px; align-items: start; margin-top: 28px; }
-    @media (max-width: 900px) { .ledger-wrap { grid-template-columns: 1fr; } .ledger-gutter { display: none; } }
+    /* ---- Columns row ---- */
+    .columns-row { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 28px; align-items: flex-start; }
 
-    .ledger-gutter { display: flex; flex-direction: column; align-items: center; gap: 4px; padding-top: 120px; }
-    .equivalence-mark { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 16px; font-weight: 600; color: var(--ink-faint); }
-    .equivalence-caption { font-size: 10px; color: var(--ink-faint); text-align: center; letter-spacing: .02em; max-width: 60px; line-height: 1.3; }
+    .slip { background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--border); border-radius: 4px; padding: 16px; flex: 1 1 240px; max-width: 300px; transition: border-color .15s, box-shadow .15s; }
+    .slip.family-ebay { border-top-color: var(--ebay); }
+    .slip.family-dealernet { border-top-color: var(--dealernet); }
+    .slip.is-anchor { box-shadow: 0 0 0 1px var(--accent); border-color: var(--accent); }
+    .slip.family-ebay.is-anchor { --accent: var(--ebay); }
+    .slip.family-dealernet.is-anchor { --accent: var(--dealernet); }
 
-    .ledger { padding: 18px; border-radius: 4px; }
-    .platform-ebay { background: var(--ebay-wash); }
-    .platform-dealernet { background: var(--dealernet-wash); }
-
-    .ledger-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 14px; }
-    .ledger-head h2 { font-size: 16px; font-weight: 700; }
-    .platform-ebay .ledger-head h2 { color: var(--ebay); }
-    .platform-dealernet .ledger-head h2 { color: var(--dealernet); }
-    .platform-tag { font-size: 11px; color: var(--ink-faint); }
-
-    /* ---- Settings strip ---- */
-    .settings-strip { display: flex; flex-wrap: wrap; gap: 14px 18px; margin-bottom: 16px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; }
-    .settings-strip label { display: flex; flex-direction: column; gap: 4px; font-size: 10.5px; color: var(--ink-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
-    .settings-strip input {
-      font-family: var(--font-mono); font-size: 13px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 3px;
-      width: 82px; background: var(--bg); color: var(--ink); font-variant-numeric: tabular-nums;
+    .col-head { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+    .col-name {
+      flex: 1; font-family: var(--font-sans); font-size: 14.5px; font-weight: 700; color: var(--ink);
+      border: none; border-bottom: 1px solid transparent; background: transparent; padding: 2px 0; min-width: 0;
     }
-    .field-note { font-size: 10px; color: var(--ink-faint); font-weight: 400; text-transform: none; letter-spacing: normal; max-width: 150px; line-height: 1.35; }
+    .col-name:hover, .col-name:focus { border-bottom-color: var(--border); }
+    .col-name:focus-visible { outline: none; border-bottom-color: var(--ink-faint); }
+    .col-remove {
+      flex-shrink: 0; width: 20px; height: 20px; border: none; background: transparent; color: var(--ink-faint);
+      font-size: 15px; line-height: 1; cursor: pointer; border-radius: 3px;
+    }
+    .col-remove:hover { background: var(--bg); color: var(--negative); }
 
-    /* ---- Slips (scenario columns) ---- */
-    .slips { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
-    @media (max-width: 540px) { .slips { grid-template-columns: 1fr; } }
-
-    .slip { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 16px; transition: border-color .15s, box-shadow .15s; }
-    .slip.is-anchor { box-shadow: 0 0 0 1px currentColor; }
-    .platform-ebay .slip.is-anchor { border-color: var(--ebay); color: var(--ebay); }
-    .platform-dealernet .slip.is-anchor { border-color: var(--dealernet); color: var(--dealernet); }
-    .slip.is-anchor > * { color: var(--ink); } /* reset inherited color for children, chip re-colors itself */
-
-    .slip-top { margin-bottom: 12px; }
-    .slip-top h3 { font-size: 14.5px; font-weight: 700; }
-
-    .rate-label { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--ink-muted); font-weight: 600; margin-bottom: 14px; }
-    .rate-input-wrap { display: flex; align-items: center; border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
-    .rate-input-wrap input { font-family: var(--font-mono); font-size: 13px; padding: 5px 4px 5px 7px; border: none; width: 52px; text-align: right; background: var(--surface); color: var(--ink); font-variant-numeric: tabular-nums; }
-    .rate-input-wrap .unit { padding: 5px 7px 5px 2px; font-size: 12px; color: var(--ink-faint); background: var(--surface); }
+    .family-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 14px; }
+    .family-ebay .family-tag { color: var(--ebay); }
+    .family-dealernet .family-tag { color: var(--dealernet); }
 
     .price-label { display: block; font-size: 10.5px; color: var(--ink-muted); font-weight: 700; text-transform: uppercase; letter-spacing: .03em; margin-bottom: 5px; }
-    .price-input-wrap { display: flex; align-items: baseline; border: 1px solid var(--border); border-radius: 3px; background: var(--surface); padding: 6px 10px; }
+    .price-input-wrap { display: flex; align-items: baseline; border: 1px solid var(--border); border-radius: 3px; background: var(--bg); padding: 6px 10px; }
     .price-input-wrap .currency { font-family: var(--font-mono); font-size: 19px; color: var(--ink-faint); margin-right: 2px; }
     .price-input { font-family: var(--font-mono); width: 100%; font-size: 22px; font-weight: 700; border: none; background: transparent; color: var(--ink); font-variant-numeric: tabular-nums; }
     .price-input.solved { color: var(--ink-muted); font-weight: 600; }
-    .price-input:focus-visible { outline: none; }
     .price-input-wrap:has(.price-input:focus-visible) { outline: 2px solid var(--ink); outline-offset: 1px; }
+    .price-input:focus-visible { outline: none; }
 
-    .price-caption { font-size: 10.5px; color: var(--ink-faint); margin: 5px 0 14px; min-height: 13px; line-height: 1.35; }
+    .price-caption { font-size: 10.5px; color: var(--ink-faint); margin: 5px 0 16px; min-height: 13px; line-height: 1.35; }
+
+    /* ---- Vertical variable list ---- */
+    .var-list { display: flex; flex-direction: column; gap: 10px; padding: 12px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+    .var-row { display: flex; flex-direction: column; gap: 4px; }
+    .var-label { font-size: 10.5px; color: var(--ink-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+    .var-label .unit { font-weight: 400; text-transform: none; color: var(--ink-faint); margin-left: 3px; }
+    .var-row input {
+      font-family: var(--font-mono); font-size: 13px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 3px;
+      width: 100%; background: var(--bg); color: var(--ink); font-variant-numeric: tabular-nums;
+    }
+    .field-note { font-size: 10px; color: var(--ink-faint); font-weight: 400; line-height: 1.35; }
 
     input[type=number]::-webkit-outer-spin-button, input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
     input[type=number] { -moz-appearance: textfield; }
 
-    .breakdown { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-muted); border-top: 1px solid var(--border); padding-top: 10px; }
+    .breakdown { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-muted); }
     .breakdown .row { display: flex; justify-content: space-between; gap: 8px; padding: 2.5px 0; font-variant-numeric: tabular-nums; }
     .breakdown .row > span:first-child { font-family: var(--font-sans); color: var(--ink-muted); }
     .breakdown .sub > span:first-child { padding-left: 10px; color: var(--ink-faint); }
@@ -146,6 +127,25 @@
     .takehome-row .label { font-family: var(--font-sans); font-size: 12px; font-weight: 700; color: var(--ink); text-transform: uppercase; letter-spacing: .03em; }
     .takehome-row .value { font-family: var(--font-mono); font-size: 21px; font-weight: 700; color: var(--positive); font-variant-numeric: tabular-nums; }
     .takehome-row .value.na { color: var(--ink-faint); font-size: 13px; font-weight: 600; font-family: var(--font-sans); }
+
+    /* ---- Add scenario tile ---- */
+    .add-tile { position: relative; flex: 1 1 240px; max-width: 300px; }
+    .add-btn {
+      width: 100%; height: 100%; min-height: 120px; border: 1px dashed var(--border); border-radius: 4px; background: transparent;
+      color: var(--ink-faint); font-family: var(--font-sans); font-size: 13px; font-weight: 600; cursor: pointer;
+    }
+    .add-btn:hover { border-color: var(--ink-faint); color: var(--ink-muted); }
+    .add-menu {
+      position: absolute; top: 0; left: 0; width: 100%; background: var(--surface); border: 1px solid var(--border);
+      border-radius: 4px; box-shadow: 0 8px 24px rgba(16,26,46,.12); overflow: hidden; z-index: 10;
+    }
+    .add-menu button {
+      display: block; width: 100%; text-align: left; padding: 10px 12px; border: none; background: transparent;
+      font-family: var(--font-sans); font-size: 12.5px; color: var(--ink); cursor: pointer; border-bottom: 1px solid var(--border);
+    }
+    .add-menu button:last-child { border-bottom: none; }
+    .add-menu button:hover { background: var(--bg); }
+    .add-menu .menu-label { padding: 8px 12px 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-faint); }
   </style>
 </head>
 <body>
@@ -155,125 +155,25 @@
 <p class="subtitle">Find the listing price on eBay and Dealernet that puts the same amount in your pocket, across each platform's fee scenarios.</p>
 
 <div class="how-it-works">
-  Type a price into any column — that column becomes the <b>anchor</b>. Columns on the same platform mirror that
-  exact price, so you can compare how takehome differs by fee scenario. Columns on the other platform solve for
-  the price that nets the <b>same takehome</b> as the anchor. Every fee, tax, discount, and shipping field is editable.
+  Type a price at the top of any column — that column becomes the <b>anchor</b>. Columns using the same fee formula
+  mirror that exact price, so you can compare how takehome differs by scenario. Columns using the other formula
+  solve for the price that nets the <b>same takehome</b> as the anchor. Every field is editable, and <b>+ Add scenario</b>
+  starts a new column from one of the four presets so you can tweak it independently.
 </div>
 
-<div class="ledger-wrap">
-
-  <!-- Dealernet: the known asking price you're starting from -->
-  <section class="ledger platform-dealernet" data-platform="dealernet">
-    <div class="ledger-head"><h2>Dealernet</h2><span class="platform-tag">Marketplace</span></div>
-    <div class="settings-strip" data-shared="dealernet">
-      <label>Tax %
-        <input type="number" step="0.01" min="0" data-field="taxPct" value="0">
-        <span class="field-note">Cancels out of Takehome (shown on Gross Receipt only) — same as eBay's tax treatment.</span>
-      </label>
-      <label>Ship Paid ($)
-        <input type="number" step="0.01" min="0" data-field="shippingPaid" value="0">
-      </label>
-      <label>Ship Cost ($)
-        <input type="number" step="0.01" min="0" data-field="shippingCost" value="9">
-      </label>
-    </div>
-    <div class="slips">
-      <article class="slip" data-col="dealernet-paypal">
-        <div class="slip-top"><h3>PayPal</h3></div>
-        <label class="rate-label">Fee Rate
-          <span class="rate-input-wrap"><input type="number" step="0.01" min="0" data-field="feeRatePct" value="2.99"><span class="unit">%</span></span>
-        </label>
-        <span class="price-label">Sales Price</span>
-        <div class="price-input-wrap"><span class="currency">$</span><input type="number" step="0.01" min="0" class="price-input" data-price value="500"></div>
-        <div class="price-caption"></div>
-        <div class="breakdown"></div>
-        <div class="takehome-row"><span class="label">Takehome</span><span class="value">$—</span></div>
-      </article>
-      <article class="slip" data-col="dealernet-eft">
-        <div class="slip-top"><h3>EFT</h3></div>
-        <label class="rate-label">Fee Rate
-          <span class="rate-input-wrap"><input type="number" step="0.01" min="0" data-field="feeRatePct" value="0"><span class="unit">%</span></span>
-        </label>
-        <span class="price-label">Sales Price</span>
-        <div class="price-input-wrap"><span class="currency">$</span><input type="number" step="0.01" min="0" class="price-input" data-price value="500"></div>
-        <div class="price-caption"></div>
-        <div class="breakdown"></div>
-        <div class="takehome-row"><span class="label">Takehome</span><span class="value">$—</span></div>
-      </article>
-    </div>
-  </section>
-
-  <div class="ledger-gutter">
-    <span class="equivalence-mark">=</span>
-    <span class="equivalence-caption">same takehome</span>
-  </div>
-
-  <!-- eBay: the equivalent price being solved for -->
-  <section class="ledger platform-ebay" data-platform="ebay">
-    <div class="ledger-head"><h2>eBay</h2><span class="platform-tag">Marketplace</span></div>
-    <div class="settings-strip" data-shared="ebay">
-      <label>Discount %
-        <input type="number" step="0.01" min="0" data-field="discountPct" value="0">
-      </label>
-      <label>Tax %
-        <input type="number" step="0.01" min="0" data-field="taxPct" value="7.5">
-      </label>
-      <label>Ship Paid ($)
-        <input type="number" step="0.01" min="0" data-field="shippingPaid" value="0">
-      </label>
-      <label>Ship Cost ($)
-        <input type="number" step="0.01" min="0" data-field="shippingCost" value="9">
-      </label>
-      <label>Tier Threshold ($)
-        <input type="number" step="1" min="0" data-field="threshold" value="2500">
-      </label>
-      <label>Low Tier %
-        <input type="number" step="0.01" min="0" data-field="lowRatePct" value="2.5">
-        <span class="field-note">eBay's public rate is 2.35% — defaulted to 2.5% per your spec, edit if needed.</span>
-      </label>
-      <label>Flat Fee ($)
-        <input type="number" step="0.01" min="0" data-field="flatFee" value="0.40">
-      </label>
-    </div>
-    <div class="slips">
-      <article class="slip" data-col="ebay-sameday">
-        <div class="slip-top"><h3>Same Day</h3></div>
-        <label class="rate-label">FVF Rate
-          <span class="rate-input-wrap"><input type="number" step="0.01" min="0" data-field="ratePct" value="11.5"><span class="unit">%</span></span>
-        </label>
-        <span class="price-label">Sales Price</span>
-        <div class="price-input-wrap"><span class="currency">$</span><input type="number" step="0.01" min="0" class="price-input" data-price value="500"></div>
-        <div class="price-caption"></div>
-        <div class="breakdown"></div>
-        <div class="takehome-row"><span class="label">Takehome</span><span class="value">$—</span></div>
-      </article>
-      <article class="slip" data-col="ebay-presale">
-        <div class="slip-top"><h3>Presale</h3></div>
-        <label class="rate-label">FVF Rate
-          <span class="rate-input-wrap"><input type="number" step="0.01" min="0" data-field="ratePct" value="12.5"><span class="unit">%</span></span>
-        </label>
-        <span class="price-label">Sales Price</span>
-        <div class="price-input-wrap"><span class="currency">$</span><input type="number" step="0.01" min="0" class="price-input" data-price value="500"></div>
-        <div class="price-caption"></div>
-        <div class="breakdown"></div>
-        <div class="takehome-row"><span class="label">Takehome</span><span class="value">$—</span></div>
-      </article>
-    </div>
-  </section>
-
-</div>
+<div class="columns-row" id="columns-row"></div>
 
 <script>
   // ---- Forward fee formulas ----
-  function ebayForward(P, shared, scenario) {
-    const discount = shared.discountPct / 100;
-    const t = shared.taxPct / 100;
-    const Sp = shared.shippingPaid;
-    const Sc = shared.shippingCost;
-    const threshold = shared.threshold;
-    const lowRate = shared.lowRatePct / 100;
-    const flat = shared.flatFee;
-    const rate = scenario.ratePct / 100;
+  function ebayForward(P, v) {
+    const discount = v.discountPct / 100;
+    const t = v.taxPct / 100;
+    const Sp = v.shippingPaid;
+    const Sc = v.shippingCost;
+    const threshold = v.threshold;
+    const lowRate = v.lowRatePct / 100;
+    const flat = v.flatFee;
+    const rate = v.ratePct / 100;
 
     const E = P * (1 - discount);
     const Tax = (E + Sp) * t;
@@ -285,29 +185,33 @@
     const fvf = highFee + lowFee + flat;
     const takehome = grossReceipt - Tax - fvf - Sc;
 
-    return { platform: 'ebay', effPrice: E, tax: Tax, grossReceipt, highBase, highFee, lowBase, lowFee, flat,
-             rate: scenario.ratePct, lowRatePct: shared.lowRatePct, fee: fvf, shippingCost: Sc, takehome };
+    return { grossReceipt, highBase, highFee, lowBase, lowFee, flat, rate: v.ratePct, lowRatePct: v.lowRatePct,
+             fee: fvf, tax: Tax, shippingCost: Sc, takehome };
   }
 
-  function dealernetForward(P, shared, scenario) {
-    const t = shared.taxPct / 100;
-    const Sp = shared.shippingPaid;
-    const Sc = shared.shippingCost;
-    const feeRate = scenario.feeRatePct / 100;
+  function dealernetForward(P, v) {
+    const t = v.taxPct / 100;
+    const Sp = v.shippingPaid;
+    const Sc = v.shippingCost;
+    const feeRate = v.feeRatePct / 100;
 
     const Tax = (P + Sp) * t;
     const grossReceipt = P + Tax + Sp;
     const fee = (P + Sp) * feeRate;
     const takehome = grossReceipt - Tax - fee - Sc;
 
-    return { platform: 'dealernet', tax: Tax, grossReceipt, fee, feeRatePct: scenario.feeRatePct, shippingCost: Sc, takehome };
+    return { grossReceipt, fee, feeRatePct: v.feeRatePct, tax: Tax, shippingCost: Sc, takehome };
+  }
+
+  function forward(col, price) {
+    return col.family === 'ebay' ? ebayForward(price, col.vars) : dealernetForward(price, col.vars);
   }
 
   // Generic bisection solver: find price such that forward(price).takehome == target
   function solvePrice(forwardFn, target) {
     let lo = 0, hi = 200000;
     const f0 = forwardFn(0).takehome;
-    if (target < f0 - 1e-6) return null; // no non-negative price achieves this takehome
+    if (target < f0 - 1e-6) return null;
     let hiVal = forwardFn(hi).takehome;
     let guard = 0;
     while (hiVal < target && guard < 20) { hi *= 2; hiVal = forwardFn(hi).takehome; guard++; }
@@ -318,60 +222,61 @@
     return (lo + hi) / 2;
   }
 
-  // ---- State ----
-  const state = {
-    ebay: {
-      shared: { discountPct: 0, taxPct: 7.5, shippingPaid: 0, shippingCost: 9, threshold: 2500, lowRatePct: 2.5, flatFee: 0.40 },
-      scenarios: { sameday: { name: 'Same Day', ratePct: 11.5 }, presale: { name: 'Presale', ratePct: 12.5 } }
-    },
-    dealernet: {
-      shared: { taxPct: 0, shippingPaid: 0, shippingCost: 9 },
-      scenarios: { paypal: { name: 'PayPal', feeRatePct: 2.99 }, eft: { name: 'EFT', feeRatePct: 0 } }
-    }
+  // ---- Field definitions (drive the vertical variable list per family) ----
+  const FIELD_DEFS = {
+    ebay: [
+      { key: 'discountPct', label: 'Discount', unit: '%', step: '0.01' },
+      { key: 'taxPct', label: 'Tax', unit: '%', step: '0.01' },
+      { key: 'shippingPaid', label: 'Shipping Paid', unit: '$', step: '0.01' },
+      { key: 'shippingCost', label: 'Shipping Cost', unit: '$', step: '0.01' },
+      { key: 'ratePct', label: 'FVF Rate', unit: '%', step: '0.01' },
+      { key: 'threshold', label: 'Tier Threshold', unit: '$', step: '1' },
+      { key: 'lowRatePct', label: 'Low Tier Rate', unit: '%', step: '0.01', note: "eBay's public rate is 2.35% — defaulted to 2.5% per your spec, edit if needed." },
+      { key: 'flatFee', label: 'Flat Fee', unit: '$', step: '0.01' }
+    ],
+    dealernet: [
+      { key: 'taxPct', label: 'Tax', unit: '%', step: '0.01', note: 'Cancels out of Takehome — shown on Gross Receipt only.' },
+      { key: 'shippingPaid', label: 'Shipping Paid', unit: '$', step: '0.01' },
+      { key: 'shippingCost', label: 'Shipping Cost', unit: '$', step: '0.01' },
+      { key: 'feeRatePct', label: 'Fee Rate', unit: '%', step: '0.01' }
+    ]
   };
 
-  const columns = [
-    { id: 'ebay-sameday', platform: 'ebay', scenarioKey: 'sameday' },
-    { id: 'ebay-presale', platform: 'ebay', scenarioKey: 'presale' },
-    { id: 'dealernet-paypal', platform: 'dealernet', scenarioKey: 'paypal' },
-    { id: 'dealernet-eft', platform: 'dealernet', scenarioKey: 'eft' }
+  // ---- Presets (the 4 fixed starting points; also seed the initial 4 live columns) ----
+  const PRESETS = [
+    { key: 'dealernet-paypal', family: 'dealernet', name: 'Dealernet — PayPal', price: 500, vars: { taxPct: 0, shippingPaid: 0, shippingCost: 9, feeRatePct: 2.99 } },
+    { key: 'dealernet-eft', family: 'dealernet', name: 'Dealernet — EFT', price: 500, vars: { taxPct: 0, shippingPaid: 0, shippingCost: 9, feeRatePct: 0 } },
+    { key: 'ebay-sameday', family: 'ebay', name: 'eBay — Same Day', price: 500, vars: { discountPct: 0, taxPct: 7.5, shippingPaid: 0, shippingCost: 9, ratePct: 11.5, threshold: 2500, lowRatePct: 2.5, flatFee: 0.40 } },
+    { key: 'ebay-presale', family: 'ebay', name: 'eBay — Presale', price: 500, vars: { discountPct: 0, taxPct: 7.5, shippingPaid: 0, shippingCost: 9, ratePct: 12.5, threshold: 2500, lowRatePct: 2.5, flatFee: 0.40 } }
   ];
 
-  function forward(col, price) {
-    const shared = state[col.platform].shared;
-    const scenario = state[col.platform].scenarios[col.scenarioKey];
-    return col.platform === 'ebay' ? ebayForward(price, shared, scenario) : dealernetForward(price, shared, scenario);
+  // ---- Live state ----
+  let columns = [];
+  let colSeq = 0;
+  let anchorId = null;
+
+  function clonePreset(preset) {
+    colSeq += 1;
+    return { id: `${preset.key}-${colSeq}`, family: preset.family, name: preset.name, price: preset.price, vars: { ...preset.vars }, dom: null };
   }
 
-  // Primary workflow: you know a Dealernet asking price and want the equivalent eBay price.
-  let anchorId = 'dealernet-paypal';
-  let anchorPrice = 500;
-
-  // ---- DOM helpers ----
   function fmt(n) {
     if (n === null || n === undefined || isNaN(n)) return '—';
     const sign = n < 0 ? '-' : '';
     return sign + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
-  const colEls = {};
-  columns.forEach((col) => {
-    const el = document.querySelector(`[data-col="${col.id}"]`);
-    colEls[col.id] = {
-      root: el,
-      priceInput: el.querySelector('[data-price]'),
-      priceCaption: el.querySelector('.price-caption'),
-      breakdown: el.querySelector('.breakdown'),
-      takehomeValue: el.querySelector('.takehome-row .value'),
-      rateInput: el.querySelector('.rate-label input')
-    };
-  });
+  function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  const columnsRowEl = document.getElementById('columns-row');
 
   function renderBreakdown(col, r) {
-    const dom = colEls[col.id];
+    const dom = col.dom;
     let html = '';
     html += `<div class="row"><span>Gross Receipt</span><span>${fmt(r.grossReceipt)}</span></div>`;
-    if (col.platform === 'ebay') {
+    if (col.family === 'ebay') {
       html += `<div class="row sub"><span>High tier ${fmt(r.highBase)} × ${r.rate}%</span><span>${fmt(r.highFee)}</span></div>`;
       if (r.lowBase > 0.005) {
         html += `<div class="row sub"><span>Low tier ${fmt(r.lowBase)} × ${r.lowRatePct}%</span><span>${fmt(r.lowFee)}</span></div>`;
@@ -385,20 +290,100 @@
     dom.breakdown.innerHTML = html;
   }
 
+  function buildColumnEl(col) {
+    const el = document.createElement('article');
+    el.className = `slip family-${col.family}`;
+    el.dataset.colId = col.id;
+    el.innerHTML = `
+      <div class="col-head">
+        <input class="col-name" value="${escapeHtml(col.name)}" spellcheck="false">
+        <button class="col-remove" title="Remove column" aria-label="Remove column">×</button>
+      </div>
+      <div class="family-tag">${col.family === 'ebay' ? 'eBay formula' : 'Dealernet formula'}</div>
+      <span class="price-label">Sales Price</span>
+      <div class="price-input-wrap"><span class="currency">$</span><input type="number" step="0.01" min="0" class="price-input" data-price></div>
+      <div class="price-caption"></div>
+      <div class="var-list"></div>
+      <div class="breakdown"></div>
+      <div class="takehome-row"><span class="label">Takehome</span><span class="value">$—</span></div>
+    `;
+
+    const varList = el.querySelector('.var-list');
+    FIELD_DEFS[col.family].forEach((fd) => {
+      const fieldRow = document.createElement('label');
+      fieldRow.className = 'var-row';
+      fieldRow.innerHTML = `
+        <span class="var-label">${fd.label}<span class="unit">${fd.unit}</span></span>
+        <input type="number" step="${fd.step}" min="0" data-var="${fd.key}">
+        ${fd.note ? `<span class="field-note">${fd.note}</span>` : ''}
+      `;
+      const input = fieldRow.querySelector('input');
+      input.value = col.vars[fd.key];
+      input.addEventListener('input', () => {
+        const val = parseFloat(input.value);
+        col.vars[fd.key] = isNaN(val) ? 0 : val;
+        recompute();
+      });
+      varList.appendChild(fieldRow);
+    });
+
+    const priceInput = el.querySelector('[data-price]');
+    priceInput.value = col.price.toFixed(2);
+    priceInput.addEventListener('input', () => {
+      anchorId = col.id;
+      col.price = parseFloat(priceInput.value) || 0;
+      recompute();
+    });
+
+    el.querySelector('.col-name').addEventListener('input', (e) => { col.name = e.target.value; });
+    el.querySelector('.col-remove').addEventListener('click', () => removeColumn(col.id));
+
+    col.dom = {
+      root: el,
+      priceInput,
+      priceCaption: el.querySelector('.price-caption'),
+      breakdown: el.querySelector('.breakdown'),
+      takehomeValue: el.querySelector('.takehome-row .value')
+    };
+
+    return el;
+  }
+
+  function removeColumn(id) {
+    const idx = columns.findIndex((c) => c.id === id);
+    if (idx === -1) return;
+    columns[idx].dom.root.remove();
+    columns.splice(idx, 1);
+    if (anchorId === id) anchorId = columns.length ? columns[0].id : null;
+    recompute();
+  }
+
+  function addColumnFromPreset(presetKey) {
+    const preset = PRESETS.find((p) => p.key === presetKey);
+    if (!preset) return;
+    const col = clonePreset(preset);
+    columns.push(col);
+    const el = buildColumnEl(col);
+    columnsRowEl.insertBefore(el, addTileEl);
+    recompute();
+  }
+
   function recompute() {
-    const anchorCol = columns.find((c) => c.id === anchorId);
-    const anchorResult = forward(anchorCol, anchorPrice);
-    const target = anchorResult.takehome;
+    if (columns.length === 0) return;
+    let anchorCol = columns.find((c) => c.id === anchorId);
+    if (!anchorCol) { anchorCol = columns[0]; anchorId = anchorCol.id; }
+
+    const target = forward(anchorCol, anchorCol.price).takehome;
 
     columns.forEach((col) => {
-      const dom = colEls[col.id];
-      const sameGroup = col.platform === anchorCol.platform;
+      const dom = col.dom;
+      const sameFamily = col.family === anchorCol.family;
       const isAnchor = col.id === anchorId;
       const focused = document.activeElement === dom.priceInput;
 
       let price, result, unreachable = false;
-      if (sameGroup) {
-        price = anchorPrice;
+      if (sameFamily) {
+        price = anchorCol.price;
         result = forward(col, price);
       } else {
         price = solvePrice((p) => forward(col, p), target);
@@ -406,15 +391,16 @@
         result = forward(col, price);
       }
 
+      if (!unreachable) col.price = price;
       dom.root.classList.toggle('is-anchor', isAnchor);
 
       if (!focused) {
         dom.priceInput.value = unreachable ? '' : price.toFixed(2);
       }
-      dom.priceInput.classList.toggle('solved', !sameGroup);
+      dom.priceInput.classList.toggle('solved', !sameFamily);
       dom.priceCaption.textContent = unreachable
         ? 'No non-negative price reaches this takehome with current fees.'
-        : (sameGroup ? '' : `Price needed to match ${fmt(target)} takehome`);
+        : (sameFamily ? '' : `Price needed to match ${fmt(target)} takehome`);
 
       if (unreachable) {
         dom.breakdown.innerHTML = '';
@@ -428,35 +414,42 @@
     });
   }
 
-  // ---- Wire up events ----
-  columns.forEach((col) => {
-    const dom = colEls[col.id];
-
-    dom.priceInput.addEventListener('input', () => {
-      anchorId = col.id;
-      anchorPrice = parseFloat(dom.priceInput.value) || 0;
-      recompute();
-    });
-
-    dom.rateInput.addEventListener('input', () => {
-      const scenario = state[col.platform].scenarios[col.scenarioKey];
-      const val = parseFloat(dom.rateInput.value);
-      if (col.platform === 'ebay') scenario.ratePct = isNaN(val) ? 0 : val;
-      else scenario.feeRatePct = isNaN(val) ? 0 : val;
-      recompute();
+  // ---- Add-scenario tile ----
+  const addTileEl = document.createElement('div');
+  addTileEl.className = 'add-tile';
+  addTileEl.innerHTML = `
+    <button class="add-btn" id="add-btn" aria-haspopup="true" aria-expanded="false">+ Add scenario</button>
+    <div class="add-menu" id="add-menu" hidden>
+      <div class="menu-label">Start from a preset</div>
+      ${PRESETS.map((p) => `<button type="button" data-preset="${p.key}">${escapeHtml(p.name)}</button>`).join('')}
+    </div>
+  `;
+  const addBtnEl = addTileEl.querySelector('#add-btn');
+  const addMenuEl = addTileEl.querySelector('#add-menu');
+  addBtnEl.addEventListener('click', () => {
+    const open = !addMenuEl.hidden;
+    addMenuEl.hidden = open;
+    addBtnEl.setAttribute('aria-expanded', String(!open));
+  });
+  addMenuEl.querySelectorAll('button[data-preset]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      addColumnFromPreset(btn.getAttribute('data-preset'));
+      addMenuEl.hidden = true;
+      addBtnEl.setAttribute('aria-expanded', 'false');
     });
   });
-
-  ['ebay', 'dealernet'].forEach((platform) => {
-    document.querySelectorAll(`[data-shared="${platform}"] input`).forEach((input) => {
-      input.addEventListener('input', () => {
-        const field = input.getAttribute('data-field');
-        const val = parseFloat(input.value);
-        state[platform].shared[field] = isNaN(val) ? 0 : val;
-        recompute();
-      });
-    });
+  document.addEventListener('click', (e) => {
+    if (!addTileEl.contains(e.target)) { addMenuEl.hidden = true; addBtnEl.setAttribute('aria-expanded', 'false'); }
   });
+
+  // ---- Init: seed the 4 presets as live columns, Dealernet PayPal as default anchor ----
+  PRESETS.forEach((preset) => {
+    const col = clonePreset(preset);
+    columns.push(col);
+    columnsRowEl.appendChild(buildColumnEl(col));
+  });
+  anchorId = columns[0].id; // Dealernet — PayPal: the known asking price you're starting from
+  columnsRowEl.appendChild(addTileEl);
 
   recompute();
 </script>
