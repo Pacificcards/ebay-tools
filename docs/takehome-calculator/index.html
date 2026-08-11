@@ -163,7 +163,9 @@
       font-family: var(--font-mono); font-size: 13px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 3px;
       width: 100%; background: var(--bg); color: var(--ink); font-variant-numeric: tabular-nums;
     }
-    .field-note { font-size: 10px; color: var(--ink-faint); font-weight: 400; line-height: 1.35; }
+    .label-icons { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .info-icon { font-size: 12px; color: var(--ink-faint); cursor: help; }
+    .info-icon:hover, .info-icon:focus-visible { color: var(--ink-muted); }
 
     input[type=number]::-webkit-outer-spin-button, input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
     input[type=number] { -moz-appearance: textfield; }
@@ -284,12 +286,17 @@
   // ---- Field definitions: basic fields render open; advanced fields render inside a collapsed <details> ----
   const FIELD_DEFS = {
     ebay: {
+      // Shared fields (Tax/Shipping Paid/Shipping Cost) lead, in the same order Dealernet uses below,
+      // so they land on the same horizontal line across every column. FVF Credit lines up with
+      // Dealernet's Fee Rate row (both are "the scenario differentiator" field). List Discount has
+      // no Dealernet counterpart at all, so it's pushed to a trailing row instead of the front,
+      // where it would otherwise push every shared field down a row on eBay columns only.
       basic: [
-        { key: 'discountPct', label: 'List Discount', unit: '%', step: '0.01', sync: true },
         { key: 'taxPct', label: 'Tax', unit: '%', step: '0.01', sync: true },
         { key: 'shippingPaid', label: 'Shipping Paid', unit: '$', step: '0.01', sync: true },
         { key: 'shippingCost', label: 'Shipping Cost', unit: '$', step: '0.01', sync: true },
-        { key: 'feeCreditPct', label: 'FVF Credit', unit: '%', step: '0.01', note: 'Credit applied to the calculated Final Value Fee (e.g. the Same Day seller credit).' }
+        { key: 'feeCreditPct', label: 'FVF Credit', unit: '%', step: '0.01', note: 'Credit applied to the calculated Final Value Fee (e.g. the Same Day seller credit).' },
+        { key: 'discountPct', label: 'List Discount', unit: '%', step: '0.01', sync: true }
       ],
       advanced: [
         { key: 'ratePct', label: 'FVF Rate', unit: '%', step: '0.01' },
@@ -397,10 +404,12 @@
     fieldRow.innerHTML = `
       <span class="label-row">
         <span class="var-label">${fd.label}<span class="unit">${fd.unit}</span></span>
-        ${fd.sync ? `<button type="button" class="sync-btn" title="Sync ${fd.label} to all scenarios" aria-label="Sync ${fd.label} to all scenarios">↻</button>` : ''}
+        <span class="label-icons">
+          ${fd.note ? `<span class="info-icon" tabindex="0" title="${escapeHtml(fd.note)}">ⓘ</span>` : ''}
+          ${fd.sync ? `<button type="button" class="sync-btn" title="Sync ${fd.label} to all scenarios" aria-label="Sync ${fd.label} to all scenarios">↻</button>` : ''}
+        </span>
       </span>
       <input type="number" step="${fd.step}" min="0" data-var="${fd.key}">
-      ${fd.note ? `<span class="field-note">${fd.note}</span>` : ''}
     `;
     const input = fieldRow.querySelector('input');
     input.value = fmtField(fd, col.vars[fd.key]);
