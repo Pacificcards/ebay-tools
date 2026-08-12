@@ -126,17 +126,22 @@
       display: inline-flex; align-items: center; justify-content: center;
     }
     .sync-btn:hover { color: var(--ink); background: var(--surface); }
-    .price-input-wrap { display: flex; align-items: baseline; border: 1px solid var(--border); border-radius: 3px; background: var(--bg); padding: 6px 10px; }
+    /* Price and Qty boxes share one box model (height/padding/border) so they line up exactly --
+       relying on font-size/line-height to happen to match was off by a couple px in practice. */
+    .price-input-wrap, .qty-input-wrap {
+      display: flex; align-items: center; height: 40px; border: 1px solid var(--border); border-radius: 3px;
+      background: var(--bg); padding: 6px 10px;
+    }
+    .qty-input-wrap { justify-content: center; }
     .price-input-wrap .currency { font-family: var(--font-mono); font-size: 19px; color: var(--ink-faint); margin-right: 2px; }
     .price-input { font-family: var(--font-mono); width: 100%; font-size: 22px; font-weight: 700; border: none; background: transparent; color: var(--ink); font-variant-numeric: tabular-nums; }
     .price-input.solved { color: var(--ink-muted); font-weight: 600; }
-    .price-input-wrap:has(.price-input:focus-visible) { outline: 2px solid var(--ink); outline-offset: 1px; }
-    .price-input:focus-visible { outline: none; }
+    .price-input-wrap:has(.price-input:focus-visible), .qty-input-wrap:has(.qty-input:focus-visible) { outline: 2px solid var(--ink); outline-offset: 1px; }
+    .price-input:focus-visible, .qty-input:focus-visible { outline: none; }
 
     .qty-input {
       width: 100%; font-family: var(--font-mono); font-size: 16px; font-weight: 700; text-align: center;
-      padding: 8px 4px; border: 1px solid var(--border); border-radius: 3px; background: var(--bg); color: var(--ink);
-      font-variant-numeric: tabular-nums;
+      border: none; background: transparent; color: var(--ink); font-variant-numeric: tabular-nums;
     }
 
     .price-caption { font-size: 10.5px; color: var(--ink-faint); margin: 5px 0 0; min-height: 13px; line-height: 1.35; }
@@ -366,14 +371,6 @@
     }
     html += `<div class="row"><span>Gross Receipt</span><span>${fmt(r.grossReceipt)}</span></div>`;
     if (col.family === 'ebay') {
-      html += `<div class="row sub neg"><span>High tier ${fmt(r.highBase)} × ${r.rate}%</span><span>-${fmt(r.highFee)}</span></div>`;
-      if (r.lowBase > 0.005) {
-        html += `<div class="row sub neg"><span>Low tier ${fmt(r.lowBase)} × ${r.lowRatePct}%</span><span>-${fmt(r.lowFee)}</span></div>`;
-      }
-      html += `<div class="row sub neg"><span>Flat fee</span><span>-${fmt(r.flat)}</span></div>`;
-      if (r.feeCreditPct > 0) {
-        html += `<div class="row sub credit"><span>FVF credit ${r.feeCreditPct}%</span><span>+${fmt(r.creditAmt)}</span></div>`;
-      }
       html += `<div class="row neg"><span>Total eBay Fee</span><span>-${fmt(r.fee)}</span></div>`;
     } else {
       html += `<div class="row sub neg"><span>Fee ${fmt(r.grossReceipt - r.tax)} × ${r.feeRatePct}%</span><span>-${fmt(r.fee)}</span></div>`;
@@ -381,6 +378,22 @@
     html += `<div class="row neg"><span>Tax</span><span>-${fmt(r.tax)}</span></div>`;
     html += `<div class="row neg"><span>Shipping cost</span><span>-${fmt(r.shippingCost)}</span></div>`;
     dom.breakdown.innerHTML = html;
+
+    // The itemized FVF calculation (how Total eBay Fee above was derived) lives inside Advanced
+    // Fee Settings, next to the rate/threshold inputs that drive it, rather than the main receipt.
+    if (dom.advancedBreakdown) {
+      let advHtml = '';
+      advHtml += `<div class="row sub neg"><span>High tier ${fmt(r.highBase)} × ${r.rate}%</span><span>-${fmt(r.highFee)}</span></div>`;
+      if (r.lowBase > 0.005) {
+        advHtml += `<div class="row sub neg"><span>Low tier ${fmt(r.lowBase)} × ${r.lowRatePct}%</span><span>-${fmt(r.lowFee)}</span></div>`;
+      }
+      advHtml += `<div class="row sub neg"><span>Flat fee</span><span>-${fmt(r.flat)}</span></div>`;
+      if (r.feeCreditPct > 0) {
+        advHtml += `<div class="row sub credit"><span>FVF credit ${r.feeCreditPct}%</span><span>+${fmt(r.creditAmt)}</span></div>`;
+      }
+      advHtml += `<div class="row"><span>Total eBay Fee</span><span>-${fmt(r.fee)}</span></div>`;
+      dom.advancedBreakdown.innerHTML = advHtml;
+    }
   }
 
   // Copies one field's current value from `sourceCol` to every other live column that has that
@@ -460,7 +473,7 @@
             <span class="price-label">Qty</span>
             <button type="button" class="sync-btn" title="Sync Qty to all scenarios" aria-label="Sync Qty to all scenarios">↻</button>
           </span>
-          <input type="number" step="1" min="1" class="qty-input" data-qty>
+          <div class="qty-input-wrap"><input type="number" step="1" min="1" class="qty-input" data-qty></div>
         </div>
       </div>
       <div class="price-caption"></div>
@@ -474,12 +487,14 @@
     const varList = el.querySelector('.var-list');
     defs.basic.forEach((fd) => varList.appendChild(buildFieldRow(col, fd)));
 
+    let advancedBreakdownEl = null;
     if (defs.advanced.length) {
       const details = document.createElement('details');
       details.className = 'advanced';
-      details.innerHTML = `<summary>Advanced fee settings</summary><div class="advanced-fields"></div>`;
+      details.innerHTML = `<summary>Advanced fee settings</summary><div class="advanced-fields"></div><div class="breakdown advanced-breakdown"></div>`;
       const advList = details.querySelector('.advanced-fields');
       defs.advanced.forEach((fd) => advList.appendChild(buildFieldRow(col, fd)));
+      advancedBreakdownEl = details.querySelector('.advanced-breakdown');
       el.appendChild(details);
     }
 
@@ -522,6 +537,7 @@
       priceInput,
       priceCaption: el.querySelector('.price-caption'),
       breakdown: breakdownEl,
+      advancedBreakdown: advancedBreakdownEl,
       takehomeValue: el.querySelector('.takehome-row .value')
     };
 
