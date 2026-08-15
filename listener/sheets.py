@@ -14,22 +14,22 @@ PRICE_CHECK_TAB = "Price Check"
 CARD_DRAFT_TAB = "Card Draft"
 
 # Card Draft tab columns (1-based). User fills A–B; workflow fills C–Q.
-# Card Name | Card Number | Game | Language | Suggested Title | Set | Rarity |
-# Finish | Card Type | Character | Card Size | Material | Vintage |
-# Clearing Price | Holding Price | # Listings | Last Checked
-_CD_COL_GAME = 3        # C
-_CD_COL_LANGUAGE = 4    # D
-_CD_COL_TITLE = 5       # E
-_CD_COL_SET = 6         # F
-_CD_COL_RARITY = 7      # G
-_CD_COL_FINISH = 8      # H
-_CD_COL_CARD_TYPE = 9   # I
-_CD_COL_CHARACTER = 10  # J
-_CD_COL_CARD_SIZE = 11  # K
-_CD_COL_MATERIAL = 12   # L
-_CD_COL_VINTAGE = 13    # M
-_CD_COL_CLEARING = 14   # N
-_CD_COL_HOLDING = 15    # O
+# Card Name | Card Number | Clearing Price | Holding Price | Game | Language |
+# Suggested Title | Set | Rarity | Finish | Card Type | Character | Card Size |
+# Material | Vintage | # Listings | Last Checked
+_CD_COL_CLEARING = 3    # C
+_CD_COL_HOLDING = 4     # D
+_CD_COL_GAME = 5        # E
+_CD_COL_LANGUAGE = 6    # F
+_CD_COL_TITLE = 7       # G
+_CD_COL_SET = 8         # H
+_CD_COL_RARITY = 9      # I
+_CD_COL_FINISH = 10     # J
+_CD_COL_CARD_TYPE = 11  # K
+_CD_COL_CHARACTER = 12  # L
+_CD_COL_CARD_SIZE = 13  # M
+_CD_COL_MATERIAL = 14   # N
+_CD_COL_VINTAGE = 15    # O
 _CD_COL_N = 16          # P
 _CD_COL_CHECKED = 17    # Q
 
@@ -141,6 +141,8 @@ def write_card_draft_row(sheet_id: str, row_idx: int, data: dict) -> None:
     holding = data.get("holding_price")
     ws.update(
         [[
+            f"{clearing:.2f}" if clearing is not None else "—",
+            f"{holding:.2f}" if holding is not None else "—",
             data.get("game", ""),
             data.get("language", ""),
             data.get("title", ""),
@@ -152,8 +154,6 @@ def write_card_draft_row(sheet_id: str, row_idx: int, data: dict) -> None:
             data.get("card_size", ""),
             data.get("material", ""),
             data.get("vintage", ""),
-            f"{clearing:.2f}" if clearing is not None else "—",
-            f"{holding:.2f}" if holding is not None else "—",
             data.get("n_listings", 0),
             now,
         ]],
