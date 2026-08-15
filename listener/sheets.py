@@ -11,6 +11,27 @@ SCOPES = [
 WATCHLIST_TAB = "Watchlist"
 OBSERVED_TAB = "Observed Listings"
 PRICE_CHECK_TAB = "Price Check"
+CARD_DRAFT_TAB = "Card Draft"
+
+# Card Draft tab columns (1-based). User fills A–B; workflow fills C–Q.
+# Card Name | Card Number | Game | Language | Suggested Title | Set | Rarity |
+# Finish | Card Type | Character | Card Size | Material | Vintage |
+# Clearing Price | Holding Price | # Listings | Last Checked
+_CD_COL_GAME = 3        # C
+_CD_COL_LANGUAGE = 4    # D
+_CD_COL_TITLE = 5       # E
+_CD_COL_SET = 6         # F
+_CD_COL_RARITY = 7      # G
+_CD_COL_FINISH = 8      # H
+_CD_COL_CARD_TYPE = 9   # I
+_CD_COL_CHARACTER = 10  # J
+_CD_COL_CARD_SIZE = 11  # K
+_CD_COL_MATERIAL = 12   # L
+_CD_COL_VINTAGE = 13    # M
+_CD_COL_CLEARING = 14   # N
+_CD_COL_HOLDING = 15    # O
+_CD_COL_N = 16          # P
+_CD_COL_CHECKED = 17    # Q
 
 # Price Check tab column positions (1-based):
 # Description | Clearing Price | Holding Price | # Listings | Last Checked
@@ -95,6 +116,49 @@ def write_price_check_row(
     clearing_str = f"{clearing:.2f}" if clearing is not None else "—"
     holding_str = f"{holding:.2f}" if holding is not None else "—"
     ws.update([[clearing_str, holding_str, n_listings, now]], f"B{row_idx}:E{row_idx}")
+
+
+def read_card_draft(sheet_id: str) -> list[dict]:
+    """Return Card Draft rows that have a Card Name but no Game (not yet processed)."""
+    ws = _get_spreadsheet(sheet_id).worksheet(CARD_DRAFT_TAB)
+    records = ws.get_all_records()
+    rows = []
+    for i, row in enumerate(records):
+        card_name = str(row.get("Card Name", "")).strip()
+        game = str(row.get("Game", "")).strip()
+        if card_name and not game:
+            row["_row_index"] = i + 2  # header is row 1
+            rows.append(row)
+    return rows
+
+
+def write_card_draft_row(sheet_id: str, row_idx: int, data: dict) -> None:
+    """Write all auto-filled fields (cols C–Q) for a Card Draft row."""
+    from datetime import datetime, timezone
+    ws = _get_spreadsheet(sheet_id).worksheet(CARD_DRAFT_TAB)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    clearing = data.get("clearing_price")
+    holding = data.get("holding_price")
+    ws.update(
+        [[
+            data.get("game", ""),
+            data.get("language", ""),
+            data.get("title", ""),
+            data.get("set", ""),
+            data.get("rarity", ""),
+            data.get("finish", ""),
+            data.get("card_type", ""),
+            data.get("character", ""),
+            data.get("card_size", ""),
+            data.get("material", ""),
+            data.get("vintage", ""),
+            f"{clearing:.2f}" if clearing is not None else "—",
+            f"{holding:.2f}" if holding is not None else "—",
+            data.get("n_listings", 0),
+            now,
+        ]],
+        f"C{row_idx}:Q{row_idx}",
+    )
 
 
 def append_observed_listing(sheet_id: str, data: dict):

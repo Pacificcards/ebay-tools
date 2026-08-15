@@ -202,6 +202,71 @@ def search_listings_by_keyword(token: str, query: str, min_price: float, max_pri
     return _search_raw_cards(token, {"q": query}, min_price, max_price)
 
 
+def search_card_listings(token: str, query: str) -> list[dict]:
+    """Search for a specific card. Returns [{raw_item_id, price, title}], BIN only, Graded:No.
+
+    Preserves the raw Browse API item ID (e.g. 'v1|123456789|0') so callers can
+    pass it directly to fetch_item_aspects().
+    """
+    base_filter = ",".join([
+        "buyingOptions:{FIXED_PRICE}",
+        "itemLocationCountry:US",
+        "priceCurrency:USD",
+    ])
+    seen: set[str] = set()
+    results: list[dict] = []
+    for category_id in _RAW_CARD_CATEGORY_IDS:
+        resp = requests.get(
+            f"{BROWSE_BASE}/item_summary/search",
+            headers=_headers(token),
+            params={
+                "q": query,
+                "category_ids": category_id,
+                "filter": base_filter,
+                "aspect_filter": f"categoryId:{category_id},Graded:{{No}}",
+                "limit": 50,
+                "sort": "price",
+            },
+        )
+        if resp.status_code != 200:
+            continue
+        for item in resp.json().get("itemSummaries", []):
+            raw_id = item.get("itemId", "")
+            price_val = item.get("price", {}).get("value")
+            if raw_id and raw_id not in seen:
+                seen.add(raw_id)
+                results.append({
+                    "raw_item_id": raw_id,
+                    "price": float(price_val) if price_val else 0.0,
+                    "title": item.get("title", ""),
+                })
+    results.sort(key=lambda x: x["price"])
+    return results
+
+
+def fetch_item_aspects(token: str, raw_item_id: str) -> dict:
+    """Fetch localizedAspects for a single item via the Browse API item details endpoint.
+
+    raw_item_id: the full Browse API item ID (e.g. 'v1|123456789|0') as returned by
+    search_card_listings(). Returns {aspect_name: value} dict, empty on failure.
+    """
+    import urllib.parse
+    encoded_id = urllib.parse.quote(raw_item_id, safe="")
+    resp = requests.get(
+        f"{BROWSE_BASE}/item/{encoded_id}",
+        headers=_headers(token),
+    )
+    if not resp.ok:
+        return {}
+    aspects = {}
+    for a in resp.json().get("localizedAspects", []):
+        name = a.get("name", "")
+        value = a.get("value", "")
+        if name and value:
+            aspects[name] = value
+    return aspects
+
+
 def search_listings_for_price(token: str, query: str, limit: int = 200) -> list[dict]:
     """Return active BIN raw-card listings for price discovery.
 
