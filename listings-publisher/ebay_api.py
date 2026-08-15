@@ -45,6 +45,8 @@ def create_and_publish(
     package_width_in: float | None = None,
     package_height_in: float | None = None,
     best_offer_enabled: bool = False,
+    best_offer_min_price: float | None = None,
+    scheduled_start: str | None = None,
     condition_map: dict | None = None,
 ) -> str:
     """Create inventory item + offer, publish, return eBay listing ID."""
@@ -113,9 +115,14 @@ def create_and_publish(
             "fulfillmentPolicyId": fulfillment_policy_id,
             "paymentPolicyId": payment_policy_id,
             "returnPolicyId": return_policy_id,
-            "bestOfferTerms": {"bestOfferEnabled": best_offer_enabled},
+            "bestOfferTerms": {
+                "bestOfferEnabled": best_offer_enabled,
+                **({"autoDeclinePrice": {"value": f"{best_offer_min_price:.2f}", "currency": "USD"}}
+                   if best_offer_min_price is not None else {}),
+            },
         },
         **({"merchantLocationKey": merchant_location_key} if merchant_location_key else {}),
+        **({"listingStartDate": scheduled_start} if scheduled_start else {}),
     }
     r = requests.post(f"{BASE_INVENTORY}/offer", json=offer_body, headers=headers)
     if not r.ok and _is_offer_exists_error(r):

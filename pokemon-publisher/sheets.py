@@ -8,10 +8,16 @@ SCOPES = [
 ]
 TAB = "pokemon_draft"
 
-# 1-based column positions matching the sheet layout (23 columns)
-COL_SKU = 11
-COL_LISTING_ID = 22
-COL_STATUS = 23
+# 1-based column positions matching the sheet layout (32 columns):
+# Game | Language | Title | Price | Min Offer Price | Scheduled Start | Character |
+# Card Number | Rarity | Finish | Set | Condition | SKU | Quantity | Description |
+# Card Name | Card Type | Material | Vintage | Card Size | Convention/Event |
+# Manufacturer | Shipping Policy ID | Return Policy ID | Payment Policy ID |
+# Weight (oz) | Length (in) | Width (in) | Height (in) | Best Offer |
+# Listing ID (31) | Status (32)
+COL_SKU = 13
+COL_LISTING_ID = 31
+COL_STATUS = 32
 
 _ws_cache: dict = {}
 

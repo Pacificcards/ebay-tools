@@ -200,3 +200,40 @@ def search_all_listings(
 def search_listings_by_keyword(token: str, query: str, min_price: float, max_price: float) -> list[dict]:
     """Return recent raw (ungraded) BIN listings matching a keyword query within the price range, cheapest first."""
     return _search_raw_cards(token, {"q": query}, min_price, max_price)
+
+
+def search_listings_for_price(token: str, query: str, limit: int = 200) -> list[dict]:
+    """Return active BIN raw-card listings for price discovery.
+
+    No price filter, no recency filter — returns all current listings so the full
+    price distribution is visible. Applies Graded:No across all raw-card categories.
+    Returns [{price, title}] sorted cheapest first.
+    """
+    base_filter = ",".join([
+        "buyingOptions:{FIXED_PRICE}",
+        "itemLocationCountry:US",
+        "priceCurrency:USD",
+    ])
+    seen: set[str] = set()
+    results: list[dict] = []
+    for category_id in _RAW_CARD_CATEGORY_IDS:
+        resp = requests.get(
+            f"{BROWSE_BASE}/item_summary/search",
+            headers=_headers(token),
+            params={
+                "q": query,
+                "category_ids": category_id,
+                "filter": base_filter,
+                "aspect_filter": f"categoryId:{category_id},Graded:{{No}}",
+                "limit": 200,
+                "sort": "price",
+            },
+        )
+        if resp.status_code != 200:
+            continue
+        for item in _parse_items(resp.json()):
+            if item["item_id"] not in seen:
+                seen.add(item["item_id"])
+                results.append({"price": item["price"], "title": item["title"]})
+    results.sort(key=lambda x: x["price"])
+    return results[:limit]

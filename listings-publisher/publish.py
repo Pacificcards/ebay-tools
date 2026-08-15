@@ -1,6 +1,7 @@
 """Publish ungraded sports trading card listings from a Google Sheet + local image folder."""
 import os
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -23,6 +24,21 @@ def _require(key: str) -> str:
         print(f"ERROR: missing environment variable {key}")
         sys.exit(1)
     return val
+
+
+_PST_TO_UTC = timedelta(hours=8)  # PST = UTC−8 (fixed offset, no DST adjustment)
+
+
+def _parse_scheduled_start(value: str) -> str:
+    """Convert '8/15/26 2:00 PM' (PST) → '2026-08-15T22:00:00Z' for eBay's listingStartDate."""
+    try:
+        dt = datetime.strptime(value.strip(), "%m/%d/%y %I:%M %p")
+    except ValueError:
+        raise ValueError(
+            f"Scheduled Start '{value}' must be in format 'M/D/YY H:MM AM/PM' "
+            f"(e.g. '8/15/26 2:00 PM')"
+        )
+    return (dt + _PST_TO_UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 _SPORT_TO_LEAGUE = {
@@ -236,6 +252,10 @@ def main(image_folder: str | None = None):
                 package_width_in = _float_or_none("Width (in)")
                 package_height_in = _float_or_none("Height (in)")
                 best_offer = str(row.get("Best Offer", "")).strip().lower() in ("y", "yes", "true", "1")
+                min_offer_str = str(row.get("Min Offer Price", "")).strip()
+                best_offer_min_price = float(min_offer_str) if min_offer_str else None
+                scheduled_start_raw = str(row.get("Scheduled Start", "")).strip()
+                scheduled_start = _parse_scheduled_start(scheduled_start_raw) if scheduled_start_raw else None
 
                 print(f"         Uploading {len(photo_group)} photo(s)...")
                 image_urls = [images.upload(path, token) for path in photo_group]
@@ -261,6 +281,8 @@ def main(image_folder: str | None = None):
                     package_width_in=package_width_in,
                     package_height_in=package_height_in,
                     best_offer_enabled=best_offer,
+                    best_offer_min_price=best_offer_min_price,
+                    scheduled_start=scheduled_start,
                 )
 
                 sheets.write_result(sheet_id, creds_path, row_idx, listing_id, "published", sku=sku)
