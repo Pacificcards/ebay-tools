@@ -26,6 +26,14 @@ _EXCLUDE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Exclude non-English listings that slipped past the API's Language:{English} aspect filter
+# (sellers who didn't fill in the Language aspect, or mixed-language listings)
+_NON_ENGLISH_RE = re.compile(
+    r"\b(japanese|korean|chinese|french|german|italian|spanish|portuguese|"
+    r"thai|indonesian|dutch|polish|japanese\s*ver|jp\s*ver|kr\s*ver)\b",
+    re.IGNORECASE,
+)
+
 
 def _consensus(all_aspects: list[dict]) -> dict:
     """For each aspect key, pick the most common value across all items."""
@@ -41,7 +49,9 @@ def _filter_prices(listings: list[dict]) -> list[float]:
     """Title filter + IQR outlier removal. Returns sorted clean price list."""
     prices = [
         item["price"] for item in listings
-        if item["price"] > 0 and not _EXCLUDE_RE.search(item["title"])
+        if item["price"] > 0
+        and not _EXCLUDE_RE.search(item["title"])
+        and not _NON_ENGLISH_RE.search(item["title"])
     ]
     if len(prices) < 4:
         return sorted(prices)
@@ -148,7 +158,7 @@ def main():
         character = consensus.get("Character Family") or consensus.get("Character", "")
         data = {
             "game": consensus.get("Game", ""),
-            "language": consensus.get("Language", ""),
+            "language": "English",  # always listing English cards
             "title": title,
             "set": consensus.get("Set", ""),
             "rarity": consensus.get("Rarity", ""),

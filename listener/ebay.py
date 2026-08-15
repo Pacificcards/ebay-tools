@@ -223,7 +223,7 @@ def search_card_listings(token: str, query: str) -> list[dict]:
                 "q": query,
                 "category_ids": category_id,
                 "filter": base_filter,
-                "aspect_filter": f"categoryId:{category_id},Graded:{{No}}",
+                "aspect_filter": f"categoryId:{category_id},Graded:{{No}},Language:{{English}}",
                 "limit": 50,
                 "sort": "price",
             },
