@@ -92,8 +92,8 @@ def write_price_check_row(
     from datetime import datetime, timezone
     ws = _get_spreadsheet(sheet_id).worksheet(PRICE_CHECK_TAB)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    clearing_str = f"${clearing:.2f}" if clearing is not None else "—"
-    holding_str = f"${holding:.2f}" if holding is not None else "—"
+    clearing_str = f"{clearing:.2f}" if clearing is not None else "—"
+    holding_str = f"{holding:.2f}" if holding is not None else "—"
     ws.update([[clearing_str, holding_str, n_listings, now]], f"B{row_idx}:E{row_idx}")
 
 
