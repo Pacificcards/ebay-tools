@@ -236,11 +236,22 @@
   .listing-title:hover { color: var(--accent); text-decoration: underline; }
   .listing-meta { font-size: 11px; color: var(--text-3); }
 
+  .name-cell-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .name-cell-row .listing-title { flex: 1; min-width: 0; }
+  .fav-checkbox { flex: none; accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer; }
+
   .qty-pill {
     display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600;
     background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border);
   }
   .qty-pill.zero { background: color-mix(in srgb, var(--critical) 12%, var(--surface)); color: var(--critical); border-color: color-mix(in srgb, var(--critical) 35%, var(--border)); }
+
+  .remove-btn {
+    appearance: none; border: 1px solid var(--border); background: var(--surface); color: var(--text-2);
+    font: inherit; font-size: 11.5px; font-weight: 600; padding: 4px 10px; border-radius: 6px;
+    cursor: pointer; white-space: nowrap;
+  }
+  .remove-btn:hover { color: var(--critical); border-color: color-mix(in srgb, var(--critical) 35%, var(--border)); }
 
   .metric-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
   .metric-val { font-size: 13.5px; font-weight: 600; color: var(--text); line-height: 1.3; white-space: nowrap; }
@@ -404,6 +415,31 @@
     </div>
   </div>
 
+  <div class="section-block" id="favorites-section" style="display:none">
+    <h2 class="section-title">Favorites</h2>
+    <p class="section-caption" id="favorites-caption"></p>
+    <p class="scroll-hint">↔ Swipe sideways to see more columns</p>
+    <div class="table-card">
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th style="text-align:left">Listing</th>
+              <th>Price</th>
+              <th>Qty</th>
+              <th>Impressions</th>
+              <th>Views</th>
+              <th>CTR</th>
+              <th>Views Trend (7D)</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="fav-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <div class="filters">
     <div class="preset-group" id="preset-group">
       <button class="preset-btn active" data-preset="1d">1D</button>
@@ -503,6 +539,7 @@
   const DATA = _json.listings;
   const SALES = _json.sales;
   const listings = Object.entries(DATA).map(([id, v]) => ({ id, ...v }));
+  const listingById = new Map(listings.map(l => [l.id, l]));
   const allDates = Array.from(new Set(listings.flatMap(l => Object.keys(l.days)))).sort();
   const maxDate = allDates[allDates.length - 1];
   const minDate = allDates[0];
@@ -510,7 +547,20 @@
 
   document.getElementById('listing-count').textContent = listings.length + ' active listings · data through ' + fmtDateLong(maxDate) + ' · generated ' + _json.generated_at;
 
-  const state = { preset: '1d', customStart: null, customEnd: null, search: '', hideZero: true, category: '', sortKey: 'views', sortDir: 'desc', expanded: null };
+  const FAV_STORAGE_KEY = 'pcc-traffic-favorites-v1';
+  function loadFavorites() {
+    try {
+      const raw = localStorage.getItem(FAV_STORAGE_KEY);
+      return new Set(raw ? JSON.parse(raw) : []);
+    } catch (e) {
+      return new Set();
+    }
+  }
+  function saveFavorites() {
+    try { localStorage.setItem(FAV_STORAGE_KEY, JSON.stringify([...state.favorites])); } catch (e) {}
+  }
+
+  const state = { preset: '1d', customStart: null, customEnd: null, search: '', hideZero: true, category: '', sortKey: 'views', sortDir: 'desc', expanded: null, favorites: loadFavorites() };
 
   // Build short, collision-safe labels for the category dropdown (e.g. "CCG Individual Cards"
   // vs "Sealed Trading Card Boxes — Sports" / "— Collectibles" when leaf names collide).
@@ -705,75 +755,138 @@
     document.getElementById('empty-state').style.display = rows.length ? 'none' : 'block';
 
     rows.forEach(r => {
-      const tr = document.createElement('tr');
-      tr.className = 'row';
-      tr.dataset.id = r.l.id;
-
-      const tdName = document.createElement('td');
-      tdName.className = 'name-cell';
-      const titleSpan = document.createElement('a');
-      titleSpan.className = 'listing-title';
-      titleSpan.href = 'https://www.ebay.com/itm/' + encodeURIComponent(r.l.id);
-      titleSpan.target = '_blank';
-      titleSpan.rel = 'noopener noreferrer';
-      titleSpan.textContent = r.l.title || '(untitled)';
-      titleSpan.title = (r.l.title || '(untitled)') + ' — open on eBay';
-      titleSpan.addEventListener('click', (e) => e.stopPropagation());
-      const metaSpan = document.createElement('span');
-      metaSpan.className = 'listing-meta';
-      metaSpan.textContent = r.l.id + (r.l.price ? ' · $' + r.l.price.toFixed(2) : '');
-      tdName.appendChild(titleSpan);
-      tdName.appendChild(metaSpan);
-
-      const tdPrice = document.createElement('td');
-      tdPrice.innerHTML = '<div class="metric-stack"><span class="metric-val">' + fmtPrice(r.l.price) + '</span></div>';
-
-      const tdQty = document.createElement('td');
-      const qtyPill = document.createElement('span');
-      qtyPill.className = 'qty-pill' + (r.l.qty <= 0 ? ' zero' : '');
-      qtyPill.textContent = r.l.qty;
-      tdQty.appendChild(qtyPill);
-
-      const tdImpr = document.createElement('td');
-      tdImpr.innerHTML = '<div class="metric-stack">' +
-        '<span class="metric-val">' + fmtNum(r.imprNarrow) + '<span class="metric-divider">|</span>' + fmtNum(r.impr) + '</span>' +
-        '<span class="metric-pair">' + deltaHtml(r.imprNarrowDelta) + '<span class="metric-divider">|</span>' + deltaHtml(r.imprDelta) + '</span>' +
-        '</div>';
-
-      const tdViews = document.createElement('td');
-      tdViews.innerHTML = '<div class="metric-stack"><span class="metric-val">' + fmtNum(r.views) + '</span>' + deltaHtml(r.viewsDelta) + '</div>';
-
-      const tdCtr = document.createElement('td');
-      tdCtr.innerHTML = '<div class="metric-stack"><span class="metric-val">' + fmtPct(r.ctr) + '</span>' + deltaHtml(r.ctrDelta) + '</div>';
-
-      const tdSpark = document.createElement('td');
-      tdSpark.className = 'spark-cell';
-      const sparkWrap = document.createElement('div');
-      sparkWrap.className = 'spark-wrap';
-      sparkWrap.innerHTML = sparkSvg(r.sparkVals, 110, 30);
-      tdSpark.appendChild(sparkWrap);
-
-      tr.appendChild(tdName); tr.appendChild(tdPrice); tr.appendChild(tdQty); tr.appendChild(tdImpr);
-      tr.appendChild(tdViews); tr.appendChild(tdCtr); tr.appendChild(tdSpark);
-      tr.addEventListener('click', () => toggleExpand(r.l.id));
-      if (state.expanded === r.l.id) tr.classList.add('expanded');
-      tbody.appendChild(tr);
-
-      if (state.expanded === r.l.id) {
-        const detailTr = document.createElement('tr');
-        detailTr.className = 'detail-row';
-        const detailTd = document.createElement('td');
-        detailTd.colSpan = 6;
-        detailTd.appendChild(buildDetailPanel(r.l));
-        detailTr.appendChild(detailTd);
-        tbody.appendChild(detailTr);
-      }
+      tbody.appendChild(buildListingRow(r, { showRemove: false }));
+      if (state.expanded === r.l.id) tbody.appendChild(buildDetailRow(r.l, 7));
     });
+  }
+
+  // Shared row builder for both the main table and the Favorites table above it,
+  // so the two stay in lockstep (same columns, same click-to-expand behavior) with
+  // one code path. `showRemove` adds a trailing Remove-button cell (Favorites only).
+  function buildListingRow(r, opts) {
+    opts = opts || {};
+    const tr = document.createElement('tr');
+    tr.className = 'row';
+    tr.dataset.id = r.l.id;
+
+    const tdName = document.createElement('td');
+    tdName.className = 'name-cell';
+    const nameRow = document.createElement('div');
+    nameRow.className = 'name-cell-row';
+    const favCheckbox = document.createElement('input');
+    favCheckbox.type = 'checkbox';
+    favCheckbox.className = 'fav-checkbox';
+    favCheckbox.checked = state.favorites.has(r.l.id);
+    favCheckbox.title = 'Pin to Favorites';
+    favCheckbox.addEventListener('click', (e) => e.stopPropagation());
+    favCheckbox.addEventListener('change', (e) => toggleFavorite(r.l.id, e.target.checked));
+    const titleSpan = document.createElement('a');
+    titleSpan.className = 'listing-title';
+    titleSpan.href = 'https://www.ebay.com/itm/' + encodeURIComponent(r.l.id);
+    titleSpan.target = '_blank';
+    titleSpan.rel = 'noopener noreferrer';
+    titleSpan.textContent = r.l.title || '(untitled)';
+    titleSpan.title = (r.l.title || '(untitled)') + ' — open on eBay';
+    titleSpan.addEventListener('click', (e) => e.stopPropagation());
+    nameRow.appendChild(favCheckbox);
+    nameRow.appendChild(titleSpan);
+    const metaSpan = document.createElement('span');
+    metaSpan.className = 'listing-meta';
+    metaSpan.textContent = r.l.id + (r.l.price ? ' · $' + r.l.price.toFixed(2) : '');
+    tdName.appendChild(nameRow);
+    tdName.appendChild(metaSpan);
+
+    const tdPrice = document.createElement('td');
+    tdPrice.innerHTML = '<div class="metric-stack"><span class="metric-val">' + fmtPrice(r.l.price) + '</span></div>';
+
+    const tdQty = document.createElement('td');
+    const qtyPill = document.createElement('span');
+    qtyPill.className = 'qty-pill' + (r.l.qty <= 0 ? ' zero' : '');
+    qtyPill.textContent = r.l.qty;
+    tdQty.appendChild(qtyPill);
+
+    const tdImpr = document.createElement('td');
+    tdImpr.innerHTML = '<div class="metric-stack">' +
+      '<span class="metric-val">' + fmtNum(r.imprNarrow) + '<span class="metric-divider">|</span>' + fmtNum(r.impr) + '</span>' +
+      '<span class="metric-pair">' + deltaHtml(r.imprNarrowDelta) + '<span class="metric-divider">|</span>' + deltaHtml(r.imprDelta) + '</span>' +
+      '</div>';
+
+    const tdViews = document.createElement('td');
+    tdViews.innerHTML = '<div class="metric-stack"><span class="metric-val">' + fmtNum(r.views) + '</span>' + deltaHtml(r.viewsDelta) + '</div>';
+
+    const tdCtr = document.createElement('td');
+    tdCtr.innerHTML = '<div class="metric-stack"><span class="metric-val">' + fmtPct(r.ctr) + '</span>' + deltaHtml(r.ctrDelta) + '</div>';
+
+    const tdSpark = document.createElement('td');
+    tdSpark.className = 'spark-cell';
+    const sparkWrap = document.createElement('div');
+    sparkWrap.className = 'spark-wrap';
+    sparkWrap.innerHTML = sparkSvg(r.sparkVals, 110, 30);
+    tdSpark.appendChild(sparkWrap);
+
+    tr.appendChild(tdName); tr.appendChild(tdPrice); tr.appendChild(tdQty); tr.appendChild(tdImpr);
+    tr.appendChild(tdViews); tr.appendChild(tdCtr); tr.appendChild(tdSpark);
+
+    if (opts.showRemove) {
+      const tdRemove = document.createElement('td');
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'remove-btn';
+      removeBtn.textContent = '✕ Remove';
+      removeBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleFavorite(r.l.id, false); });
+      tdRemove.appendChild(removeBtn);
+      tr.appendChild(tdRemove);
+    }
+
+    tr.addEventListener('click', () => toggleExpand(r.l.id));
+    if (state.expanded === r.l.id) tr.classList.add('expanded');
+    return tr;
+  }
+
+  function buildDetailRow(listing, colSpan) {
+    const detailTr = document.createElement('tr');
+    detailTr.className = 'detail-row';
+    const detailTd = document.createElement('td');
+    detailTd.colSpan = colSpan;
+    detailTd.appendChild(buildDetailPanel(listing));
+    detailTr.appendChild(detailTd);
+    return detailTr;
   }
 
   function toggleExpand(id) {
     state.expanded = state.expanded === id ? null : id;
     render();
+    renderFavorites();
+  }
+
+  function toggleFavorite(id, isFav) {
+    if (isFav) state.favorites.add(id); else state.favorites.delete(id);
+    saveFavorites();
+    render();
+    renderFavorites();
+  }
+
+  function renderFavorites() {
+    const favListings = [...state.favorites].map(id => listingById.get(id)).filter(Boolean);
+    const section = document.getElementById('favorites-section');
+    const tbody = document.getElementById('fav-tbody');
+    if (!favListings.length) {
+      section.style.display = 'none';
+      tbody.innerHTML = '';
+      return;
+    }
+    section.style.display = '';
+    const [start, end] = windowFor(state.preset);
+    document.getElementById('favorites-caption').textContent =
+      favListings.length + ' pinned listing' + (favListings.length === 1 ? '' : 's') +
+      ' · ' + fmtDateShort(start) + '–' + fmtDateShort(end);
+
+    const rows = favListings.map(computeRow);
+    tbody.innerHTML = '';
+    rows.forEach(r => {
+      tbody.appendChild(buildListingRow(r, { showRemove: true }));
+      if (state.expanded === r.l.id) tbody.appendChild(buildDetailRow(r.l, 8));
+    });
   }
 
   function buildDetailPanel(l) {
@@ -942,9 +1055,10 @@
       document.getElementById('custom-end').value = state.customEnd;
     }
     render();
+    renderFavorites();
   });
-  document.getElementById('custom-start').addEventListener('change', (e) => { state.customStart = e.target.value; render(); });
-  document.getElementById('custom-end').addEventListener('change', (e) => { state.customEnd = e.target.value; render(); });
+  document.getElementById('custom-start').addEventListener('change', (e) => { state.customStart = e.target.value; render(); renderFavorites(); });
+  document.getElementById('custom-end').addEventListener('change', (e) => { state.customEnd = e.target.value; render(); renderFavorites(); });
   document.getElementById('custom-start').min = minDate; document.getElementById('custom-start').max = maxDate;
   document.getElementById('custom-end').min = minDate; document.getElementById('custom-end').max = maxDate;
 
@@ -1138,6 +1252,7 @@
   renderKPIs();
   renderWorstPerformers();
   render();
+  renderFavorites();
 })();
 </script>
 </body>
