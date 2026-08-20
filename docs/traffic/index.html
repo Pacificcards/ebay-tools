@@ -246,13 +246,6 @@
   }
   .qty-pill.zero { background: color-mix(in srgb, var(--critical) 12%, var(--surface)); color: var(--critical); border-color: color-mix(in srgb, var(--critical) 35%, var(--border)); }
 
-  .remove-btn {
-    appearance: none; border: 1px solid var(--border); background: var(--surface); color: var(--text-2);
-    font: inherit; font-size: 11.5px; font-weight: 600; padding: 4px 10px; border-radius: 6px;
-    cursor: pointer; white-space: nowrap;
-  }
-  .remove-btn:hover { color: var(--critical); border-color: color-mix(in srgb, var(--critical) 35%, var(--border)); }
-
   .metric-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
   .metric-val { font-size: 13.5px; font-weight: 600; color: var(--text); line-height: 1.3; white-space: nowrap; }
   .metric-pair { display: inline-flex; align-items: center; white-space: nowrap; }
@@ -431,7 +424,6 @@
               <th>Views</th>
               <th>CTR</th>
               <th>Views Trend (7D)</th>
-              <th></th>
             </tr>
           </thead>
           <tbody id="fav-tbody"></tbody>
@@ -755,16 +747,16 @@
     document.getElementById('empty-state').style.display = rows.length ? 'none' : 'block';
 
     rows.forEach(r => {
-      tbody.appendChild(buildListingRow(r, { showRemove: false }));
+      tbody.appendChild(buildListingRow(r));
       if (state.expanded === r.l.id) tbody.appendChild(buildDetailRow(r.l, 7));
     });
   }
 
   // Shared row builder for both the main table and the Favorites table above it,
-  // so the two stay in lockstep (same columns, same click-to-expand behavior) with
-  // one code path. `showRemove` adds a trailing Remove-button cell (Favorites only).
-  function buildListingRow(r, opts) {
-    opts = opts || {};
+  // so the two stay in lockstep (same columns, same click-to-expand behavior, same
+  // favorite checkbox) with one code path. Un-favoriting happens via that checkbox --
+  // there's no separate Remove control in the Favorites table.
+  function buildListingRow(r) {
     const tr = document.createElement('tr');
     tr.className = 'row';
     tr.dataset.id = r.l.id;
@@ -827,17 +819,6 @@
     tr.appendChild(tdName); tr.appendChild(tdPrice); tr.appendChild(tdQty); tr.appendChild(tdImpr);
     tr.appendChild(tdViews); tr.appendChild(tdCtr); tr.appendChild(tdSpark);
 
-    if (opts.showRemove) {
-      const tdRemove = document.createElement('td');
-      const removeBtn = document.createElement('button');
-      removeBtn.type = 'button';
-      removeBtn.className = 'remove-btn';
-      removeBtn.textContent = '✕ Remove';
-      removeBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleFavorite(r.l.id, false); });
-      tdRemove.appendChild(removeBtn);
-      tr.appendChild(tdRemove);
-    }
-
     tr.addEventListener('click', () => toggleExpand(r.l.id));
     if (state.expanded === r.l.id) tr.classList.add('expanded');
     return tr;
@@ -884,8 +865,8 @@
     const rows = favListings.map(computeRow);
     tbody.innerHTML = '';
     rows.forEach(r => {
-      tbody.appendChild(buildListingRow(r, { showRemove: true }));
-      if (state.expanded === r.l.id) tbody.appendChild(buildDetailRow(r.l, 8));
+      tbody.appendChild(buildListingRow(r));
+      if (state.expanded === r.l.id) tbody.appendChild(buildDetailRow(r.l, 7));
     });
   }
 
