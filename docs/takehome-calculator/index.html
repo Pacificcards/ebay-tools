@@ -374,6 +374,8 @@
     html += `<div class="row"><span>Gross Receipt</span><span>${fmt(r.grossReceipt)}</span></div>`;
     if (col.family === 'ebay') {
       html += `<div class="row neg"><span>Total eBay Fee</span><span>-${fmt(r.fee)}</span></div>`;
+      const feePctOfSales = r.totalPrice > 0 ? (r.fee / r.totalPrice) * 100 : 0;
+      html += `<div class="row sub"><span>Fee % of Sales</span><span>${feePctOfSales.toFixed(2)}%</span></div>`;
     } else {
       html += `<div class="row sub neg"><span>Fee ${fmt(r.grossReceipt - r.tax)} × ${r.feeRatePct}%</span><span>-${fmt(r.fee)}</span></div>`;
     }
