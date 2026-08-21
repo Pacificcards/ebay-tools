@@ -173,14 +173,11 @@
     .info-icon:hover, .info-icon:focus-visible { color: var(--ink-muted); }
 
     /* ---- Insurance row: auto-calculated value (not a raw <input>) + include/exclude checkbox ----
-       Toggle lives on its own row below the field label, next to the computed value, not squeezed
-       into the same flex row as the sync button (that overflowed the card -- see git history).
-       The checkbox itself was ALSO silently broken: the generic ".var-row input" rule below (width
-       100%, padded, bordered) outranks a plain ".insurance-checkbox" class by specificity, so it
-       was overriding this checkbox's sizing and stretching it into a boxed, full-width control that
-       collided with the value box next to it. Qualified as ".var-row input.insurance-checkbox" so
-       it actually wins. */
-    .insurance-control-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+       Checkbox sits in the label row next to the sync button (left of it) -- fits fine now that
+       it carries no text label. The checkbox itself was previously silently broken: the generic
+       ".var-row input" rule below (width 100%, padded, bordered) outranks a plain ".insurance-checkbox"
+       class by specificity, so it was overriding this checkbox's sizing. Qualified as
+       ".var-row input.insurance-checkbox" so it actually wins. */
     .insurance-toggle { display: inline-flex; align-items: center; cursor: pointer; flex-shrink: 0; }
     .var-row input.insurance-checkbox {
       width: 15px; height: 15px; padding: 0; border: none; background: transparent;
@@ -188,8 +185,7 @@
     }
     .insurance-value {
       font-family: var(--font-mono); font-size: 13px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 3px;
-      background: var(--bg); color: var(--ink); font-variant-numeric: tabular-nums; text-align: right;
-      flex: 1 1 auto; min-width: 0;
+      width: 100%; background: var(--bg); color: var(--ink); font-variant-numeric: tabular-nums;
     }
     .insurance-row.is-off .insurance-value { color: var(--ink-faint); }
 
@@ -511,15 +507,13 @@
       <span class="label-row">
         <span class="var-label">Insurance<span class="unit">$1 per $100</span></span>
         <span class="label-icons">
+          <label class="insurance-toggle" title="Include Insurance Cost in Takehome">
+            <input type="checkbox" class="insurance-checkbox" aria-label="Include Insurance Cost in Takehome">
+          </label>
           <button type="button" class="sync-btn" title="Sync Insurance toggle to all scenarios" aria-label="Sync Insurance toggle to all scenarios">↻</button>
         </span>
       </span>
-      <div class="insurance-control-row">
-        <label class="insurance-toggle" title="Include Insurance Cost in Takehome">
-          <input type="checkbox" class="insurance-checkbox" aria-label="Include Insurance Cost in Takehome">
-        </label>
-        <div class="insurance-value" data-insurance-value>$0.00</div>
-      </div>
+      <div class="insurance-value" data-insurance-value>$0.00</div>
     `;
     const checkbox = row.querySelector('.insurance-checkbox');
     checkbox.checked = col.insuranceOn;
