@@ -295,22 +295,22 @@
   const FIELD_DEFS = {
     ebay: {
       // Shared fields (Tax/Shipping Paid/Shipping Cost) lead, in the same order Dealernet uses below,
-      // so they land on the same horizontal line across every column. FVF Credit lines up with
-      // Dealernet's Fee Rate row (both are "the scenario differentiator" field). List Discount has
-      // no Dealernet counterpart at all, so it's pushed to a trailing row instead of the front,
-      // where it would otherwise push every shared field down a row on eBay columns only.
+      // so they land on the same horizontal line across every column. List Discount has no Dealernet
+      // counterpart at all, so it's pushed to a trailing row instead of the front, where it would
+      // otherwise push every shared field down a row on eBay columns only. FVF Credit lives in
+      // Advanced Fee Settings, next to the rate/threshold/flat fields its itemized recap depends on.
       basic: [
         { key: 'taxPct', label: 'Tax', unit: '%', step: '0.01', sync: true },
         { key: 'shippingPaid', label: 'Shipping Paid', unit: '$', step: '0.01', sync: true },
         { key: 'shippingCost', label: 'Shipping Cost', unit: '$', step: '0.01', sync: true },
-        { key: 'feeCreditPct', label: 'FVF Credit', unit: '%', step: '0.01', note: 'Credit applied to the calculated Final Value Fee (e.g. the Same Day seller credit).' },
         { key: 'discountPct', label: 'List Discount', unit: '%', step: '0.01', sync: true }
       ],
       advanced: [
         { key: 'ratePct', label: 'FVF Rate', unit: '%', step: '0.01' },
         { key: 'threshold', label: 'Tier Threshold', unit: '$', step: '1' },
         { key: 'lowRatePct', label: 'Low Tier Rate', unit: '%', step: '0.01' },
-        { key: 'flatFee', label: 'Flat Fee', unit: '$', step: '0.01' }
+        { key: 'flatFee', label: 'Flat Fee', unit: '$', step: '0.01' },
+        { key: 'feeCreditPct', label: 'FVF Credit', unit: '%', step: '0.01', note: 'Credit applied to the calculated Final Value Fee (e.g. the Same Day seller credit).' }
       ]
     },
     dealernet: {
