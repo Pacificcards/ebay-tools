@@ -240,8 +240,10 @@
     const E = P * (1 - discount);
     const Tax = (E + Sp) * t;
     const grossReceipt = E + Tax + Sp;
-    const highBase = Math.min(E, threshold) + Tax + Sp;
-    const lowBase = Math.max(0, E - threshold);
+    // FVF tiering applies to the total sales amount (price + tax + shipping paid), not to price alone
+    // with tax/shipping bolted onto the high tier regardless of headroom under the threshold.
+    const highBase = Math.min(grossReceipt, threshold);
+    const lowBase = Math.max(0, grossReceipt - threshold);
     const highFee = highBase * rate;
     const lowFee = lowBase * lowRate;
     const fvfGross = highFee + lowFee + flat;
