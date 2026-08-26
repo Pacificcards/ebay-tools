@@ -339,6 +339,7 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 - Do NOT fetch eBay developer docs from the web — user downloads PDFs and places in `/Users/eastcoastlimited/ClaudeCode/ebay_dev_docs/`
 - **Schema change gotcha (P&L):** when adding/removing columns that shift the `group` column index, BOTH `_read_*_groups()` AND the preservation block inside `write_*_tab()` must be updated — they are separate and both read from the sheet. Add backwards-compat for the old schema so the first sync after a change doesn't corrupt group assignments.
 - **gspread 6.x:** `ws.update()` takes `(values, range_name)` — values first. Always pass explicit `'A1'` as range_name to avoid ambiguity. `ws.clear()` may not clear beyond gspread's tracked column range; user-added columns in the sheet survive a clear.
+- **Google Sheets API returns intermittent transient 5xx errors** (observed: `503 The service is currently unavailable`) with no fault on our end — confirmed 2026-08-26 via `listener.yml` run history, same error at the same call (`client.open_by_key`) across every failure sampled from 2026-08-21 through 2026-08-26. gspread does not retry these itself. All Google Sheets calls in `listener/sheets.py` are now wrapped in `_retry()` (exponential backoff, 4 attempts, non-5xx errors like 403 fail immediately). If this pattern shows up in `pl/sync_to_sheets.py` or elsewhere, apply the same fix there — it isn't listener-specific, just where it was first diagnosed.
 - **eBay Finances API delay:** shipping label transactions can appear hours after purchase. If a label is missing, it may just not have been reported yet — trigger a manual `fetch_finances` re-run before assuming it was purchased externally.
 - eBay refresh token valid ~Nov 2027. Re-gen: `/Users/eastcoastlimited/ClaudeCode/ebay_campaign_scheduler/get_refresh_token.py`
 - Legacy scheduler repo at `/Users/eastcoastlimited/ClaudeCode/ebay_campaign_scheduler` — do not touch unless asked
@@ -361,6 +362,7 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 ### Listener
 - Raw cards only — watchlist assumes every card is raw/ungraded (2026-07-22, see Session Log). Graded-card watching not yet supported.
 - The 3 hardcoded category IDs in `_RAW_CARD_CATEGORY_IDS` were supplied by the user, not verified live against eBay's API from this environment — confirm the `Graded` aspect actually resolves correctly for all 3 on the first live run.
+- **Google Sheets 503 retry logic shipped 2026-08-26** (see Constraints and Session Log) — watch `listener.yml` run history over the next week to confirm the failure rate actually drops; if 503s are frequent enough to still exhaust 4 retries occasionally, consider raising `_MAX_RETRIES`/`_RETRY_BASE_DELAY` in `listener/sheets.py`.
 
 ### Campaign Scheduler
 - No open items — campaigns.json migration complete and tested 2026-06-15
@@ -413,6 +415,20 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - Whether to expose raw price range alongside the two recommendations
 
 ## Session Log
+
+### 2026-08-26 — Listener: diagnosed and fixed rising GitHub Actions failure rate
+- User reported a growing number of failed `eBay Listener` workflow-run notifications over the preceding week. Investigated via GitHub Actions run history and job logs (7 failed runs sampled, spanning 2026-08-21 through 2026-08-26).
+- Root cause: every sampled failure was the identical error, at the identical call — `gspread.exceptions.APIError: APIError: [503]: The service is currently unavailable` at `client.open_by_key(sheet_id)` in `listener/sheets.py`, the very first Google Sheets API call each run makes. This is a transient, upstream Google-side error, unrelated to any of our code (including the graded-card filter changes shipped earlier the same day) — those never got reached in the failing runs.
+- Daily failure-rate tally from run history: ~4% on 8/21 vs. a sustained ~9–17% from 8/22 onward — a step up to a rougher patch of Google API reliability, not a strictly climbing trend, but consistent with the user's experience of increasingly frequent failure notifications.
+- Fix: added a generic `_retry()` helper to `listener/sheets.py` (exponential backoff, 4 attempts: 2s/4s/8s/16s) and wrapped every gspread call site with it — not just `open_by_key`, since any Sheets API call could equally hit a transient 5xx. Only retries 5xx; non-transient errors (403, 404, etc.) still fail immediately. Verified with a standalone mock-`APIError` test: recovers from transient 503s, doesn't retry real auth/permission errors, gives up after 4 attempts on a persistent outage rather than hanging.
+- Also noticed while reading `listener/sheets.py`: the file has grown since the P&L/Traffic sessions last touched it — `read_price_check`/`write_price_check_row` (Price Check feature) and `read_card_draft`/`write_card_draft_row` (a "Card Draft" tab) now exist, both apparently built in a session not reflected in this file's Session Log. Not investigated further this session — flagged here in case the P&L/Price Check TODO sections need reconciling with what's actually shipped.
+
+### 2026-08-26 — Listener: graded-card filter switched from title regex to eBay's native aspect filter
+- Earlier the same day (separate PR): added a title-regex filter (`_is_graded`) to `listener/ebay.py` excluding PSA/BGS/CGC/SGC/etc. from watchlist search results (issue: results included graded-card listings the user didn't want).
+- User caught a real bug in code review before it saw much production use: `TAG` (for TAG Grading Cards) as a bare-word regex match false-positived on Pokémon "Tag Team GX" cards — a common, legitimate raw-card subtype, verified with `_is_graded("Pikachu & Zekrom GX TAG TEAM ...") → True` (wrong).
+- Replaced entirely per user request: now uses eBay's native `Graded: No` item-aspect filter instead of any title matching. Since `aspect_filter` is scoped to one category per API call, `_search_raw_cards()` (`listener/ebay.py`) runs the search separately against 3 categories the user specified (183050, 183454, 261328) and merges/dedupes results by item_id. Verified via dry-run with mocked `requests.get` that each call sends the correct `category_ids` + `aspect_filter=categoryId:<id>,Graded:{No}` params.
+- `listener/README.md` now documents the listener as raw-cards-only, with a note that graded-card support may be added later; example watchlist row description changed from a PSA10 example to a raw-card example for consistency.
+- Not verified live — this environment has no eBay credentials, so whether all 3 category IDs actually expose the `Graded` aspect and return the expected results is unconfirmed until the next real pipeline run (see Open TODOs).
 
 ### 2026-08-12 — Takehome Calculator: FVF calc moved to Advanced panel, Qty/Price box fix
 - Moved the itemized eBay FVF derivation (High tier/Low tier/Flat fee/FVF credit lines) out of the main breakdown and into the Advanced Fee Settings `<details>` panel, next to the rate/threshold inputs that produce them, recapped there with its own "Total eBay Fee" line. Main breakdown keeps just the single Total eBay Fee summary between Gross Receipt and Tax — interpreted from "move the FVF calculator to the Advanced Fee Settings area," flagged in Open TODOs as not yet explicitly confirmed.
