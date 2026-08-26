@@ -1,8 +1,33 @@
 import json
 import os
+import time
 
 import gspread
 from google.oauth2.service_account import Credentials
+
+# Google Sheets API intermittently returns transient 5xx errors (observed: 503
+# "The service is currently unavailable") with no fault on our end. Retry with
+# exponential backoff rather than letting one blip fail the whole run.
+_MAX_RETRIES = 4
+_RETRY_BASE_DELAY = 2  # seconds: 2, 4, 8, 16
+
+
+def _is_transient(exc: gspread.exceptions.APIError) -> bool:
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return status is not None and 500 <= status < 600
+
+
+def _retry(fn, *args, **kwargs):
+    for attempt in range(_MAX_RETRIES):
+        try:
+            return fn(*args, **kwargs)
+        except gspread.exceptions.APIError as e:
+            if not _is_transient(e) or attempt == _MAX_RETRIES - 1:
+                raise
+            delay = _RETRY_BASE_DELAY * (2 ** attempt)
+            print(f"  [sheets] transient API error ({e}), retrying in {delay}s (attempt {attempt + 1}/{_MAX_RETRIES})")
+            time.sleep(delay)
+
 
 SCOPES = [
     "https://spreadsheets.google.com/feeds",
@@ -53,47 +78,55 @@ def _get_spreadsheet(sheet_id: str):
         creds_info = json.loads(os.environ["GOOGLE_SHEETS_CREDENTIALS"])
         creds = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
         client = gspread.authorize(creds)
-        _spreadsheet_cache[sheet_id] = client.open_by_key(sheet_id)
+        _spreadsheet_cache[sheet_id] = _retry(client.open_by_key, sheet_id)
     return _spreadsheet_cache[sheet_id]
+
+
+def _worksheet(sheet_id: str, tab_name: str):
+    return _retry(_get_spreadsheet(sheet_id).worksheet, tab_name)
 
 
 def load_watchlist(sheet_id: str) -> list[dict]:
     """Return all rows from the Watchlist tab as dicts, with '_row_index' (1-based, header=1)."""
-    ws = _get_spreadsheet(sheet_id).worksheet(WATCHLIST_TAB)
-    records = ws.get_all_records()
+    ws = _worksheet(sheet_id, WATCHLIST_TAB)
+    records = _retry(ws.get_all_records)
     for i, row in enumerate(records):
         row["_row_index"] = i + 2  # header is row 1
     return records
 
 
 def update_epid_in_sheet(sheet_id: str, row_index: int, epid: str, status: str):
-    ws = _get_spreadsheet(sheet_id).worksheet(WATCHLIST_TAB)
-    ws.update_cell(row_index, COL_EPID, epid)
-    ws.update_cell(row_index, COL_EPID_STATUS, status)
+    ws = _worksheet(sheet_id, WATCHLIST_TAB)
+    _retry(ws.update_cell, row_index, COL_EPID, epid)
+    _retry(ws.update_cell, row_index, COL_EPID_STATUS, status)
 
 
 def append_watchlist_row(sheet_id: str, entry: dict) -> None:
     """Append a new row to the Watchlist tab. Active defaults to Y."""
-    ws = _get_spreadsheet(sheet_id).worksheet(WATCHLIST_TAB)
+    ws = _worksheet(sheet_id, WATCHLIST_TAB)
     # Column order: Active | Description | Category | Market Price | Max Price | Min Price | Hint URL | EPID | EPID Status | Last Hit
-    ws.append_row([
-        "Y",
-        entry.get("description", ""),
-        entry.get("category", ""),
-        entry.get("market_price", ""),
-        entry.get("max_price", ""),
-        entry.get("min_price", ""),
-        "",  # Hint URL
-        "",  # EPID
-        "",  # EPID Status
-        "",  # Last Hit
-    ], value_input_option="USER_ENTERED")
+    _retry(
+        ws.append_row,
+        [
+            "Y",
+            entry.get("description", ""),
+            entry.get("category", ""),
+            entry.get("market_price", ""),
+            entry.get("max_price", ""),
+            entry.get("min_price", ""),
+            "",  # Hint URL
+            "",  # EPID
+            "",  # EPID Status
+            "",  # Last Hit
+        ],
+        value_input_option="USER_ENTERED",
+    )
 
 
 def read_price_check(sheet_id: str) -> list[dict]:
     """Return rows from the Price Check tab that have a Description filled in."""
-    ws = _get_spreadsheet(sheet_id).worksheet(PRICE_CHECK_TAB)
-    records = ws.get_all_records()
+    ws = _worksheet(sheet_id, PRICE_CHECK_TAB)
+    records = _retry(ws.get_all_records)
     rows = []
     for i, row in enumerate(records):
         if str(row.get("Description", "")).strip():
@@ -111,17 +144,17 @@ def write_price_check_row(
 ) -> None:
     """Write Clearing Price, Holding Price, # Listings, Last Checked back to the sheet."""
     from datetime import datetime, timezone
-    ws = _get_spreadsheet(sheet_id).worksheet(PRICE_CHECK_TAB)
+    ws = _worksheet(sheet_id, PRICE_CHECK_TAB)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     clearing_str = f"{clearing:.2f}" if clearing is not None else "—"
     holding_str = f"{holding:.2f}" if holding is not None else "—"
-    ws.update([[clearing_str, holding_str, n_listings, now]], f"B{row_idx}:E{row_idx}")
+    _retry(ws.update, [[clearing_str, holding_str, n_listings, now]], f"B{row_idx}:E{row_idx}")
 
 
 def read_card_draft(sheet_id: str) -> list[dict]:
     """Return Card Draft rows that have a Card Name but no Game (not yet processed)."""
-    ws = _get_spreadsheet(sheet_id).worksheet(CARD_DRAFT_TAB)
-    records = ws.get_all_records()
+    ws = _worksheet(sheet_id, CARD_DRAFT_TAB)
+    records = _retry(ws.get_all_records)
     rows = []
     for i, row in enumerate(records):
         card_name = str(row.get("Card Name", "")).strip()
@@ -135,11 +168,12 @@ def read_card_draft(sheet_id: str) -> list[dict]:
 def write_card_draft_row(sheet_id: str, row_idx: int, data: dict) -> None:
     """Write all auto-filled fields (cols C–Q) for a Card Draft row."""
     from datetime import datetime, timezone
-    ws = _get_spreadsheet(sheet_id).worksheet(CARD_DRAFT_TAB)
+    ws = _worksheet(sheet_id, CARD_DRAFT_TAB)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     clearing = data.get("clearing_price")
     holding = data.get("holding_price")
-    ws.update(
+    _retry(
+        ws.update,
         [[
             f"{clearing:.2f}" if clearing is not None else "—",
             f"{holding:.2f}" if holding is not None else "—",
@@ -162,13 +196,17 @@ def write_card_draft_row(sheet_id: str, row_idx: int, data: dict) -> None:
 
 
 def append_observed_listing(sheet_id: str, data: dict):
-    ws = _get_spreadsheet(sheet_id).worksheet(OBSERVED_TAB)
-    ws.append_row([
-        data["timestamp"],
-        data["description"],
-        data["title"],
-        data["price"],
-        f"{data['pct_below']}%",
-        data["item_id"],
-        data["url"],
-    ], value_input_option="USER_ENTERED")
+    ws = _worksheet(sheet_id, OBSERVED_TAB)
+    _retry(
+        ws.append_row,
+        [
+            data["timestamp"],
+            data["description"],
+            data["title"],
+            data["price"],
+            f"{data['pct_below']}%",
+            data["item_id"],
+            data["url"],
+        ],
+        value_input_option="USER_ENTERED",
+    )
