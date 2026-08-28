@@ -148,9 +148,10 @@
 
     /* ---- Takehome: promoted directly under price ---- */
     .takehome-row {
-      display: flex; justify-content: space-between; align-items: baseline; background: var(--bg);
+      display: flex; flex-direction: column; gap: 4px; background: var(--bg);
       border: 1px solid var(--border); border-radius: 3px; padding: 9px 12px; margin: 10px 0 14px;
     }
+    .takehome-main { display: flex; justify-content: space-between; align-items: baseline; }
     .takehome-row .label { font-family: var(--font-sans); font-size: 11px; font-weight: 700; color: var(--ink-muted); text-transform: uppercase; letter-spacing: .03em; }
     .takehome-row .value {
       font-family: var(--font-mono); font-size: 20px; font-weight: 700; color: var(--positive); font-variant-numeric: tabular-nums;
@@ -158,6 +159,13 @@
     }
     .takehome-row .value:not(:disabled):hover { text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
     .takehome-row .value.na { color: var(--ink-faint); font-size: 12.5px; font-weight: 600; font-family: var(--font-sans); cursor: default; }
+
+    /* Per-unit takehome: only shown when Qty > 1 (at qty=1 it's identical to Takehome above, so
+       showing it would just be a redundant repeat of the same number). */
+    .takehome-per-unit { display: flex; justify-content: space-between; align-items: baseline; }
+    .takehome-per-unit.hidden { display: none; }
+    .takehome-per-unit .per-unit-label { font-family: var(--font-sans); font-size: 10px; font-weight: 600; color: var(--ink-faint); text-transform: uppercase; letter-spacing: .03em; }
+    .takehome-per-unit .per-unit-value { font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
 
     /* ---- Vertical variable list ---- */
     .var-list { display: flex; flex-direction: column; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
@@ -554,7 +562,10 @@
         </div>
       </div>
       <div class="price-caption"></div>
-      <div class="takehome-row"><span class="label">Takehome</span><button type="button" class="value" title="Click to anchor on this scenario">$—</button></div>
+      <div class="takehome-row">
+        <div class="takehome-main"><span class="label">Takehome</span><button type="button" class="value" title="Click to anchor on this scenario">$—</button></div>
+        <div class="takehome-per-unit hidden"><span class="per-unit-label">Per Unit</span><span class="per-unit-value">$—</span></div>
+      </div>
       <div class="breakdown"></div>
       <div class="var-list"></div>
     `;
@@ -619,6 +630,8 @@
       breakdown: breakdownEl,
       advancedBreakdown: advancedBreakdownEl,
       takehomeValue: el.querySelector('.takehome-row .value'),
+      perUnitRow: el.querySelector('.takehome-per-unit'),
+      perUnitValue: el.querySelector('.per-unit-value'),
       insuranceRow: el.querySelector('.insurance-row'),
       insuranceValue: el.querySelector('[data-insurance-value]')
     };
@@ -688,11 +701,18 @@
         dom.takehomeValue.textContent = '—';
         dom.takehomeValue.classList.add('na');
         dom.takehomeValue.disabled = true;
+        dom.perUnitRow.classList.add('hidden');
       } else {
         renderBreakdown(col, result);
         dom.takehomeValue.textContent = fmt(result.takehome);
         dom.takehomeValue.classList.remove('na');
         dom.takehomeValue.disabled = false;
+        if (col.qty > 1) {
+          dom.perUnitValue.textContent = fmt(result.takehome / col.qty);
+          dom.perUnitRow.classList.remove('hidden');
+        } else {
+          dom.perUnitRow.classList.add('hidden');
+        }
       }
     });
 
