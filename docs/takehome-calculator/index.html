@@ -120,12 +120,16 @@
     .label-row { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 5px; }
     .label-row .price-label, .label-row .var-label { margin-bottom: 0; }
 
-    .sync-btn {
+    .sync-btn, .mirror-btn {
       flex-shrink: 0; width: 16px; height: 16px; padding: 0; border: none; background: transparent;
       color: var(--ink-faint); font-size: 11px; line-height: 1; cursor: pointer; border-radius: 3px;
       display: inline-flex; align-items: center; justify-content: center;
     }
-    .sync-btn:hover { color: var(--ink); background: var(--surface); }
+    .sync-btn:hover, .mirror-btn:hover { color: var(--ink); background: var(--surface); }
+    /* Distinct from .sync-btn's ↻ (copies a field across scenarios) -- this one copies between
+       Shipping Paid and Shipping Cost within the same scenario only, so it gets its own glyph
+       to read as a different kind of action rather than a variant of "sync everywhere". */
+    .mirror-btn { font-size: 12px; }
     /* Price and Qty boxes share one box model (height/padding/border) so they line up exactly --
        relying on font-size/line-height to happen to match was off by a couple px in practice. */
     .price-input-wrap, .qty-input-wrap {
@@ -336,8 +340,8 @@
       // Advanced Fee Settings, next to the rate/threshold/flat fields its itemized recap depends on.
       basic: [
         { key: 'taxPct', label: 'Tax', unit: '%', step: '0.01', sync: true },
-        { key: 'shippingPaid', label: 'Shipping Paid', unit: '$', step: '0.01', sync: true },
-        { key: 'shippingCost', label: 'Shipping Cost', unit: '$', step: '0.01', sync: true },
+        { key: 'shippingPaid', label: 'Shipping Paid', unit: '$', step: '0.01', sync: true, mirrorTo: 'shippingCost', mirrorToLabel: 'Shipping Cost' },
+        { key: 'shippingCost', label: 'Shipping Cost', unit: '$', step: '0.01', sync: true, mirrorTo: 'shippingPaid', mirrorToLabel: 'Shipping Paid' },
         { key: 'discountPct', label: 'List Discount', unit: '%', step: '0.01', sync: true }
       ],
       advanced: [
@@ -351,8 +355,8 @@
     dealernet: {
       basic: [
         { key: 'taxPct', label: 'Tax', unit: '%', step: '0.01', note: 'Cancels out of Takehome — shown on Gross Receipt only.', sync: true },
-        { key: 'shippingPaid', label: 'Shipping Paid', unit: '$', step: '0.01', sync: true },
-        { key: 'shippingCost', label: 'Shipping Cost', unit: '$', step: '0.01', sync: true },
+        { key: 'shippingPaid', label: 'Shipping Paid', unit: '$', step: '0.01', sync: true, mirrorTo: 'shippingCost', mirrorToLabel: 'Shipping Cost' },
+        { key: 'shippingCost', label: 'Shipping Cost', unit: '$', step: '0.01', sync: true, mirrorTo: 'shippingPaid', mirrorToLabel: 'Shipping Paid' },
         { key: 'feeRatePct', label: 'Fee Rate', unit: '%', step: '0.01' }
       ],
       advanced: []
@@ -452,6 +456,17 @@
     recompute();
   }
 
+  // Copies Shipping Paid <-> Shipping Cost within ONE column only (never touches other scenarios) --
+  // distinct from syncField, which copies one field across every column. `fd` is whichever of the
+  // two shipping fields the button was clicked on; `fd.mirrorTo` names the other one.
+  function mirrorShippingField(col, fd) {
+    const value = col.vars[fd.key];
+    col.vars[fd.mirrorTo] = value;
+    const targetInput = col.dom.root.querySelector(`[data-var="${fd.mirrorTo}"]`);
+    if (targetInput) targetInput.value = fmtField(fd, value); // both fields are always $, so fd.unit applies to either
+    recompute();
+  }
+
   function syncQty(sourceCol) {
     const value = sourceCol.qty;
     columns.forEach((col) => {
@@ -480,6 +495,7 @@
         <span class="var-label">${fd.label}<span class="unit">${fd.unit}</span></span>
         <span class="label-icons">
           ${fd.note ? `<span class="info-icon" tabindex="0" title="${escapeHtml(fd.note)}">ⓘ</span>` : ''}
+          ${fd.mirrorTo ? `<button type="button" class="mirror-btn" title="Copy to ${fd.mirrorToLabel} (this scenario only)" aria-label="Copy ${fd.label} to ${fd.mirrorToLabel} in this scenario">⇄</button>` : ''}
           ${fd.sync ? `<button type="button" class="sync-btn" title="Sync ${fd.label} to all scenarios" aria-label="Sync ${fd.label} to all scenarios">↻</button>` : ''}
         </span>
       </span>
@@ -494,6 +510,13 @@
     });
     if (fd.unit === '$') {
       input.addEventListener('blur', () => { input.value = fmtField(fd, col.vars[fd.key]); });
+    }
+    if (fd.mirrorTo) {
+      fieldRow.querySelector('.mirror-btn').addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        mirrorShippingField(col, fd);
+      });
     }
     if (fd.sync) {
       fieldRow.querySelector('.sync-btn').addEventListener('click', (e) => {
