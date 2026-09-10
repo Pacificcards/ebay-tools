@@ -1,4 +1,7 @@
-"""Fetch buyer purchase history from eBay Trading API (GetMyeBayBuying WonList).
+"""Fetch buyer purchase history from eBay Trading API (GetOrders).
+
+Uses GetOrders with OrderRole=Buyer and a date window to capture all purchases,
+including multi-item bundle orders (GetMyeBayBuying/WonList missed those).
 
 Upserts into ebay_purchases_raw, then inserts any new records into import_queue
 as 'pending' items for reconciliation.
@@ -10,7 +13,7 @@ Usage:
 import os
 import sys
 import xml.etree.ElementTree as ET
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import requests
 
@@ -19,7 +22,7 @@ from shared.ebay_auth import get_access_token
 
 TRADING_API_URL = "https://api.ebay.com/ws/api.dll"
 NS = {"e": "urn:ebay:apis:eBLBaseComponents"}
-PAGE_SIZE = 200
+PAGE_SIZE = 100
 
 BACKFILL_DAYS = 60
 REGULAR_DAYS = 14
@@ -53,11 +56,14 @@ def fetch_and_store(duration_days: int) -> None:
 
 
 def _fetch_all(token: str, duration_days: int) -> list[dict]:
+    now = datetime.now(timezone.utc)
+    time_from = now - timedelta(days=duration_days)
+
     all_purchases = []
     page = 1
 
     while True:
-        purchases, total_pages = _fetch_page(token, duration_days, page)
+        purchases, total_pages = _fetch_page(token, time_from, now, page)
         all_purchases.extend(purchases)
         print(f"[fetch_ebay_purchases] page {page}/{total_pages}: {len(purchases)} purchases")
         if page >= total_pages:
@@ -67,21 +73,22 @@ def _fetch_all(token: str, duration_days: int) -> list[dict]:
     return all_purchases
 
 
-def _fetch_page(token: str, duration_days: int, page: int) -> tuple[list[dict], int]:
+def _fetch_page(token: str, time_from: datetime, time_to: datetime, page: int) -> tuple[list[dict], int]:
+    fmt = "%Y-%m-%dT%H:%M:%S.000Z"
     body = f"""<?xml version="1.0" encoding="utf-8"?>
-<GetMyeBayBuyingRequest xmlns="urn:ebay:apis:eBLBaseComponents">
-  <WonList>
-    <Include>true</Include>
-    <DurationInDays>{duration_days}</DurationInDays>
-    <Pagination>
-      <EntriesPerPage>{PAGE_SIZE}</EntriesPerPage>
-      <PageNumber>{page}</PageNumber>
-    </Pagination>
-  </WonList>
-</GetMyeBayBuyingRequest>"""
+<GetOrdersRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <CreateTimeFrom>{time_from.strftime(fmt)}</CreateTimeFrom>
+  <CreateTimeTo>{time_to.strftime(fmt)}</CreateTimeTo>
+  <OrderRole>Buyer</OrderRole>
+  <OrderStatus>All</OrderStatus>
+  <Pagination>
+    <EntriesPerPage>{PAGE_SIZE}</EntriesPerPage>
+    <PageNumber>{page}</PageNumber>
+  </Pagination>
+</GetOrdersRequest>"""
 
     headers = {
-        "X-EBAY-API-CALL-NAME": "GetMyeBayBuying",
+        "X-EBAY-API-CALL-NAME": "GetOrders",
         "X-EBAY-API-SITEID": "0",
         "X-EBAY-API-COMPATIBILITY-LEVEL": "967",
         "X-EBAY-API-IAF-TOKEN": token,
@@ -103,48 +110,49 @@ def _parse(xml_text: str) -> tuple[list[dict], int]:
     if ack not in ("Success", "Warning"):
         for err in root.findall(".//e:Errors", namespaces=NS):
             print(f"[fetch_ebay_purchases] eBay error: {err.findtext('e:LongMessage', namespaces=NS)}")
-        raise RuntimeError(f"GetMyeBayBuying returned Ack={ack}")
+        raise RuntimeError(f"GetOrders returned Ack={ack}")
 
     purchases = []
-    for txn_el in root.findall(
-        ".//e:WonList/e:OrderTransactionArray/e:OrderTransaction/e:Transaction",
-        namespaces=NS,
-    ):
-        item_el = txn_el.find("e:Item", namespaces=NS)
-        if item_el is None:
+    for order_el in root.findall(".//e:OrderArray/e:Order", namespaces=NS):
+        if order_el.findtext("e:OrderStatus", namespaces=NS) == "Cancelled":
             continue
 
-        ebay_item_id = item_el.findtext("e:ItemID", namespaces=NS)
-        transaction_id = txn_el.findtext("e:TransactionID", namespaces=NS) or "0"
-        if not ebay_item_id:
-            continue
+        for txn_el in order_el.findall(".//e:TransactionArray/e:Transaction", namespaces=NS):
+            item_el = txn_el.find("e:Item", NS)
+            if item_el is None:
+                continue
 
-        item_cost = _decimal(txn_el.findtext("e:TotalTransactionPrice", namespaces=NS))
-        total_price = _decimal(txn_el.findtext("e:TotalPrice", namespaces=NS))
-        shipping_cost = (
-            round(total_price - item_cost, 2)
-            if item_cost is not None and total_price is not None
-            else None
-        )
-        total_cost = total_price if total_price is not None else item_cost
+            ebay_item_id = item_el.findtext("e:ItemID", namespaces=NS)
+            transaction_id = txn_el.findtext("e:TransactionID", namespaces=NS) or "0"
+            if not ebay_item_id:
+                continue
 
-        raw_date = txn_el.findtext("e:CreatedDate", namespaces=NS)
-        purchase_date = _parse_date(raw_date)
+            item_cost = _decimal(txn_el.findtext("e:TransactionPrice", namespaces=NS))
+            quantity = _int(txn_el.findtext("e:QuantityPurchased", namespaces=NS)) or 1
+            shipping_cost = _decimal(txn_el.findtext("e:ActualShippingCost", namespaces=NS))
+            total_cost = (
+                round(item_cost + shipping_cost, 2)
+                if item_cost is not None and shipping_cost is not None
+                else item_cost
+            )
 
-        purchases.append({
-            "ebay_item_id":  ebay_item_id,
-            "transaction_id": transaction_id,
-            "title":         item_el.findtext("e:Title", namespaces=NS),
-            "seller_id":     item_el.findtext("e:Seller/e:UserID", namespaces=NS),
-            "purchase_date": purchase_date,
-            "quantity":      _int(txn_el.findtext("e:QuantityPurchased", namespaces=NS)) or 1,
-            "item_cost":     item_cost,
-            "shipping_cost": shipping_cost,
-            "total_cost":    total_cost,
-        })
+            raw_date = txn_el.findtext("e:CreatedDate", namespaces=NS)
+            purchase_date = _parse_date(raw_date)
+
+            purchases.append({
+                "ebay_item_id":   ebay_item_id,
+                "transaction_id": transaction_id,
+                "title":          item_el.findtext("e:Title", namespaces=NS),
+                "seller_id":      item_el.findtext("e:Seller/e:UserID", namespaces=NS),
+                "purchase_date":  purchase_date,
+                "quantity":       quantity,
+                "item_cost":      item_cost,
+                "shipping_cost":  shipping_cost,
+                "total_cost":     total_cost,
+            })
 
     total_pages_text = root.findtext(
-        ".//e:WonList/e:PaginationResult/e:TotalNumberOfPages", namespaces=NS
+        ".//e:PaginationResult/e:TotalNumberOfPages", namespaces=NS
     )
     total_pages = int(total_pages_text) if total_pages_text else 1
 
