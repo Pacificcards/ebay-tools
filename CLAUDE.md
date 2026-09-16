@@ -30,7 +30,7 @@ Steps in order:
 ### 2. P&L Accounting (`pl/`)
 Google Sheets-based P&L. Script: `pl/sync_to_sheets.py`. Runs daily via `pl-ingest.yml` (triggers after analytics ingest). GitHub Action name: **"P&L ingest"** (triggerable manually from Actions tab).
 
-Sheet tabs: **Sales**, **Purchases**, **Ad Fees**, **P&L by Group**, **New Entries**
+Sheet tabs: **Sales**, **Purchases**, **Ad Fees**, **P&L by Group**, **Monthly**, **New Entries**
 
 #### Column schemas (current)
 - **Sales**: `order_date | title | gross_sale | net_payout | shipping_cost | order_id | ebay_order_id | listing_id | group | source`
@@ -39,20 +39,24 @@ Sheet tabs: **Sales**, **Purchases**, **Ad Fees**, **P&L by Group**, **New Entri
   - `ebay_order_id` (col G) = base order ID (e.g. `22-14785-63636`) — matches Ad Fees tab for cross-reference; blank for manual sales
   - `listing_id` (col H) = eBay listing ID; blank for manual sales; used to trace listing→group relationship
   - `group` (col I) = user-editable; resolved by header name in code, not hardcoded index
-  - `source` (col J) = "eBay" or "Manual"
+  - `source` (col J) = "eBay" for eBay orders; for manual sales, uses the `vendor` field from the New Entries row (e.g. "Dealernet", "WhatNot", "Tradepost", "Card Show", "eBay (Manual)"); falls back to "Manual" if vendor was blank
+  - `gross_sale` is populated for manual sales (= entered amount, same as net_payout); was blank before 2026-09-15
 - **Purchases**: `purchase_date | description | vendor | total_cost | source | id | group`
-- **Ad Fees**: `date | fee_type | amount | order_id | listing_id | title | transaction_id | group | category`
+- **Ad Fees**: `date | fee_type | amount | order_id | listing_id | title | transaction_id | group | category | booking_entry`
   - `order_id` populated for SHIPPING_LABEL rows; blank for NON_SALE_CHARGE (ad spend has no order-level attribution)
   - `listing_id` + `title` populated for most rows; derived from `listing_metadata` or `orders_raw` via join
   - `group` (col H) auto-populated from matching order (SHIPPING_LABEL) or matching listing (NON_SALE_CHARGE) via SQL COALESCE; user-editable and persisted to `order_fees.group_name`
-  - `category` (col I) auto-computed, not editable: NON_SALE_CHARGE→"Ad Fee", SHIPPING_LABEL DEBIT/SHIPPING_MANUAL→"Shipping", REFUND/CREDIT/ADJUSTMENT/SHIPPING_LABEL CREDIT/ADJUSTMENT_MANUAL→"Adjustment" (planned — currently maps to "Other"), else→"Other"
-- **P&L by Group**: `group | net_payout | costs | ad_fees | shipping_cost | profit`
+  - `category` (col I) auto-computed, not editable: NON_SALE_CHARGE→"Ad Fee", SHIPPING_LABEL DEBIT/SHIPPING_MANUAL→"Shipping", REFUND/CREDIT/ADJUSTMENT/ADJUSTMENT_MANUAL/SHIPPING_LABEL CREDIT→"Adjustment", else→"Other"
+  - `booking_entry` (col J) = "CREDIT" or "DEBIT" from DB; used by P&L adjustments formula to sign the adjustments column
+- **P&L by Group**: `group | net_payout | costs | ad_fees | shipping_cost | adjustments | profit | margin`
   - `net_payout` = SUMIF(Sales!D) per group
   - `costs` = SUMIF(Purchases!D) per group
   - `ad_fees` = BYROW+LAMBDA SUMIFS(Ad Fees!C, group, "Ad Fee") per group
   - `shipping_cost` = BYROW+LAMBDA SUMIFS(Ad Fees!C, group, "Shipping") per group — includes both eBay SHIPPING_LABEL and manual SHIPPING_MANUAL rows
-  - `profit` = net_payout − costs − ad_fees − shipping_cost
-  - **Planned**: add `adjustments` column between `shipping_cost` and `profit`; profit formula becomes `net_payout − costs − ad_fees − shipping_cost + adjustments` (signed column: positive = net credit/refund received, negative = net refund paid out)
+  - `adjustments` = BYROW+LAMBDA (SUMIFS category="Adjustment" AND booking_entry="CREDIT") − (SUMIFS ... "DEBIT") per group — signed: positive = net credit/refund received, negative = net refund paid out
+  - `profit` = ARRAYFORMULA(net_payout − costs − ad_fees − shipping_cost + adjustments) — uses ARRAYFORMULA to extend to all rows
+  - `margin` = ARRAYFORMULA(profit / costs) per group; blank when costs = 0
+- **Monthly**: Formula-driven tab (Jan–Dec 2026). Columns: `Month | eBay | Dealernet | Tradepost | WhatNot | Card Show | Other | Total`. Rows hardcoded Jan–Dec 2026; each cell is a SUMPRODUCT formula referencing Sales!A:C:J. eBay column sums source="eBay" and source="eBay (Manual)" together. Other = Total − named columns. **Does not need a sync to stay current** — formulas live-update as Sales tab changes. Added 2026-09-15.
 - **New Entries**: `date | description | type | amount | vendor | payment_method | group | status | record_id`
   - `record_id` (col 9) — stamped on insert: `MANUAL-{hex}` for sales, numeric `import_queue.id` for purchases, `SHIP-{hex}` for shipping
   - Deletion: set `status` to anything containing "mark" + "delet" (e.g. "Marked for Deletion") → hard DELETE from DB, stamp "Deleted {date}"
@@ -64,7 +68,7 @@ Sheet tabs: **Sales**, **Purchases**, **Ad Fees**, **P&L by Group**, **New Entri
 - Ad Fees `group` assignments flow into P&L by Group costs (alongside Purchases costs)
 - Purchases tab columns: `purchase_date | description | vendor | total_cost | source | id | group`
   - eBay purchases show vendor = "eBay"; manual entries show vendor from New Entries tab
-  - eBay-sourced purchases are fetched by `traffic_analytics/fetch_ebay_purchases.py` (`ebay-purchases.yml`, separate from `analytics-ingest.yml`) — runs **daily** at 10:00 UTC (3am PT), 14-day lookback window, deduped via `ON CONFLICT DO NOTHING` on `(ebay_item_id, transaction_id)`
+  - eBay-sourced purchases are fetched by `traffic_analytics/fetch_ebay_purchases.py` (`ebay-purchases.yml`, separate from `analytics-ingest.yml`) — runs **daily** at 10:00 UTC (3am PT), 14-day lookback window, deduped via `ON CONFLICT DO NOTHING` on `(ebay_item_id, transaction_id)`. Uses **GetOrders** API with `OrderRole=Buyer` (switched from `GetMyeBayBuying` 2026-09-10 — WonList silently dropped multi-item bundle orders; GetOrders captures every transaction individually). Per-item pricing: `TransactionPrice` (per-unit price) × `QuantityPurchased` + `ActualShippingCost` = `total_cost`. **`TransactionPrice` is per-unit, not total** — for qty > 1 orders, total_cost must be `TransactionPrice × qty + shipping` (bug fixed 2026-09-15; 3 historical multi-qty records corrected in DB).
 - New Entries amounts can include `$` sign — stripped automatically on sync
 - New Entries processing uses savepoints — one bad row won't abort the whole batch
 - Credentials: `pl/credentials/service_account.json` (gitignored)
@@ -74,9 +78,9 @@ Sheet tabs: **Sales**, **Purchases**, **Ad Fees**, **P&L by Group**, **New Entri
 | `type` value | Routes to | record_id format | Notes |
 |---|---|---|---|
 | `purchase` or blank | Purchases tab (`import_queue`) | numeric id | default |
-| `sale` | Sales tab (`orders_raw`) | `MANUAL-{hex16}` | gross_sale blank, net_payout = entered amount |
+| `sale` | Sales tab (`orders_raw`) | `MANUAL-{hex16}` | gross_sale = net_payout = entered amount; source col = vendor field (falls back to "Manual" if blank); vendor stored in `orders_raw.vendor` |
 | `shipping` | Ad Fees tab (`order_fees` as SHIPPING_MANUAL) | `SHIP-{hex16}` | appears with category="Shipping"; flows into P&L shipping_cost |
-| `adjustment` | Ad Fees tab (`order_fees` as ADJUSTMENT_MANUAL DEBIT) | `ADJ-{hex16}` | **planned** — appears with category="Adjustment"; flows into P&L adjustments |
+| `adjustment` | Ad Fees tab (`order_fees` as ADJUSTMENT_MANUAL DEBIT) | `ADJ-{hex16}` | appears with category="Adjustment"; flows into P&L adjustments column. NOTE: always inserts as DEBIT — use for refunds paid OUT (costs). For eBay credits/refunds received, enter eBay-sourced CREDIT rows are imported automatically via `fetch_finances`. |
 | anything else | — | stamps `✗ Invalid type: '...'` | skipped |
 
 - Group assigned in New Entries carries through to the destination tab correctly
@@ -369,8 +373,9 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 
 ### P&L
 1. **Listing-level hierarchy refactor** — Group > Listing > Order; new `listing_groups` table; design complete, not yet built (see full spec in P&L section above)
-2. **Adjustments feature** — design complete (2026-08-07), not yet built. New "Adjustment" category in Ad Fees tab captures: `REFUND` (buyer refunds), `CREDIT` (eBay credits), `ADJUSTMENT` (eBay misc), `ADJUSTMENT_MANUAL` (New Entries), `SHIPPING_LABEL` CREDIT (refunded labels). Requires: (a) new `booking_entry` col J in Ad Fees tab; (b) updated category CASE in `fetch_ad_fees()` SQL; (c) new `adjustments` column in P&L by Group (CREDIT sum − DEBIT sum per group, signed — positive = net money back); (d) `adjustment` type in New Entries → `ADJUSTMENT_MANUAL` DEBIT in `order_fees`, `ADJ-{hex16}` record_id; (e) profit formula = net_payout − costs − ad_fees − shipping_cost + adjustments. Also fixes current bug: SHIPPING_LABEL CREDIT rows currently inflate `shipping_cost` (treated as Shipping category regardless of booking_entry).
-3. **Delete workflow** — fully operational as of 2026-06-27: record_id stamped on New Entries insert, backfill complete, fuzzy "mark"+"delet" trigger wired up, tested with Yamamoto Grading (id 337 hard-deleted, purchase count 303 → 302)
+2. **Adjustments feature** — **LIVE as of 2026-09-09.** Ad Fees tab now has 10 cols (added `booking_entry` col J); P&L by Group now has 7 cols (added `adjustments`); `adjustment` type in New Entries live (inserts as ADJUSTMENT_MANUAL DEBIT, `ADJ-{hex16}`). eBay-sourced REFUND/CREDIT rows import automatically via `fetch_finances` with correct booking_entry.
+3. **Delete workflow** — fully operational. Known gap: `_backfill_record_ids` doesn't handle `shipping` or `adjustment` types — those rows won't get a record_id stamped and can't be deleted via the delete workflow. Fix tracked in next.md.
+4. **Code review findings (2026-09-09, not yet fixed)** — see next.md for prioritized fix list. Critical: (a) `_backfill_record_ids` routes shipping/adjustment entries to import_queue (wrong table — they live in order_fees); (b) manual adjustments always DEBIT even for credits; (c) blank `id` cell in Purchases tab crashes `save_purchase_groups` with unhandled ValueError; (d) blank New Entries amount silently lost (IntegrityError swallowed).
 
 ### Traffic Analytics
 1. **Backfill the 8/6 gap** — the 2026-08-07 pagination-bug backfill (see Constraints) covered 7/24–8/5 in full but hit the eBay API's daily rate limit partway through 8/6, leaving it partially stale. Low priority per user ("if we need more specific backfills later, I will request it") — re-run the same corrected `_fetch_window_with_retry` loop for just that date when convenient.
@@ -415,6 +420,46 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - Whether to expose raw price range alongside the two recommendations
 
 ## Session Log
+
+### 2026-09-15 — P&L sheet improvements; multi-qty purchase bug fixed; Monthly tab added
+
+**P&L by Group fixes:**
+- Fixed profit formula (col G) — was missing ARRAYFORMULA wrapper so only the first data row calculated; corrected to `=IFERROR(ARRAYFORMULA(IF(A2:A="","",B2:B-C2:C-D2:D-E2:E+F2:F)),"")`
+- Added margin column (col H) = `profit / costs` per group, blank when costs = 0
+
+**Multi-quantity purchase bug (fetch_ebay_purchases.py):**
+- `TransactionPrice` in eBay's Trading API is a per-unit price, not a total. The script was computing `total_cost = item_cost + shipping_cost` (missing `× quantity`), causing multi-qty purchases to record at the single-unit price. Fixed to `total_cost = item_cost × quantity + shipping_cost`.
+- 3 historical multi-qty purchase records corrected in DB (IDs 344, 5, 29). ID 570 (Knicks tickets) was reverted — user had already created a manual entry to cover the undercount.
+
+**Manual sales improvements:**
+- Added `vendor` column to `orders_raw` table in Supabase
+- `_insert_manual_sales` now stores vendor; `fetch_sales` query uses `COALESCE(vendor, 'Manual')` as source for MANUAL- orders
+- Backfilled vendor for all 19 existing manual sales by reading record_id→vendor mapping from New Entries tab
+- `gross_sale` now populated for manual sales (= entered amount, same as net_payout); previously was blank
+
+**Topps reclassification:**
+- `MANUAL-bb4e2e9512e54e31` ("Topps Signature Class Refund", $689.96) was entered as a sale (workaround, no return mechanism at the time). Removed from `orders_raw`; reinserted into `order_fees` as `ADJUSTMENT_MANUAL CREDIT` (booking_entry='CREDIT') — preserves +$689.96 effect on profit for group "2025 Topps Signature Class Football" via the adjustments column.
+
+**Monthly tab (new):**
+- Formula-driven tab (Jan–Dec 2026). SUMPRODUCT formulas referencing Sales tab directly — no sync needed to stay current. Columns: eBay | Dealernet | Tradepost | WhatNot | Card Show | Other | Total.
+
+### 2026-09-09 to 2026-09-10 — Adjustments feature shipped; eBay purchase fetch fixed; code review
+
+**Adjustments feature (completed):**
+- Implemented all planned adjustments changes to `pl/sync_to_sheets.py`: `booking_entry` added as col J to Ad Fees tab; `adjustments` column added to P&L by Group (signed BYROW SUMIFS CREDIT−DEBIT per group); `adjustment` type added to New Entries (`_insert_manual_adjustment`, `ADJ-{hex16}` record_id, ADJUSTMENT_MANUAL DEBIT); `_delete_manual_entry` updated with ADJ- branch; `fetch_ad_fees()` SQL updated to route REFUND/CREDIT/ADJUSTMENT/ADJUSTMENT_MANUAL/SHIPPING_LABEL CREDIT → "Adjustment" category; profit formula updated to add adjustments. 33 tests passing. Deployed and `pl-ingest.yml` triggered successfully.
+- Stale remote branches cleaned up (3 branches whose code was already on main).
+
+**eBay purchase fetch: GetMyeBayBuying → GetOrders (completed):**
+- Diagnosed that `GetMyeBayBuying` (WonList) silently drops multi-item bundle orders — items bought from the same seller in one checkout only appear once. Confirmed via user's order 24-15106-80959 (Tyler Shough/Bo Nix/Cade Cunningham, $336.98) and 21-15096-77301 (Jaxson Dart/Jaylen Brown, $200.33) — neither appeared in `ebay_purchases_raw` despite the daily workflow running correctly.
+- Switched `traffic_analytics/fetch_ebay_purchases.py` to use `GetOrders` API with `OrderRole=Buyer` and date range (`CreateTimeFrom`/`CreateTimeTo`). Per-item pricing uses `TransactionPrice` + `ActualShippingCost` (eBay correctly pre-splits order-level shipping per item).
+- 60-day backfill run recovered 5 missing items ($537.31 total) from the two bundle orders. No other gaps found in the prior 60 days.
+- 499 purchases now in Google Sheet after sync (was 494).
+
+**Purchase verification:**
+- User suspected missed purchases. DB and live eBay API compared — all 11 single-item purchases in last 21 days were correctly captured. Only bundle orders were missing (now fixed).
+
+**Code review (pl/sync_to_sheets.py) — 8 finder angles completed, fixes pending:**
+- All 8 finder angles ran (A–H); findings collected. Verified bugs not yet fixed — see next.md for prioritized list. Top issues: (1) `_backfill_record_ids` routes shipping/adjustment types to import_queue (wrong — they're in order_fees); (2) `_insert_manual_adjustment` hardcodes DEBIT, so manual adjustments intended as credits subtract from rather than add to profit; (3) `save_purchase_groups` calls `int(k)` on potentially-blank id cells, crashing the whole purchase group save; (4) blank New Entries amount field leads to IntegrityError silently swallowed.
 
 ### 2026-08-26 — Listener: diagnosed and fixed rising GitHub Actions failure rate
 - User reported a growing number of failed `eBay Listener` workflow-run notifications over the preceding week. Investigated via GitHub Actions run history and job logs (7 failed runs sampled, spanning 2026-08-21 through 2026-08-26).

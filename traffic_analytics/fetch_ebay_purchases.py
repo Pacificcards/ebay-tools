@@ -131,9 +131,9 @@ def _parse(xml_text: str) -> tuple[list[dict], int]:
             quantity = _int(txn_el.findtext("e:QuantityPurchased", namespaces=NS)) or 1
             shipping_cost = _decimal(txn_el.findtext("e:ActualShippingCost", namespaces=NS))
             total_cost = (
-                round(item_cost + shipping_cost, 2)
+                round(item_cost * quantity + shipping_cost, 2)
                 if item_cost is not None and shipping_cost is not None
-                else item_cost
+                else (round(item_cost * quantity, 2) if item_cost is not None else None)
             )
 
             raw_date = txn_el.findtext("e:CreatedDate", namespaces=NS)

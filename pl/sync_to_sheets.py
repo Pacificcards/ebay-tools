@@ -65,7 +65,7 @@ def fetch_sales(conn) -> list[list]:
             SELECT
                 o.order_date::text,
                 COALESCE(lm.title, o.title, o.listing_id) AS title,
-                CASE WHEN o.order_id LIKE 'MANUAL-%' THEN ''
+                CASE WHEN o.order_id LIKE 'MANUAL-%' THEN CAST(o.sale_price AS text)
                      ELSE CAST(o.sale_price + COALESCE(o.shipping_price, 0) AS text)
                 END AS gross_sale,
                 CAST(
@@ -107,7 +107,7 @@ def fetch_sales(conn) -> list[list]:
                      ELSE COALESCE(o.listing_id, '')
                 END AS listing_id,
                 COALESCE(o.group_name, ''),
-                CASE WHEN o.order_id LIKE 'MANUAL-%' THEN 'Manual' ELSE 'eBay' END AS source
+                CASE WHEN o.order_id LIKE 'MANUAL-%' THEN COALESCE(o.vendor, 'Manual') ELSE 'eBay' END AS source
             FROM orders_raw o
             LEFT JOIN listing_metadata lm USING (listing_id)
             LEFT JOIN order_fees f
@@ -648,8 +648,8 @@ def _insert_manual_sales(entries: list[dict]) -> dict[int, str]:
                     cur.execute(
                         """
                         INSERT INTO orders_raw (
-                            order_id, listing_id, order_date, title, sale_price, group_name
-                        ) VALUES (%s, 'manual', %s, %s, %s, %s)
+                            order_id, listing_id, order_date, title, sale_price, group_name, vendor
+                        ) VALUES (%s, 'manual', %s, %s, %s, %s, %s)
                         """,
                         (
                             order_id,
@@ -657,6 +657,7 @@ def _insert_manual_sales(entries: list[dict]) -> dict[int, str]:
                             entry["description"],
                             entry["total_cost"],
                             entry["group_name"],
+                            entry["vendor"],
                         ),
                     )
                     synced[i] = order_id
@@ -860,7 +861,7 @@ def write_pl_tab(doc: gspread.Spreadsheet, sales_row_count: int, purchases_row_c
     pc  = f"Purchases!D2:D{purchases_end}"   # Purchases total_cost
     ac  = f"'Ad Fees'!C2:C{ad_fees_end}"     # Ad Fees amount
 
-    headers = [["group", "net_payout", "costs", "ad_fees", "shipping_cost", "adjustments", "profit"]]
+    headers = [["group", "net_payout", "costs", "ad_fees", "shipping_cost", "adjustments", "profit", "margin"]]
     data = [
         [
             f'=IFERROR(UNIQUE(FILTER({{{sg};{pg};{ag}}},{{{sg};{pg};{ag}}}<>"")),"")',
@@ -869,12 +870,48 @@ def write_pl_tab(doc: gspread.Spreadsheet, sales_row_count: int, purchases_row_c
             f'=IFERROR(BYROW(A2:A,LAMBDA(g,IF(g="","",SUMIFS({ac},{ag},g,{ai},"Ad Fee")))),"")' ,
             f'=IFERROR(BYROW(A2:A,LAMBDA(g,IF(g="","",SUMIFS({ac},{ag},g,{ai},"Shipping")))),"")' ,
             f'=IFERROR(BYROW(A2:A,LAMBDA(g,IF(g="","",SUMIFS({ac},{ag},g,{ai},"Adjustment",{ab},"CREDIT")-SUMIFS({ac},{ag},g,{ai},"Adjustment",{ab},"DEBIT")))),"")' ,
-            '=IFERROR(B2:B-C2:C-D2:D-E2:E+F2:F,"")',
+            '=IFERROR(ARRAYFORMULA(IF(A2:A="","",B2:B-C2:C-D2:D-E2:E+F2:F)),"")',
+            '=IFERROR(ARRAYFORMULA(IF(C2:C=0,"",G2:G/C2:C)),"")',
         ]
     ]
 
     ws.clear()
     ws.update(headers + data, 'A1', value_input_option="USER_ENTERED")
+    _reset_header_format(ws)
+
+
+def write_monthly_tab(doc: gspread.Spreadsheet) -> None:
+    MONTHS = [
+        ("Jan 2026", "2026-01"), ("Feb 2026", "2026-02"), ("Mar 2026", "2026-03"),
+        ("Apr 2026", "2026-04"), ("May 2026", "2026-05"), ("Jun 2026", "2026-06"),
+        ("Jul 2026", "2026-07"), ("Aug 2026", "2026-08"), ("Sep 2026", "2026-09"),
+        ("Oct 2026", "2026-10"), ("Nov 2026", "2026-11"), ("Dec 2026", "2026-12"),
+    ]
+
+    D = "Sales!$A$2:$A$5000"   # order_date column
+    G = "Sales!$C$2:$C$5000"   # gross_sale column
+    S = "Sales!$J$2:$J$5000"   # source column
+    gross = f"IFERROR(VALUE({G}),0)"
+
+    headers = [["Month", "eBay", "Dealernet", "Tradepost", "WhatNot", "Card Show", "Other", "Total"]]
+    rows = []
+    for i, (label, ym) in enumerate(MONTHS):
+        r = i + 2  # sheet row number for this data row
+        df = f'(LEFT({D},7)="{ym}")'  # date filter
+
+        ebay      = f'=IFERROR(SUMPRODUCT({df}*(({S}="eBay")+({S}="eBay (Manual)")>0)*{gross}),"")'
+        dealernet = f'=IFERROR(SUMPRODUCT({df}*({S}="Dealernet")*{gross}),"")'
+        tradepost = f'=IFERROR(SUMPRODUCT({df}*({S}="Tradepost")*{gross}),"")'
+        whatnot   = f'=IFERROR(SUMPRODUCT({df}*({S}="WhatNot")*{gross}),"")'
+        cardshow  = f'=IFERROR(SUMPRODUCT({df}*({S}="Card Show")*{gross}),"")'
+        total     = f'=IFERROR(SUMPRODUCT({df}*{gross}),"")'
+        other     = f'=IFERROR(H{r}-B{r}-C{r}-D{r}-E{r}-F{r},"")'
+
+        rows.append([label, ebay, dealernet, tradepost, whatnot, cardshow, other, total])
+
+    ws = _get_or_create_tab(doc, "Monthly", index=4)
+    ws.clear()
+    ws.update(headers + rows, "A1", value_input_option="USER_ENTERED")
     _reset_header_format(ws)
 
 
@@ -931,6 +968,9 @@ def sync(doc_id: str, creds_path: str) -> None:
 
     print("Writing P&L by Group tab...")
     write_pl_tab(doc, len(sales), len(purchases), len(ad_fees))
+
+    print("Writing Monthly tab...")
+    write_monthly_tab(doc)
 
     print(f"Done. Open: https://docs.google.com/spreadsheets/d/{doc_id}")
 
