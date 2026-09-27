@@ -20,6 +20,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,8 +29,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: pip install -r requirements.txt
-      - run: npm install -g @anthropic-ai/claude-code
+      - run: pip install -r order-task-tracker/requirements.txt
+      # pinned: this job holds inbox read access - bump deliberately, never "latest"
+      - run: npm install -g @anthropic-ai/claude-code@2.1.283
 
       - name: Get timestamp
         id: ts
@@ -51,9 +53,11 @@ jobs:
         id: output
         if: always()
         run: |
-          echo "result<<EOF" >> $GITHUB_OUTPUT
+          # random delimiter: the output contains text from emails, which could contain "EOF"
+          delim="EOF_$(openssl rand -hex 16)"
+          echo "result<<$delim" >> $GITHUB_OUTPUT
           cat /tmp/output.txt >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "$delim" >> $GITHUB_OUTPUT
 
       - name: Send email notification
         if: always()

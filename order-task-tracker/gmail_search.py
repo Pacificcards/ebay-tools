@@ -1,7 +1,9 @@
 """Gmail query, message fetch/parse, and the false-positive + excluded-retailer filter."""
 
 import base64
+import hashlib
 import html
+import json
 import re
 import time
 from datetime import datetime
@@ -72,6 +74,7 @@ def recent_order_query() -> str:
 
 
 def order_ref_query(order_number: str) -> str:
+    order_number = re.sub(r"[^A-Za-z0-9-]", "", order_number)   # came from email text
     return (f'{_allowed_from()} "{order_number}" newer_than:{config.STALE_ORDER_SEARCH_DAYS}d '
             f"{_exclude_self()}")
 
@@ -141,7 +144,19 @@ def _keep_track_link(m) -> str:
 
 
 def is_seller_mail(email: dict) -> bool:
-    return bool(SELLER_SUBJECT_RE.search(email["subject"]))
+    """Seller-side mail. Only checked for platforms the user sells on, so a retailer's
+    "Your order will ship by Oct 3" is never mistaken for a sale."""
+    merchant = normalize_merchant(email["sender_domain"], email["display_name"])
+    return merchant in config.SELLER_PLATFORMS and bool(SELLER_SUBJECT_RE.search(email["subject"]))
+
+
+def screen_signature() -> str:
+    """Fingerprint of every header-screen setting. Emails screened out under a different
+    fingerprint are screened again, so filter/allow-list edits apply to past emails too."""
+    settings = [config.ALLOWED_SENDERS, sorted(config.EXCLUDED_MERCHANTS), sorted(config.CARRIER_DOMAINS),
+                sorted(config.SELLER_PLATFORMS), config.SELLER_SUBJECT_PATTERNS,
+                config.NOISE_SUBJECT_PATTERNS, SHIPPING_SUBJECT_RE.pattern, ORDER_NUMBER_RE.pattern]
+    return hashlib.sha1(json.dumps(settings, default=str).encode()).hexdigest()[:12]
 
 
 def is_candidate(email: dict) -> bool:

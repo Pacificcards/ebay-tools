@@ -13,6 +13,7 @@ kept in Supabase (order_tracker_tasks), so the description can be edited freely.
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 import config
 from orders import Order, Shipment
@@ -62,12 +63,25 @@ def fmt_short(d: date) -> str:
     return f"{d:%b} {d.day}"
 
 
+def _trusted_url(url: str | None) -> bool:
+    """Only https links on an allow-listed retailer or carrier domain (the URL came from
+    email text, so anything else could be a planted phishing link)."""
+    if not url:
+        return False
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    domains = {d for _, d, _ in config.ALLOWED_SENDERS} | config.CARRIER_DOMAINS
+    # a retailer's sending subdomain (e.g. notify.macys.com) also trusts its parent domain
+    domains |= {".".join(d.split(".")[-2:]) for d in domains}
+    return parsed.scheme == "https" and any(host == d or host.endswith("." + d) for d in domains)
+
+
 def tracking_link(sh: Shipment) -> str:
     carrier = (sh.carrier or "").lower()
     for key, pattern in config.CARRIER_TRACKING_URL_PATTERNS.items():
         if key in carrier:
             return pattern.format(tracking=sh.tracking)
-    return sh.tracking_url or ""
+    return sh.tracking_url if _trusted_url(sh.tracking_url) else ""
 
 
 def _items(order: Order, sh: Shipment | None) -> list[tuple[str, int]]:
@@ -111,14 +125,17 @@ def _existing_due(task: dict | None) -> date | None:
     return None
 
 
-def shipment_due(sh: Shipment, lookup: dict | None, task: dict | None) -> date | None:
+def shipment_due(sh: Shipment, lookup: dict | None, task: dict | None,
+                 order_eta: date | None = None) -> date | None:
     if sh.status == "delivered":
         return sh.delivered_on
     if sh.status == "out_for_delivery":
         return sh.ofd_date
     if lookup and lookup.get("eta"):
         return lookup["eta"]                         # a lookup made today beats an older email date
-    return sh.eta or _existing_due(task)
+    # the order's own estimate (e.g. confirmation "Arrives by Oct 2") when the shipping
+    # email itself gives no date
+    return sh.eta or order_eta or _existing_due(task)
 
 
 # ── Planning ─────────────────────────────────────────────────────────────────
@@ -177,7 +194,7 @@ def plan_order(order: Order, index: TaskIndex, lookups: dict) -> list[Action]:
         if lookup and lookup.get("delivered_on") and sh.status != "delivered":
             sh.status, sh.delivered_on = "delivered", lookup["delivered_on"]
 
-        due = shipment_due(sh, lookup, task)
+        due = shipment_due(sh, lookup, task, order.eta)
         eta_unavailable = due is None and sh.status != "delivered" and not order.cancelled
         if order.cancelled:
             status = _cancel_line(order)
@@ -202,7 +219,7 @@ def lookup_priority(order: Order, sh: Shipment, index: TaskIndex, today: date) -
     task = index.by_tracking.get(sh.tracking)
     if task and is_closed(task):
         return None
-    if not sh.eta and (not task or not task.get("due")):
+    if not sh.eta and not order.eta and (not task or not task.get("due")):
         return "fresh"
     if task:
         quiet_days = (today - date.fromisoformat(task["updated"][:10])).days

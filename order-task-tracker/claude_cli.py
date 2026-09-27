@@ -5,7 +5,8 @@ Auth is the user's Claude subscription via CLAUDE_CODE_OAUTH_TOKEN (CI) or the l
 `claude` login. The subprocess gets a stripped environment on purpose:
   - ANTHROPIC_API_KEY is never passed, so usage can't silently bill API credits.
   - Google / Supabase secrets are never visible to a model that reads untrusted email.
-It also runs in an empty temp dir so no CLAUDE.md or project settings are loaded.
+It also runs in an empty temp dir so no CLAUDE.md or project settings are loaded, with
+session persistence off so no transcript of email text is written under ~/.claude.
 """
 
 import json
@@ -31,6 +32,8 @@ def run(prompt: str, schema: dict, model: str, tools: str = "", stdin: str = "",
         "--tools", tools,
         "--output-format", "json",
         "--json-schema", json.dumps(schema),
+        "--no-session-persistence",   # never save a transcript (it would contain email text)
+        "--strict-mcp-config",        # ignore any MCP servers configured on this machine
     ]
     if tools:
         cmd += ["--allowedTools", tools]
@@ -39,10 +42,15 @@ def run(prompt: str, schema: dict, model: str, tools: str = "", stdin: str = "",
 
     env = {k: os.environ[k] for k in _PASSTHROUGH_ENV if k in os.environ}
     with tempfile.TemporaryDirectory() as workdir:
-        proc = subprocess.run(
-            cmd, input=stdin, capture_output=True, text=True, env=env, cwd=workdir,
-            timeout=config.CLAUDE_TIMEOUT_SECONDS,
-        )
+        try:
+            proc = subprocess.run(
+                cmd, input=stdin, capture_output=True, text=True, env=env, cwd=workdir,
+                timeout=config.CLAUDE_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            raise ClaudeError(f"claude timed out after {config.CLAUDE_TIMEOUT_SECONDS}s")
+        except OSError as exc:        # e.g. claude not installed
+            raise ClaudeError(f"could not start claude: {exc}")
     try:
         out = json.loads(proc.stdout)
     except json.JSONDecodeError:

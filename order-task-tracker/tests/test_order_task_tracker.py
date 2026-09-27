@@ -334,5 +334,132 @@ class TestFormat(unittest.TestCase):
         self.assertEqual(a.kind, "skip_closed")
 
 
+class TestReviewFixes(unittest.TestCase):
+    def test_order_eta_used_when_shipping_email_has_no_date(self):
+        rows = [_row("2026-09-24", eta_end="10-02"),
+                _row("2026-09-26", items=[], status="shipped", shipments=[_ship("1Z999")])]
+        (a,) = _plan(rows)
+        self.assertEqual(a.due, date(2026, 10, 2))
+        self.assertNotIn(ETA_UNAVAILABLE, a.notes)
+
+    def test_order_eta_means_no_web_lookup(self):
+        o = build_orders([_row("2026-09-24", eta_end="10-02", shipments=[_ship("1Z999")])])[K]
+        self.assertIsNone(lookup_priority(o, o.shipments["1Z999"], _index([]), date(2026, 9, 27)))
+
+    def test_untracked_delivered_email_marks_single_package_delivered(self):
+        rows = [_row("2026-09-22", shipments=[_ship("1Z999")]),
+                _row("2026-09-24", items=[], status="delivered", shipments=[])]
+        sh = build_orders(rows)[K].shipments["1Z999"]
+        self.assertEqual((sh.status, sh.delivered_on), ("delivered", date(2026, 9, 24)))
+
+    def test_untracked_delivered_email_ignored_for_multi_package(self):
+        rows = [_row("2026-09-22", shipments=[_ship("1Z111"), _ship("1Z222")]),
+                _row("2026-09-24", items=[], status="delivered", shipments=[])]
+        self.assertTrue(all(s.status != "delivered" for s in build_orders(rows)[K].shipments.values()))
+
+    def test_untrusted_tracking_url_dropped(self):
+        from orders import Shipment
+        from tasks_sync import tracking_link
+        self.assertEqual(tracking_link(Shipment("X1", carrier="Costco",
+                                                tracking_url="https://evil.example.com/track")), "")
+        self.assertEqual(tracking_link(Shipment("X1", carrier="Costco",
+                                                tracking_url="http://shipmenttracking.costco.com/x")), "")
+        ok = "https://shipmenttracking.costco.com/us/odn/1316734627"
+        self.assertEqual(tracking_link(Shipment("X1", carrier="Costco", tracking_url=ok)), ok)
+        self.assertTrue(tracking_link(Shipment("1Z9", carrier="UPS")).startswith("https://www.ups.com/"))
+
+    def test_claude_timeout_becomes_claude_error(self):
+        import subprocess
+        from unittest.mock import patch
+        import claude_cli
+        with patch("claude_cli.subprocess.run", side_effect=subprocess.TimeoutExpired("claude", 1)):
+            with self.assertRaises(claude_cli.ClaudeError):
+                claude_cli.run("p", {}, "haiku")
+        with patch("claude_cli.subprocess.run", side_effect=FileNotFoundError("claude")):
+            with self.assertRaises(claude_cli.ClaudeError):
+                claude_cli.run("p", {}, "haiku")
+
+    def test_screen_signature_changes_with_filters(self):
+        import gmail_search
+        before = gmail_search.screen_signature()
+        saved = list(config.NOISE_SUBJECT_PATTERNS)
+        config.NOISE_SUBJECT_PATTERNS.append("newword")
+        try:
+            self.assertNotEqual(before, gmail_search.screen_signature())
+        finally:
+            config.NOISE_SUBJECT_PATTERNS[:] = saved
+        self.assertEqual(before, gmail_search.screen_signature())
+
+
+def _email(domain, subject, display="", labels=()):
+    return {"sender_domain": domain, "display_name": display, "subject": subject, "labels": list(labels)}
+
+
+class TestHeaderScreen(unittest.TestCase):
+    """Real subjects from the user's inbox (Sep 20-27, 2026)."""
+
+    def _verdict(self, e):
+        import gmail_search as g
+        return ("excluded" if g.is_excluded(e) else "seller" if g.is_seller_mail(e)
+                else "read" if g.is_candidate(e) else "noise")
+
+    def test_real_purchase_updates_are_read(self):
+        for domain, subject in [
+            ("logistics.costco.com", "Your Costco shipment is on its way"),
+            ("logistics.costco.com", "Update: Your Costco shipment is delayed"),
+            ("orders.costco.com", "Your Costco.com order 1316734627 is confirmed!"),
+            ("oe.target.com", "Items have arrived from order #912003763711876!"),
+            ("oe.target.com", "Your order will ship by Oct 3"),
+            ("notify.macys.com", "Thank you for your order! #4793373224"),
+            ("s.fanatics.com", "A package is out for delivery!"),
+            ("ebay.com", "Your package is now with its carrier!"),
+            ("ebay.com", "OUT FOR DELIVERY: 2026 Topps Chrome #R..."),
+            ("emailinfo.bestbuy.com", "Thanks for your order."),
+            ("psacard.com", "Thank you for your PSA order"),
+            ("ups.com", "UPS Update: Package Scheduled for Delivery Today"),
+        ]:
+            self.assertEqual(self._verdict(_email(domain, subject)), "read", subject)
+
+    def test_shopify_mail_needs_shop_name(self):
+        e = _email("t.shopifyemail.com", "A shipment from order US-14311777-S is on the way", "Topps")
+        self.assertEqual(self._verdict(e), "read")
+        self.assertEqual(self._verdict({**e, "display_name": "Other Shop"}), "excluded")
+
+    def test_real_seller_mail_is_dropped(self):
+        for subject in ["You made the sale for 2026 Bowman Chrome RC #6 Kevin McGonigle Twins",
+                        "Re: pacificcardsco sent a message about 2026 Topps MLB x Kaws Box",
+                        "Your eBay labels are ready"]:
+            self.assertEqual(self._verdict(_email("ebay.com", subject)), "seller", subject)
+        self.assertEqual(self._verdict(_email("fanaticscollect.com", "Re: Vault shipping acknowlgement")),
+                         "seller")
+
+    def test_real_noise_is_dropped(self):
+        for domain, subject in [
+            ("ebay.com", "Offer pending reminder: $3.50 for Jacob Misiorowski #1..."),
+            ("ebay.com", "moment in time aqua /199: 2 matches"),
+            ("ebay.com", "Counteroffer submitted to buyer: $2.25 for 2026 Bowman Chrome I..."),
+            ("email.informeddelivery.usps.com", "Your Daily Digest for Sun, 9/27 is ready to view"),
+            ("em.pokemon.com", "Halloween Is Coming. So Are Squishmallows."),
+            ("macys.com", "Thoughts on what you bought? Write a review!"),
+        ]:
+            self.assertEqual(self._verdict(_email(domain, subject)), "noise", subject)
+
+    def test_body_prefers_fuller_html_over_stub_text(self):
+        import base64
+        import gmail_search as g
+        b64 = lambda t: base64.urlsafe_b64encode(t.encode()).decode()
+        payload = {"parts": [
+            {"mimeType": "text/plain", "body": {"data": b64("We'll let you know when your items ship.")}},
+            {"mimeType": "text/html", "body": {"data": b64(
+                "<p>Pokemon 30th Celebration Poster Collection x2</p><p>Arrives by: Fri. Oct. 02</p>"
+                '<a href="https://click.example.com/x">Shop more</a>'
+                '<a href="https://www.ups.com/track?tracknum=1Z9">Track package</a>')}},
+        ]}
+        text = g._body_text(payload)
+        self.assertIn("Arrives by: Fri. Oct. 02", text)
+        self.assertIn("https://www.ups.com/track?tracknum=1Z9", text)     # tracking link kept
+        self.assertNotIn("click.example.com", text)                         # other links dropped
+
+
 if __name__ == "__main__":
     unittest.main()

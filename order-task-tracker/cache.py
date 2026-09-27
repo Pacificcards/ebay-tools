@@ -12,15 +12,18 @@ def connect():
     return psycopg2.connect(os.environ["SUPABASE_DB_URL"])
 
 
-def cached_ids(conn, message_ids: list[str]) -> set[str]:
-    """Ids already extracted with the current EXTRACT_VERSION."""
+def cached_ids(conn, message_ids: list[str], screen_signature: str) -> set[str]:
+    """Ids that need no work: read by Claude under the current EXTRACT_VERSION, or screened
+    out under the current header-screen settings (older skips are screened again)."""
     if not message_ids:
         return set()
     with conn.cursor() as cur:
         cur.execute(
             """SELECT message_id FROM order_tracker_emails
-               WHERE message_id = ANY(%s::text[]) AND extract_version >= %s""",
-            (message_ids, config.EXTRACT_VERSION),
+               WHERE message_id = ANY(%s::text[]) AND extract_version >= %s
+                 AND (extraction->'raw'->>'skipped' IS NULL
+                      OR extraction->'raw'->>'screen' = %s)""",
+            (message_ids, config.EXTRACT_VERSION, screen_signature),
         )
         return {r[0] for r in cur.fetchall()}
 

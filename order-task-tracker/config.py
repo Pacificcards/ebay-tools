@@ -43,6 +43,7 @@ CARRIER_DOMAINS = {"fedex.com", "ups.com", "usps.com", "dhl.com"}
 
 # The inbox also receives the user's SELLER mail (eBay/WhatNot sales, payouts, labels).
 # Subjects matching these never reach Claude; Claude's is_purchase check is the backstop.
+SELLER_PLATFORMS = {"eBay", "Fanatics Collect"}   # seller-mail filters apply only to these senders
 SELLER_ACCOUNTS = ["pacificcardsco"]     # the user's own seller usernames: mail naming them is seller-side
 SELLER_SUBJECT_PATTERNS = [
     r"pacificcardsco", r"sent (you )?a message", r"^re:\s",
@@ -70,7 +71,8 @@ SUMMARY_EMAIL_SUBJECT = "Order Task Tracker"     # excluded from searches so the
 EXTRACT_VERSION = 2                      # bump when the extraction schema/prompt changes -> cached rows re-read
 EXTRACT_MODEL = "haiku"
 LOOKUP_MODEL = "sonnet"
-EXTRACT_BATCH_SIZE = 8                    # emails per Claude call
+EXTRACT_BATCH_SIZE = 15                   # emails per Claude call
+EXTRACT_PARALLEL_CALLS = 4                # Claude calls run at the same time
 EMAIL_BODY_MAX_CHARS = 6000               # plain-text body cap sent to Claude
 MAX_WEB_LOOKUPS_PER_RUN = 10
 CLAUDE_TIMEOUT_SECONDS = 600

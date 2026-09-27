@@ -10,6 +10,7 @@ Usage:
 import argparse
 import sys
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -84,7 +85,8 @@ def _run(conn, dry_run: bool) -> int:
         ids += gmail_search.search_ids(session, gmail_search.order_ref_query(number))
     ids = _unique(ids)
 
-    done = cache.cached_ids(conn, ids)
+    screen = gmail_search.screen_signature()
+    done = cache.cached_ids(conn, ids, screen)
     skipped = Counter()
     to_extract, skip_rows = [], []
     for mid in ids:
@@ -104,33 +106,44 @@ def _run(conn, dry_run: bool) -> int:
         skipped[reason] += 1
         # remembered so later runs don't re-open it (Gmail has a per-minute read quota)
         skip_rows.append({**_meta(email), "order_number": None,
-                          "raw": {"is_order_email": False, "skipped": reason, "shipments": []}})
+                          "raw": {"is_order_email": False, "skipped": reason, "screen": screen,
+                                  "shipments": []}})
     cache.save(conn, skip_rows)
 
-    # Step 4: Claude extraction, in batches; each batch cached as soon as it succeeds.
-    # A failing batch is retried one email at a time so one bad email can't block the rest;
-    # emails that still fail aren't cached (retried next run) and are listed in the summary.
+    # Step 4: Claude extraction. Batches run EXTRACT_PARALLEL_CALLS at a time; each result
+    # is cached as it comes back. A failing batch is retried one email at a time so one bad
+    # email can't block the rest; emails that still fail (or that Claude leaves out) aren't
+    # cached, so they're retried next run, and are listed in the summary.
     extracted, unreadable = 0, []
     batches = [to_extract[i:i + config.EXTRACT_BATCH_SIZE]
                for i in range(0, len(to_extract), config.EXTRACT_BATCH_SIZE)]
-    while batches:
-        batch = batches.pop(0)
+
+    def _extract(batch):
         try:
-            results = extract_batch(batch)
+            return batch, extract_batch(batch), None
         except ClaudeError as exc:
-            if len(batch) > 1:
-                batches = [[e] for e in batch] + batches
-            else:
-                print(f"WARNING: Claude could not read an email: {exc}")
-                unreadable.append(batch[0]["subject"])
-            continue
-        rows = [{
-            **_meta(e),
-            "order_number": normalize_order_number(results[e["id"]].get("order_number")),
-            "raw": results[e["id"]],
-        } for e in batch if e["id"] in results]   # ids Claude skipped are retried next run
-        cache.save(conn, rows)
-        extracted += len(rows)
+            return batch, None, exc
+
+    with ThreadPoolExecutor(max_workers=config.EXTRACT_PARALLEL_CALLS) as pool:
+        while batches:
+            retry = []
+            for batch, results, exc in pool.map(_extract, batches):
+                if exc:
+                    if len(batch) > 1:
+                        retry += [[e] for e in batch]
+                    else:
+                        print(f"WARNING: Claude could not read an email: {exc}")
+                        unreadable.append(batch[0]["subject"])
+                    continue
+                rows = [{
+                    **_meta(e),
+                    "order_number": normalize_order_number(results[e["id"]].get("order_number")),
+                    "raw": results[e["id"]],
+                } for e in batch if e["id"] in results]
+                unreadable += [e["subject"] for e in batch if e["id"] not in results]
+                cache.save(conn, rows)
+                extracted += len(rows)
+            batches = retry
 
     rows = _load_related(conn, ids, stale_orders, stale_trackings)
 

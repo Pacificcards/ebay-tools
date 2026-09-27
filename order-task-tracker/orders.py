@@ -142,4 +142,12 @@ def build_orders(rows: list[dict]) -> dict[tuple, Order]:
         if raw.get("status") == "delivered" and not raw.get("shipments"):
             order.delivered_on = order.delivered_on or ref
         _apply_shipments(order, raw, ref)
+
+    # A "delivered" email with no tracking number (e.g. Target "Items have arrived") can only
+    # be attributed when the order has exactly one package.
+    for order in orders.values():
+        if order.delivered_on and len(order.shipments) == 1:
+            sh = next(iter(order.shipments.values()))
+            if sh.status != "delivered":
+                sh.status, sh.delivered_on = "delivered", order.delivered_on
     return orders
