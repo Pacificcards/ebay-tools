@@ -1,0 +1,73 @@
+name: Order Task Tracker
+
+# Triggered externally by cron-job.org: daily at 8:00am PT → workflow_dispatch
+# Gmail order/shipping emails → Google Tasks ("Orders" list). Claude runs as headless
+# Claude Code on the user's subscription (CLAUDE_CODE_OAUTH_TOKEN) — do NOT add
+# ANTHROPIC_API_KEY here: it would take precedence and bill API credits.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (plan only, no task writes)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: order-task-tracker
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: pip install -r requirements.txt
+      - run: npm install -g @anthropic-ai/claude-code
+
+      - name: Get timestamp
+        id: ts
+        run: echo "value=$(TZ=America/Los_Angeles date '+%Y-%m-%d %H:%M PT')" >> $GITHUB_OUTPUT
+
+      - name: Run tracker
+        id: tracker
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -o pipefail
+          python order-task-tracker/main.py ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }} 2>&1 | tee /tmp/output.txt
+
+      - name: Read output
+        id: output
+        if: always()
+        run: |
+          echo "result<<EOF" >> $GITHUB_OUTPUT
+          cat /tmp/output.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Send email notification
+        if: always()
+        uses: dawidd6/action-send-mail@4226df7daafa6fc901a43789c49bf7ab309066e7  # v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.GMAIL_ADDRESS }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }}
+          to: ${{ secrets.GMAIL_ADDRESS }}
+          from: Order Task Tracker
+          # subject must contain config.SUMMARY_EMAIL_SUBJECT so the tracker never reads its own report
+          subject: "[${{ steps.tracker.outcome == 'success' && 'SUCCESS' || 'FAILURE' }}] Order Task Tracker — ${{ steps.ts.outputs.value }}"
+          body: |
+            ${{ steps.output.outputs.result }}
+
+            Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}

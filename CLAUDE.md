@@ -311,6 +311,19 @@ Static, client-side-only page (no backend, no data pipeline) — live at `pacifi
 
 **Verification approach** (no real browser available in this environment): a standalone Node script re-derives hand-calculated expected values directly from the extracted math functions (tiered FVF, boundary continuity, credit math, qty scaling) every time the formulas change, plus a jsdom-driven test suite that runs the actual shipped `<script>` in a real DOM and drives it through the interactions being changed (typing, clicking sync/takehome buttons, add/remove column). jsdom has no real layout engine, so anything purely visual (the breakdown height-sync, the Qty/Unit-Price box height fix) was verified structurally (right elements/classes present, mechanism runs without throwing) rather than pixel-checked — see Open TODOs.
 
+### 8. Order Task Tracker (`order-task-tracker/`)
+Reads the user's Gmail order/shipping emails and keeps a Google Tasks list ("Orders (Claude)") in sync. **Self-contained** by user request: own `schema.sql`, own `tests/`, no `shared.*` imports; the only file outside the folder is `.github/workflows/order-task-tracker.yml`. Triggered daily 8:00am PT by cron-job.org → `workflow_dispatch` (input `dry_run`); summary email on every run.
+
+- **Allow list only** (`config.ALLOWED_SENDERS`): eBay, Pokemon Center, Target, Costco, Fanatics, Fanatics Collect, Topps (topps.com, runfair.com, Shopify when sender name is "Topps"), TAG, PSA, Best Buy, Walmart. Carrier mail (UPS/FedEx/USPS/DHL) can only update an existing order's task via tracking number, never create one. Add retailers by adding rows.
+- **Two-stage reading:** headers only (sender + subject) first → seller-mail / noise filters → only then the body is downloaded and sent to Claude. The inbox also receives the user's SELLER mail (eBay sales, `pacificcardsco` messages, labels) — must never become tasks.
+- **Claude = user's Pro subscription**, not API credits: headless `claude -p` (`claude_cli.py`, stripped env, empty temp cwd) with `CLAUDE_CODE_OAUTH_TOKEN` (1-year token from `claude setup-token`, created 2026-09-27). Never pass `ANTHROPIC_API_KEY` to this workflow — it would take precedence and bill credits. Haiku extracts (batches of 8, ~1 min/call); Sonnet + WebSearch looks up missing ETAs (max 10/run).
+- **Task model:** one task per order from the confirmation; first shipment updates it; each extra package gets its own task "(k of n)". Format — title `[2x Item, Item] - [Retailer]`; notes: confirmation = order # / order date, shipped = tracking # / link / order #; due date = delivery date (blank if unknown). Status line on top: `Delivered Sep 26`, `Cancelled - refunded $X`, `No ETA - check tracking`. Never auto-completes; completed or deleted tasks are never touched or recreated.
+- **Supabase:** `order_tracker_emails` (every email examined, Claude's raw extraction, `extract_version` — bump `EXTRACT_VERSION` to force re-reads) and `order_tracker_tasks` (task_id ↔ merchant/order/tracking; descriptions carry no labels).
+- **Start date:** `config.TRACKING_START` (2026-09-25) — earlier emails ignored. `--since YYYY-MM-DD` overrides for testing only.
+- **Google OAuth:** app "Order Task Tracker" (External, In production, unverified — homepage/privacy pages at `docs/order-tracker/`); scopes `gmail.readonly` + `tasks`; re-mint with `order-task-tracker/oauth_setup.py` (writes to `.env`).
+- Gmail has a per-minute read quota — `gmail_search._get` backs off on 403 "Quota exceeded".
+- Run locally: `.venv/bin/python order-task-tracker/main.py --dry-run`; tests: `.venv/bin/python -m pytest order-task-tracker/tests -q`
+
 ## Key Commands
 
 ```bash
@@ -337,7 +350,7 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 - `pl/credentials/` is gitignored — never commit
 
 ## GitHub Secrets (org: Pacificcards)
-`EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_REFRESH_TOKEN`, `SUPABASE_DB_URL`, `GOOGLE_SHEETS_CREDENTIALS`, `LISTENER_SHEET_ID`, `PL_SHEETS_DOC_ID`, `MARKET_MONITOR_SHEET_ID`, `DISCORD_WEBHOOK_URL`, `DISCORD_BOT_TOKEN`, `DISCORD_WATCHLIST_CHANNEL_ID`, `ANTHROPIC_API_KEY`, `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`, `SOLD_COMPS_API_KEY`
+`EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_REFRESH_TOKEN`, `SUPABASE_DB_URL`, `GOOGLE_SHEETS_CREDENTIALS`, `LISTENER_SHEET_ID`, `PL_SHEETS_DOC_ID`, `MARKET_MONITOR_SHEET_ID`, `DISCORD_WEBHOOK_URL`, `DISCORD_BOT_TOKEN`, `DISCORD_WATCHLIST_CHANNEL_ID`, `ANTHROPIC_API_KEY`, `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`, `SOLD_COMPS_API_KEY`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` (Order Task Tracker)
 
 ## Constraints
 - Do NOT fetch eBay developer docs from the web — user downloads PDFs and places in `/Users/eastcoastlimited/ClaudeCode/ebay_dev_docs/`
