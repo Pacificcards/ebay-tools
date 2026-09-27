@@ -30,6 +30,7 @@ ALLOWED_SENDERS = [
     ("PSA", "psacard.com", None),
     ("Best Buy", "bestbuy.com", None),
     ("Walmart", "walmart.com", None),
+    ("Macy's", "macys.com", None),
 ]
 
 # Retailers to ignore even if allowed above.
