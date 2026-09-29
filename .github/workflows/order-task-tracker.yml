@@ -12,10 +12,6 @@ on:
         description: "Dry run (plan only, no task writes)"
         type: boolean
         default: false
-      probe_tracking:
-        description: "TEST ONLY: FedEx tracking number to look up instead of running the tracker"
-        type: string
-        default: ""
 
 concurrency:
   group: order-task-tracker
@@ -37,34 +33,27 @@ jobs:
       # pinned: this job holds inbox read access - bump deliberately, never "latest"
       - run: npm install -g @anthropic-ai/claude-code@2.1.283
 
-      - name: FedEx probe (test only)
-        if: github.event.inputs.probe_tracking != ''
-        env:
-          FEDEX_API_KEY: ${{ secrets.FEDEX_API_KEY }}
-          FEDEX_SECRET_KEY: ${{ secrets.FEDEX_SECRET_KEY }}
-          PROBE_TRACKING: ${{ github.event.inputs.probe_tracking }}
-        run: python order-task-tracker/fedex_track.py --probe "$PROBE_TRACKING"
-
       - name: Get timestamp
         id: ts
         run: echo "value=$(TZ=America/Los_Angeles date '+%Y-%m-%d %H:%M PT')" >> $GITHUB_OUTPUT
 
       - name: Run tracker
         id: tracker
-        if: github.event.inputs.probe_tracking == ''
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          FEDEX_API_KEY: ${{ secrets.FEDEX_API_KEY }}
+          FEDEX_SECRET_KEY: ${{ secrets.FEDEX_SECRET_KEY }}
         run: |
           set -o pipefail
           python order-task-tracker/main.py ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }} 2>&1 | tee /tmp/output.txt
 
       - name: Read output
         id: output
-        if: always() && github.event.inputs.probe_tracking == ''
+        if: always()
         run: |
           # random delimiter: the output contains text from emails, which could contain "EOF"
           delim="EOF_$(openssl rand -hex 16)"
@@ -73,7 +62,7 @@ jobs:
           echo "$delim" >> $GITHUB_OUTPUT
 
       - name: Send email notification
-        if: always() && github.event.inputs.probe_tracking == ''
+        if: always()
         uses: dawidd6/action-send-mail@4226df7daafa6fc901a43789c49bf7ab309066e7  # v3
         with:
           server_address: smtp.gmail.com

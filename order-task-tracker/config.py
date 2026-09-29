@@ -2,7 +2,7 @@
 
 TIMEZONE = "America/Los_Angeles"          # all date logic in Pacific, never UTC
 EMAIL_LOOKBACK_DAYS = 14                  # newer_than:14d
-STALE_TASK_RECHECK_DAYS = 14              # open tasks untouched this long get a forced re-lookup
+STALE_TASK_RECHECK_DAYS = 14              # open tasks untouched this long get their order re-searched in Gmail
 STALE_ORDER_SEARCH_DAYS = 120             # how far back the stale recheck searches Gmail for an OrderRef
 
 ORDERS_TASKLIST_NAME = "Orders (Claude)"
@@ -70,9 +70,7 @@ SUMMARY_EMAIL_SUBJECT = "Order Task Tracker"     # excluded from searches so the
 # Claude (headless Claude Code on the Pro subscription)
 EXTRACT_VERSION = 2                      # bump when the extraction schema/prompt changes -> cached rows re-read
 EXTRACT_MODEL = "haiku"
-LOOKUP_MODEL = "sonnet"
 EXTRACT_BATCH_SIZE = 15                   # emails per Claude call
 EXTRACT_PARALLEL_CALLS = 4                # Claude calls run at the same time
 EMAIL_BODY_MAX_CHARS = 6000               # plain-text body cap sent to Claude
-MAX_WEB_LOOKUPS_PER_RUN = 10
 CLAUDE_TIMEOUT_SECONDS = 600

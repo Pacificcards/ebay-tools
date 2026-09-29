@@ -1,64 +1,46 @@
 """
-Web lookup of delivery ETA for shipments whose emails carry no date.
+Delivery ETA / delivered date from carrier tracking APIs.
 
-One batched headless-Claude call with WebSearch only. It receives carrier + tracking
-strings, never email text, so a malicious email can't steer a tool-enabled model.
+Every open shipment on a supported carrier is re-checked each run (the APIs are free),
+so ETA changes after pickup reach the task. Supported: FedEx (fedex_track.py).
+Other carriers get no lookup: their task keeps the email's date, or "No ETA".
 """
 
 import re
-from datetime import date
 
-import claude_cli
-import config
+import requests
+
+import fedex_track
 
 _TRACKING_RE = re.compile(r"[A-Za-z0-9]{8,40}")
-_CARRIER_RE = re.compile(r"[A-Za-z .&-]{2,30}")
-
-SCHEMA = {
-    "type": "object",
-    "properties": {"results": {"type": "array", "items": {
-        "type": "object",
-        "properties": {
-            "tracking": {"type": "string"},
-            "eta": {"type": ["string", "null"]},
-            "delivered_on": {"type": ["string", "null"]},
-        },
-        "required": ["tracking", "eta", "delivered_on"],
-        "additionalProperties": False,
-    }}},
-    "required": ["results"],
-    "additionalProperties": False,
-}
-
-PROMPT = """For each shipment below, use web search (at most 2 searches per shipment) to find \
-its current tracking status. Return eta = the estimated delivery date (YYYY-MM-DD, the latest \
-date if a range), or delivered_on = the delivery date if it was already delivered. Use null for \
-anything you cannot confirm from a search result - never guess. Today is {today}.
-
-Shipments:
-{shipments}"""
+_FEDEX_NUMBER_RE = re.compile(r"\d{12}|\d{15}")      # FedEx Express/Ground; only used when carrier unknown
 
 
-def _parse(value: str | None) -> date | None:
-    try:
-        return date.fromisoformat(value) if value else None
-    except ValueError:
-        return None
+def carrier_of(tracking: str, carrier: str | None, tracking_url: str | None = None) -> str | None:
+    """'fedex' for a FedEx shipment, else None (unsupported or unknown)."""
+    name = (carrier or "").lower()
+    if "fedex" in name or "fedex.com" in (tracking_url or "").lower():
+        return "fedex"
+    if not name and _FEDEX_NUMBER_RE.fullmatch(tracking):
+        return "fedex"
+    return None
 
 
-def lookup(shipments: list[tuple[str, str | None]], today: date) -> dict:
-    """shipments: [(tracking, carrier)] -> {tracking: {"eta", "delivered_on"}}. Capped per run."""
-    # tracking/carrier originate in email text: allow only plain tokens into the prompt
-    shipments = [(t, c if c and _CARRIER_RE.fullmatch(c) else None)
-                 for t, c in shipments if _TRACKING_RE.fullmatch(t)]
-    shipments = shipments[: config.MAX_WEB_LOOKUPS_PER_RUN]
-    if not shipments:
-        return {}
-    listing = "\n".join(f"- tracking {t} (carrier: {c or 'unknown'})" for t, c in shipments)
-    out = claude_cli.run(
-        PROMPT.format(today=today.isoformat(), shipments=listing), SCHEMA, config.LOOKUP_MODEL,
-        tools="WebSearch", max_turns=2 * len(shipments) + 4,
-    )
-    wanted = {t for t, _ in shipments}
-    return {r["tracking"]: {"eta": _parse(r["eta"]), "delivered_on": _parse(r["delivered_on"])}
-            for r in out["results"] if r["tracking"] in wanted}
+def lookup(shipments: list[tuple[str, str | None, str | None]]) -> tuple[dict, list[str]]:
+    """shipments: [(tracking, carrier, tracking_url)].
+
+    Returns ({tracking: {"eta", "delivered_on"}}, warnings). A carrier API failing only
+    costs that carrier's lookups for this run; it never stops the run.
+    """
+    fedex = [t for t, c, url in shipments
+             if _TRACKING_RE.fullmatch(t) and carrier_of(t, c, url) == "fedex"]
+    results, warnings = {}, []
+    if fedex:
+        if not fedex_track.configured():
+            warnings.append("FedEx lookup skipped: FEDEX_API_KEY / FEDEX_SECRET_KEY not set")
+        else:
+            try:
+                results.update(fedex_track.lookup(fedex))
+            except (fedex_track.FedExError, requests.RequestException, KeyError, ValueError) as exc:
+                warnings.append(f"FedEx lookup failed, continuing without it: {exc}")
+    return results, warnings

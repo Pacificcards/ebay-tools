@@ -9,16 +9,19 @@ import os
 import sys
 import unittest
 from datetime import date
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config  # noqa: E402
+import carrier_lookup  # noqa: E402
+import fedex_track  # noqa: E402
 
 config.TRACKING_START = "2000-01-01T00:00:00+00:00"   # sample data below predates the real cutoff
 
 from extract import normalize_merchant, resolve_date, resolve_range  # noqa: E402
 from orders import build_orders  # noqa: E402
-from tasks_sync import ETA_UNAVAILABLE, TaskIndex, lookup_priority, plan_order, render  # noqa: E402
+from tasks_sync import ETA_UNAVAILABLE, TaskIndex, needs_lookup, plan_order, render  # noqa: E402
 
 K = ("Topps", "A-1001")
 
@@ -271,27 +274,107 @@ class TestAggregationFixes(unittest.TestCase):
         self.assertEqual(build_orders(rows)[K].shipments["1Z999"].eta, date(2026, 9, 25))
 
 
-class TestLookupPriority(unittest.TestCase):
+class TestNeedsLookup(unittest.TestCase):
     def _order(self, **ship):
         return build_orders([_row("2026-09-20", shipments=[_ship("1Z999", **ship)])])[K]
 
-    def test_no_date_is_fresh(self):
-        o = self._order()
-        self.assertEqual(lookup_priority(o, o.shipments["1Z999"], _index([]), date(2026, 9, 27)), "fresh")
-
-    def test_quiet_task_rechecked_once_per_period(self):
+    def test_open_shipment_checked_every_run_even_with_email_eta(self):
         o = self._order(eta_end="10-20")
-        task = _task("Retailer: Topps\nOrderRef: A-1001\nTrackingRef: 1Z999", due="2026-10-20",
-                     updated="2026-09-01T00:00:00.000Z")
-        index = _index([task])
-        sh = o.shipments["1Z999"]
-        self.assertEqual(lookup_priority(o, sh, index, date(2026, 9, 15)), "stale")   # 14 days
-        self.assertIsNone(lookup_priority(o, sh, index, date(2026, 9, 16)))           # 15 days
-        self.assertEqual(lookup_priority(o, sh, index, date(2026, 9, 29)), "stale")   # 28 days
+        self.assertTrue(needs_lookup(o, o.shipments["1Z999"], _index([])))
 
     def test_delivered_never_looked_up(self):
         o = self._order(status="delivered")
-        self.assertIsNone(lookup_priority(o, o.shipments["1Z999"], _index([]), date(2026, 9, 27)))
+        self.assertFalse(needs_lookup(o, o.shipments["1Z999"], _index([])))
+
+    def test_cancelled_never_looked_up(self):
+        o = build_orders([_row("2026-09-20", shipments=[_ship("1Z999")]),
+                          _row("2026-09-21", items=[], status="cancelled", full_cancellation=True)])[K]
+        self.assertFalse(needs_lookup(o, o.shipments["1Z999"], _index([])))
+
+    def test_completed_task_never_looked_up(self):
+        o = self._order()
+        task = _task("Retailer: Topps\nOrderRef: A-1001\nTrackingRef: 1Z999", status="completed")
+        self.assertFalse(needs_lookup(o, o.shipments["1Z999"], _index([task])))
+
+
+class TestCarrierLookup(unittest.TestCase):
+    def test_carrier_detection(self):
+        self.assertEqual(carrier_lookup.carrier_of("383881342851", "FedEx"), "fedex")
+        self.assertEqual(carrier_lookup.carrier_of("383881342851", None), "fedex")       # 12 digits, unknown carrier
+        self.assertEqual(carrier_lookup.carrier_of("ABC123456789", None,
+                                                   "https://www.fedex.com/fedextrack/?trknbr=ABC123456789"), "fedex")
+        self.assertIsNone(carrier_lookup.carrier_of("1Z999AA10123456784", "UPS"))
+        self.assertIsNone(carrier_lookup.carrier_of("9400111899223344556677", "USPS"))
+        self.assertIsNone(carrier_lookup.carrier_of("383881342851", "USPS"))              # named carrier wins
+
+    def test_only_fedex_sent_to_fedex(self):
+        with patch.object(fedex_track, "configured", return_value=True), \
+             patch.object(fedex_track, "lookup", return_value={"383881342851": {"eta": date(2026, 9, 30),
+                                                                               "delivered_on": None}}) as fx:
+            results, warnings = carrier_lookup.lookup([("383881342851", "FedEx", None),
+                                                       ("1Z999AA10123456784", "UPS", None)])
+        fx.assert_called_once_with(["383881342851"])
+        self.assertEqual(results["383881342851"]["eta"], date(2026, 9, 30))
+        self.assertEqual(warnings, [])
+
+    def test_fedex_failure_is_a_warning_not_a_crash(self):
+        with patch.object(fedex_track, "configured", return_value=True), \
+             patch.object(fedex_track, "lookup", side_effect=fedex_track.FedExError("HTTP 500")):
+            results, warnings = carrier_lookup.lookup([("383881342851", "FedEx", None)])
+        self.assertEqual(results, {})
+        self.assertIn("HTTP 500", warnings[0])
+
+    def test_missing_keys_skip_lookup(self):
+        with patch.object(fedex_track, "configured", return_value=False), \
+             patch.object(fedex_track, "lookup") as fx:
+            results, warnings = carrier_lookup.lookup([("383881342851", "FedEx", None)])
+        fx.assert_not_called()
+        self.assertEqual(results, {})
+        self.assertEqual(len(warnings), 1)
+
+    def test_no_supported_shipments_no_call(self):
+        with patch.object(fedex_track, "lookup") as fx:
+            self.assertEqual(carrier_lookup.lookup([("1Z999AA10123456784", "UPS", None)]), ({}, []))
+        fx.assert_not_called()
+
+
+class TestFedExParse(unittest.TestCase):
+    def test_estimated_delivery(self):
+        # shape of the live response for 383881342851 on 2026-09-29
+        r = {"latestStatusDetail": {"code": "IT"},
+             "dateAndTimes": [{"type": "ACTUAL_PICKUP", "dateTime": "2026-09-28T20:44:00-05:00"},
+                              {"type": "ESTIMATED_DELIVERY", "dateTime": "2026-09-30T17:00:00-07:00"}],
+             "estimatedDeliveryTimeWindow": {"window": {}},
+             "standardTransitTimeWindow": {"window": {"ends": "2026-09-30T17:00:00-07:00"}}}
+        self.assertEqual(fedex_track.parse_result(r), {"eta": date(2026, 9, 30), "delivered_on": None})
+
+    def test_window_fallbacks(self):
+        r = {"estimatedDeliveryTimeWindow": {"window": {"begins": "2026-10-01T08:00:00", "ends": "2026-10-02T20:00:00"}}}
+        self.assertEqual(fedex_track.parse_result(r)["eta"], date(2026, 10, 2))
+        r = {"standardTransitTimeWindow": {"window": {"ends": "2026-10-03T00:00:00"}}}
+        self.assertEqual(fedex_track.parse_result(r)["eta"], date(2026, 10, 3))
+        self.assertEqual(fedex_track.parse_result({}), {"eta": None, "delivered_on": None})
+
+    def test_delivered(self):
+        r = {"latestStatusDetail": {"code": "DL"},
+             "dateAndTimes": [{"type": "ACTUAL_DELIVERY", "dateTime": "2026-09-30T14:02:00-07:00"},
+                              {"type": "ESTIMATED_DELIVERY", "dateTime": "2026-09-30T17:00:00-07:00"}]}
+        self.assertEqual(fedex_track.parse_result(r), {"eta": None, "delivered_on": date(2026, 9, 30)})
+
+    def test_lookup_skips_unknown_numbers(self):
+        payload = [{"trackingNumber": "111111111111", "trackResults": [{"error": {"code": "TRACKING.TRACKINGNUMBER.NOTFOUND"}}]},
+                   {"trackingNumber": "383881342851", "trackResults": [{"latestStatusDetail": {"code": "IT"},
+                    "dateAndTimes": [{"type": "ESTIMATED_DELIVERY", "dateTime": "2026-09-30T17:00:00-07:00"}]}]}]
+        with patch.object(fedex_track, "_token", return_value="t"), \
+             patch.object(fedex_track, "_track_raw", return_value=payload):
+            out = fedex_track.lookup(["111111111111", "383881342851"])
+        self.assertEqual(out, {"383881342851": {"eta": date(2026, 9, 30), "delivered_on": None}})
+
+    def test_lookup_batches_by_30(self):
+        with patch.object(fedex_track, "_token", return_value="t"), \
+             patch.object(fedex_track, "_track_raw", return_value=[]) as raw:
+            fedex_track.lookup([f"{i:012d}" for i in range(65)])
+        self.assertEqual([len(c.args[1]) for c in raw.call_args_list], [30, 30, 5])
 
 
 class TestFormat(unittest.TestCase):
@@ -341,10 +424,6 @@ class TestReviewFixes(unittest.TestCase):
         (a,) = _plan(rows)
         self.assertEqual(a.due, date(2026, 10, 2))
         self.assertNotIn(ETA_UNAVAILABLE, a.notes)
-
-    def test_order_eta_means_no_web_lookup(self):
-        o = build_orders([_row("2026-09-24", eta_end="10-02", shipments=[_ship("1Z999")])])[K]
-        self.assertIsNone(lookup_priority(o, o.shipments["1Z999"], _index([]), date(2026, 9, 27)))
 
     def test_untracked_delivered_email_marks_single_package_delivered(self):
         rows = [_row("2026-09-22", shipments=[_ship("1Z999")]),
