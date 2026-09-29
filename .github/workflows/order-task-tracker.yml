@@ -45,6 +45,8 @@ jobs:
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          FEDEX_API_KEY: ${{ secrets.FEDEX_API_KEY }}
+          FEDEX_SECRET_KEY: ${{ secrets.FEDEX_SECRET_KEY }}
         run: |
           set -o pipefail
           python order-task-tracker/main.py ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }} 2>&1 | tee /tmp/output.txt

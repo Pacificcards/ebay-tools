@@ -210,22 +210,13 @@ def plan_order(order: Order, index: TaskIndex, lookups: dict) -> list[Action]:
     return actions
 
 
-def lookup_priority(order: Order, sh: Shipment, index: TaskIndex, today: date) -> str | None:
-    """"fresh" (no date anywhere yet), "stale" (open task quiet for a multiple of
-    STALE_TASK_RECHECK_DAYS days, so each quiet task is re-checked once per period
-    without extra state), or None."""
-    if order.cancelled or sh.status in ("delivered", "out_for_delivery"):
-        return None
+def needs_lookup(order: Order, sh: Shipment, index: TaskIndex) -> bool:
+    """Open shipments are re-checked with the carrier every run, even when an email gave a
+    date: carrier ETAs move after pickup, and the carrier reports delivery first."""
+    if order.cancelled or sh.status == "delivered":
+        return False
     task = index.by_tracking.get(sh.tracking)
-    if task and is_closed(task):
-        return None
-    if not sh.eta and not order.eta and (not task or not task.get("due")):
-        return "fresh"
-    if task:
-        quiet_days = (today - date.fromisoformat(task["updated"][:10])).days
-        if quiet_days >= config.STALE_TASK_RECHECK_DAYS and quiet_days % config.STALE_TASK_RECHECK_DAYS == 0:
-            return "stale"
-    return None
+    return not (task and is_closed(task))
 
 
 def stale_open_tasks(tasks: list[dict], now: datetime) -> list[dict]:

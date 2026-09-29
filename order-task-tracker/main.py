@@ -29,7 +29,7 @@ import google_auth
 from claude_cli import ClaudeError
 from extract import extract_batch, normalize_order_number
 from orders import PACIFIC, build_orders
-from tasks_sync import TaskIndex, TasksClient, lookup_priority, plan_order, stale_open_tasks
+from tasks_sync import TaskIndex, TasksClient, needs_lookup, plan_order, stale_open_tasks
 
 
 def _unique(ids):
@@ -62,7 +62,6 @@ def run(dry_run: bool) -> int:
 
 def _run(conn, dry_run: bool) -> int:
     now = datetime.now(PACIFIC)
-    today = now.date()
     session = google_auth.get_session()
     tasks_api = TasksClient(session)
 
@@ -73,7 +72,7 @@ def _run(conn, dry_run: bool) -> int:
     tasks = tasks_api.list_tasks(list_id) if list_id else []
     index = TaskIndex.build(tasks, cache.load_links(conn))
 
-    # Step 2: stale open tasks get an order-number search (and a lookup, below)
+    # Step 2: stale open tasks get an order-number search
     stale = [index.links_by_task[t["id"]] for t in stale_open_tasks(tasks, now)
              if t["id"] in index.links_by_task]
     stale_orders = {link["order_number"] for link in stale}
@@ -149,20 +148,13 @@ def _run(conn, dry_run: bool) -> int:
 
     orders = build_orders(rows)
 
-    # Step 5: web lookups (capped): shipments with no date first, then stale re-checks
-    wanted = {"fresh": [], "stale": []}
-    for o in orders.values():
-        for sh in o.shipments.values():
-            priority = lookup_priority(o, sh, index, today)
-            if priority:
-                wanted[priority].append((sh.tracking, sh.carrier))
-    wanted = _unique(wanted["fresh"] + wanted["stale"])
-    lookups = {}
-    if wanted:
-        try:
-            lookups = carrier_lookup.lookup(wanted, today)
-        except ClaudeError as exc:
-            print(f"WARNING: carrier lookup failed, continuing without it: {exc}")
+    # Step 5: carrier lookups for every open shipment (unsupported carriers are skipped)
+    wanted = _unique([(sh.tracking, sh.carrier, sh.tracking_url) for o in orders.values()
+                      for sh in o.shipments.values() if needs_lookup(o, sh, index)])
+    lookups, lookup_warnings = carrier_lookup.lookup(wanted)
+    for warning in lookup_warnings:
+        print(f"WARNING: {warning}")
+    supported = [t for t, c, url in wanted if carrier_lookup.carrier_of(t, c, url)]
 
     # Steps 6-8: plan + write
     actions = [a for o in orders.values() for a in plan_order(o, index, lookups)]
@@ -178,7 +170,8 @@ def _run(conn, dry_run: bool) -> int:
     print(f"Order Task Tracker ({mode}) - {now:%Y-%m-%d %H:%M} PT\n")
     print(f"Emails found: {len(ids)}  |  newly read by Claude: {extracted}  |  "
           f"skipped: {dict(skipped) or 0}")
-    print(f"Web lookups: {min(len(wanted), config.MAX_WEB_LOOKUPS_PER_RUN)} of {len(wanted)} wanted\n")
+    print(f"Carrier lookups: {len(lookups)} answered of {len(supported)} FedEx shipments checked "
+          f"({len(wanted) - len(supported)} open shipments on carriers without a lookup)\n")
     if unreadable:
         print("Emails Claude could not read (will retry next run):")
         for subject in unreadable:
