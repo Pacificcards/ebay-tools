@@ -1,6 +1,6 @@
 name: Order Task Tracker
 
-# Triggered externally by cron-job.org: daily at 8:00am PT → workflow_dispatch
+# Triggered externally by cron-job.org: daily at 8:00am and 12:00pm PT → workflow_dispatch
 # Gmail order/shipping emails → Google Tasks ("Orders" list). Claude runs as headless
 # Claude Code on the user's subscription (CLAUDE_CODE_OAUTH_TOKEN) — do NOT add
 # ANTHROPIC_API_KEY here: it would take precedence and bill API credits.
@@ -12,6 +12,10 @@ on:
         description: "Dry run (plan only, no task writes)"
         type: boolean
         default: false
+      sheet_preview_since:
+        description: "TESTING ONLY (dry run): preview Topps sheet rows for confirmations since YYYY-MM-DD"
+        type: string
+        default: ""
 
 concurrency:
   group: order-task-tracker
@@ -47,9 +51,14 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           FEDEX_API_KEY: ${{ secrets.FEDEX_API_KEY }}
           FEDEX_SECRET_KEY: ${{ secrets.FEDEX_SECRET_KEY }}
+          GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+          SHEET_PREVIEW_SINCE: ${{ github.event.inputs.sheet_preview_since }}
         run: |
           set -o pipefail
-          python order-task-tracker/main.py ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }} 2>&1 | tee /tmp/output.txt
+          args=()
+          [ "${{ github.event.inputs.dry_run }}" = "true" ] && args+=(--dry-run)
+          [ -n "$SHEET_PREVIEW_SINCE" ] && args+=(--sheet-preview-since "$SHEET_PREVIEW_SINCE")
+          python order-task-tracker/main.py "${args[@]}" 2>&1 | tee /tmp/output.txt
 
       - name: Read output
         id: output

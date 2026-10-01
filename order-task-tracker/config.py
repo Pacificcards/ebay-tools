@@ -65,6 +65,15 @@ CARRIER_TRACKING_URL_PATTERNS = {
     # Amazon Logistics has no public tracking page; use the email's own "Track Package" link
 }
 
+# Topps order confirmations -> new rows on the "Sealed Set Release Calendar" sheet (topps_sheet.py).
+# An email counts only if BOTH the sender and the exact subject format match.
+TOPPS_SHEET_ID = "16xtdz67eLtY7mc1k81N66G1hh1ActUBjhjSUmP0g-nk"   # shared with the ebay-tools-sheets service account
+TOPPS_SHEET_TAB = "Product Calendar"
+TOPPS_SHEET_START = "2026-10-01T13:00:00-07:00"    # no backfill: confirmations received before this are ignored
+TOPPS_CONFIRMATION_ADDRESSES = {"store+66297495709@t.shopifyemail.com"}   # Topps' Shopify store
+TOPPS_CONFIRMATION_DOMAINS = {"topps.com", "runfair.com"}                   # Topps' other senders (ALLOWED_SENDERS)
+TOPPS_CONFIRMATION_SUBJECT_RE = r"Order #?([A-Za-z0-9][A-Za-z0-9-]*) confirmed"   # whole subject must match
+
 SUMMARY_EMAIL_SUBJECT = "Order Task Tracker"     # excluded from searches so the tool never reads its own report
 
 # Claude (headless Claude Code on the Pro subscription)

@@ -26,6 +26,7 @@ import carrier_lookup
 import config
 import gmail_search
 import google_auth
+import topps_sheet
 from claude_cli import ClaudeError
 from extract import extract_batch, normalize_order_number
 from orders import PACIFIC, build_orders
@@ -52,15 +53,15 @@ def _load_related(conn, message_ids, order_numbers, trackings):
     return rows
 
 
-def run(dry_run: bool) -> int:
+def run(dry_run: bool, sheet_since: datetime | None = None) -> int:
     conn = cache.connect()
     try:
-        return _run(conn, dry_run)
+        return _run(conn, dry_run, sheet_since)
     finally:
         conn.close()
 
 
-def _run(conn, dry_run: bool) -> int:
+def _run(conn, dry_run: bool, sheet_since: datetime | None = None) -> int:
     now = datetime.now(PACIFIC)
     session = google_auth.get_session()
     tasks_api = TasksClient(session)
@@ -164,6 +165,14 @@ def _run(conn, dry_run: bool) -> int:
             if a.kind == "create" or a.relink:
                 cache.save_link(conn, task_id, a.link)
 
+    # Step 8b: Topps order confirmations -> Sealed Set Release Calendar rows. A failure here
+    # is reported but never stops the task sync.
+    try:
+        sheet_lines = topps_sheet.run(conn, session, dry_run, sheet_since)
+    except Exception as exc:
+        conn.rollback()
+        sheet_lines = [f"  ! Topps sheet step failed, nothing written: {exc}"]
+
     # Step 9: summary
     counts = Counter(a.kind for a in actions)
     mode = "DRY RUN - nothing written" if dry_run else "live"
@@ -186,6 +195,10 @@ def _run(conn, dry_run: bool) -> int:
                 if a.kind == kind:
                     flag = "  [ETA unavailable]" if a.eta_unavailable else ""
                     print(f"  - {a.title}{flag}")
+    print(f"\nTopps confirmations -> Release Calendar: "
+          f"{'nothing new' if not sheet_lines else ''}")
+    for line in sheet_lines:
+        print(line)
     if dry_run:
         print("\n── Planned task contents ──")
         for a in actions:
@@ -198,11 +211,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--since", help="TESTING ONLY: override TRACKING_START, e.g. 2026-09-25")
+    parser.add_argument("--sheet-preview-since",
+                        help="TESTING ONLY (dry run): preview Topps sheet rows for confirmations since YYYY-MM-DD")
     args = parser.parse_args()
+    sheet_since = None
+    if args.sheet_preview_since:
+        if not args.dry_run:
+            parser.error("--sheet-preview-since only works with --dry-run")
+        sheet_since = datetime.fromisoformat(f"{args.sheet_preview_since}T00:00:00-07:00")
     if args.since:
         config.TRACKING_START = f"{args.since}T00:00:00-07:00"
         print(f"TEST MODE: tracking emails since {args.since}\n")
-    sys.exit(run(args.dry_run))
+    sys.exit(run(args.dry_run, sheet_since))
 
 
 if __name__ == "__main__":
