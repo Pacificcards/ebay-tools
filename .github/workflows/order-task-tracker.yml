@@ -1,6 +1,6 @@
 name: Order Task Tracker
 
-# Triggered externally by cron-job.org: daily at 8:00am PT → workflow_dispatch
+# Triggered externally by cron-job.org: daily at 8:00am and 12:00pm PT → workflow_dispatch
 # Gmail order/shipping emails → Google Tasks ("Orders" list). Claude runs as headless
 # Claude Code on the user's subscription (CLAUDE_CODE_OAUTH_TOKEN) — do NOT add
 # ANTHROPIC_API_KEY here: it would take precedence and bill API credits.
