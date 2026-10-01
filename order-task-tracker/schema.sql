@@ -29,3 +29,17 @@ CREATE TABLE IF NOT EXISTS order_tracker_tasks (
 );
 
 CREATE INDEX IF NOT EXISTS order_tracker_tasks_order_idx ON order_tracker_tasks (merchant, order_number);
+
+-- Topps order confirmations already turned into Sealed Set Release Calendar rows
+-- (topps_sheet.py; also created by the code itself if missing). A claim is written
+-- BEFORE the sheet, so an email or order number here is never written twice.
+-- status: pending (write started; if it stays pending the write failed - check the
+-- sheet by hand) | written | needs_review (numbers didn't check out, nothing written).
+CREATE TABLE IF NOT EXISTS order_tracker_sheet_orders (
+    message_id    TEXT PRIMARY KEY,
+    order_number  TEXT NOT NULL UNIQUE,
+    status        TEXT NOT NULL,
+    detail        JSONB,
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ DEFAULT NOW()
+);
