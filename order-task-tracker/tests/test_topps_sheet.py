@@ -73,32 +73,41 @@ class TestPlanRows(unittest.TestCase):
             self.assertTrue(problem, ex)
 
 
-# The live sheet's shape (2026-10-01): total in O1, header row 2, active rows, two name-only
-# rows, blanks, then the Sold table with its own header.
+# The live sheet's shape (2026-10-01), formula view: total in O1, header row 2, active rows,
+# two name-only rows, blanks, then the Sold table whose header cells are formulas.
 SHEET = (
-    [["", "", "", "", "", "", "", "", "", "", "", "", "", "", "=SUM(O3:O30)"],
+    [["", "", "", "", "", "", "", "", "", "", "", "", "", "", "=SUM(O3:O32)"],
      ["", "Category", "Year", "Set", "Format", "Preorder MSRP", "Preorder Date", "Release Date", "Age",
       "30 Days After", "Status", "Incoming", "On Hand", "Sold", "Inventory Value"]]
     + [["", "Baseball", "2026", f"Set {i}", "Hobby", "100", "", "", f"=TODAY()-H{i}", f"=H{i}+30",
         "", "1", "", "", f"=(L{i}+M{i})*F{i}"] for i in range(3, 27)]
     + [["", "", "", "Topps X Jennie"], ["", "", "", "Topps Samurai Packs"], [], [], [], []]
-    + [["", "Category", "Year", "Set", "Format"], ["", "Football", "2026", "Flagship Football"]]
+    + [["", "=B2", "=C2", "=D2", "=E2"], ["", "Football", "2026", "Flagship Football", "Mega", "49.99", "", "",
+                                             "=TODAY()-H34", "=H34+30"]]
 )
+# displayed-value view of the same sheet
+SHOWN = [[("Set" if c == "=D2" else c) if not str(c).startswith("=") or c == "=D2" else "1" for c in row]
+         for row in SHEET]
 
 
 class TestLayout(unittest.TestCase):
     def test_new_rows_go_after_last_active_row(self):
-        layout = find_layout(SHEET, 7)
+        layout = find_layout(SHOWN, SHEET, 7)
         self.assertEqual(layout.insert_at, 28)            # 0-based -> sheet row 29, after "Samurai Packs"
         self.assertEqual(layout.formula_rows, {"I": 25, "J": 25, "O": 25})   # last row that has them
-        self.assertEqual(layout.total_formula, "=SUM(O3:O30)")
+        self.assertEqual(layout.total_formula, "=SUM(O3:O32)")
+
+    def test_sold_table_found_when_its_header_is_a_formula(self):
+        # the bug the first live preview hit: reading only the formula view missed the 2nd header
+        self.assertEqual(find_layout(SHOWN, SHEET, 7).insert_at, 28)
+        self.assertNotEqual(find_layout(SHEET, SHEET, 7).insert_at, 28)
 
     def test_no_header_is_an_error(self):
         with self.assertRaises(RuntimeError):
-            find_layout([["a"], ["b"]], 0)
+            find_layout([["a"], ["b"]], [["a"], ["b"]], 0)
 
     def test_requests(self):
-        layout = find_layout(SHEET, 7)
+        layout = find_layout(SHOWN, SHEET, 7)
         reqs = build_requests(layout, [Row("A", Decimal("94.99"), 4), Row("B", Decimal("64.99"), 2)])
         ins = reqs[0]["insertDimension"]["range"]
         self.assertEqual((ins["startIndex"], ins["endIndex"]), (28, 30))
@@ -210,7 +219,7 @@ class TestRun(unittest.TestCase):
 
     def test_dry_run_writes_and_claims_nothing(self):
         self._email("m1")
-        with patch.object(topps_sheet, "read_layout", return_value=find_layout(SHEET, 7)):
+        with patch.object(topps_sheet, "read_layout", return_value=find_layout(SHOWN, SHEET, 7)):
             lines = topps_sheet.run(None, None, dry_run=True)
         self.assertIn("would add at row 29", lines[0])
         self.write.assert_not_called()

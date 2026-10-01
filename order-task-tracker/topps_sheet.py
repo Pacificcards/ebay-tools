@@ -155,26 +155,28 @@ class Layout:
     total_formula: str                # O1, shown in dry runs
 
 
-def find_layout(values: list[list], sheet_gid: int) -> Layout:
-    """Active table = rows between the first and second 'Set' header in column D.
-    New rows go right after its last non-empty row."""
-    headers = [i for i, r in enumerate(values) if len(r) > 3 and str(r[3]).strip() == "Set"]
+def find_layout(shown: list[list], formulas: list[list], sheet_gid: int) -> Layout:
+    """shown = displayed values (to find the tables), formulas = formula view (to copy from).
+    Active table = rows between the first and second 'Set' header in column D;
+    new rows go right after its last non-empty row."""
+    def cell(grid, r, c):
+        return str(grid[r][c]).strip() if r < len(grid) and c < len(grid[r]) else ""
+
+    headers = [i for i in range(len(shown)) if cell(shown, i, _COL["D"]) == "Set"]
     if not headers:
         raise RuntimeError("could not find the 'Set' header row on the Product Calendar tab")
-    end = headers[1] if len(headers) > 1 else len(values)
+    end = headers[1] if len(headers) > 1 else len(shown)
     last = headers[0]
     for i in range(headers[0] + 1, end):
-        if any(str(c).strip() for c in values[i][1:14]):
+        if any(cell(shown, i, c) for c in range(1, 14)):
             last = i
     formula_rows = {}
     for col in _FORMULA_COLS:
         for i in range(last, headers[0], -1):
-            row = values[i]
-            if len(row) > _COL[col] and str(row[_COL[col]]).startswith("="):
+            if cell(formulas, i, _COL[col]).startswith("="):
                 formula_rows[col] = i
                 break
-    total = str(values[0][_COL["O"]]) if values and len(values[0]) > _COL["O"] else ""
-    return Layout(sheet_gid, last + 1, formula_rows, total)
+    return Layout(sheet_gid, last + 1, formula_rows, cell(formulas, 0, _COL["O"]))
 
 
 def read_layout(session: AuthorizedSession) -> Layout:
@@ -185,10 +187,13 @@ def read_layout(session: AuthorizedSession) -> Layout:
                 if s["properties"]["title"] == tab), None)
     if gid is None:
         raise RuntimeError(f"tab '{tab}' not found")
-    resp = session.get(f"{SHEETS_API}/{sid}/values/'{tab}'!A1:O",
-                       params={"valueRenderOption": "FORMULA"})
-    resp.raise_for_status()
-    return find_layout(resp.json().get("values", []), gid)
+    grids = []
+    for render in ("FORMATTED_VALUE", "FORMULA"):
+        resp = session.get(f"{SHEETS_API}/{sid}/values/'{tab}'!A1:O",
+                           params={"valueRenderOption": render})
+        resp.raise_for_status()
+        grids.append(resp.json().get("values", []))
+    return find_layout(grids[0], grids[1], gid)
 
 
 def build_requests(layout: Layout, rows: list[Row]) -> list[dict]:
