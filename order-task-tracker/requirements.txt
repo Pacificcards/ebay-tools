@@ -1,5 +1,0 @@
-# Order Task Tracker only (the workflow installs this, not the monorepo requirements.txt)
-psycopg2-binary==2.9.12
-requests==2.34.2
-python-dotenv==1.2.2
-google-auth==2.53.0

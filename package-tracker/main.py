@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Order Task Tracker: Gmail order/shipping emails -> Google Tasks ("Orders" list).
+Package Tracker: Gmail order/shipping emails -> one Google Task per package (list "Orders (Claude)"),
+so every package is accounted for until it is safely in hand.
 
 Usage:
-    .venv/bin/python order-task-tracker/main.py            # live run
-    .venv/bin/python order-task-tracker/main.py --dry-run  # print planned tasks, write nothing to Tasks
+    .venv/bin/python package-tracker/main.py            # live run
+    .venv/bin/python package-tracker/main.py --dry-run  # print planned tasks, write nothing to Tasks
 """
 
 import argparse
@@ -176,7 +177,7 @@ def _run(conn, dry_run: bool, sheet_since: datetime | None = None) -> int:
     # Step 9: summary
     counts = Counter(a.kind for a in actions)
     mode = "DRY RUN - nothing written" if dry_run else "live"
-    print(f"Order Task Tracker ({mode}) - {now:%Y-%m-%d %H:%M} PT\n")
+    print(f"Package Tracker ({mode}) - {now:%Y-%m-%d %H:%M} PT\n")
     print(f"Emails found: {len(ids)}  |  newly read by Claude: {extracted}  |  "
           f"skipped: {dict(skipped) or 0}")
     print(f"Carrier lookups: {len(lookups)} answered of {len(supported)} FedEx shipments checked "

@@ -1,7 +1,7 @@
-name: Order Task Tracker
+name: Package Tracker
 
 # Triggered externally by cron-job.org: daily at 8:00am and 12:00pm PT → workflow_dispatch
-# Gmail order/shipping emails → Google Tasks ("Orders" list). Claude runs as headless
+# Gmail order/shipping emails → one Google Task per package ("Orders (Claude)" list). Claude runs as headless
 # Claude Code on the user's subscription (CLAUDE_CODE_OAUTH_TOKEN) — do NOT add
 # ANTHROPIC_API_KEY here: it would take precedence and bill API credits.
 
@@ -18,7 +18,7 @@ on:
         default: ""
 
 concurrency:
-  group: order-task-tracker
+  group: package-tracker
   cancel-in-progress: false
 
 jobs:
@@ -33,7 +33,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: pip install -r order-task-tracker/requirements.txt
+      - run: pip install -r package-tracker/requirements.txt
       # pinned: this job holds inbox read access - bump deliberately, never "latest"
       - run: npm install -g @anthropic-ai/claude-code@2.1.283
 
@@ -58,7 +58,7 @@ jobs:
           args=()
           [ "${{ github.event.inputs.dry_run }}" = "true" ] && args+=(--dry-run)
           [ -n "$SHEET_PREVIEW_SINCE" ] && args+=(--sheet-preview-since "$SHEET_PREVIEW_SINCE")
-          python order-task-tracker/main.py "${args[@]}" 2>&1 | tee /tmp/output.txt
+          python package-tracker/main.py "${args[@]}" 2>&1 | tee /tmp/output.txt
 
       - name: Read output
         id: output
@@ -79,9 +79,9 @@ jobs:
           username: ${{ secrets.GMAIL_ADDRESS }}
           password: ${{ secrets.GMAIL_APP_PASSWORD }}
           to: ${{ secrets.GMAIL_ADDRESS }}
-          from: Order Task Tracker
+          from: Package Tracker
           # subject must contain config.SUMMARY_EMAIL_SUBJECT so the tracker never reads its own report
-          subject: "[${{ steps.tracker.outcome == 'success' && 'SUCCESS' || 'FAILURE' }}] Order Task Tracker — ${{ steps.ts.outputs.value }}"
+          subject: "[${{ steps.tracker.outcome == 'success' && 'SUCCESS' || 'FAILURE' }}] Package Tracker — ${{ steps.ts.outputs.value }}"
           body: |
             ${{ steps.output.outputs.result }}
 
