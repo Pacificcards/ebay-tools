@@ -4,7 +4,7 @@ One-time local script: mint a Google OAuth refresh token for Gmail (read-only) +
 Not run by the scheduled job.
 
 Usage:
-    .venv/bin/python order-task-tracker/oauth_setup.py
+    .venv/bin/python package-tracker/oauth_setup.py
 
 You'll need the Client ID and Client Secret of a "Desktop app" OAuth client from
 Google Cloud Console. A browser opens; approve access.

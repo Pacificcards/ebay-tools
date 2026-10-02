@@ -7,7 +7,7 @@ Each product in the confirmation becomes its own new row at the bottom of the ac
 on the Product Calendar tab: Set = product name, Preorder MSRP = line price / qty,
 Incoming = qty. Existing rows are never edited or deleted.
 
-Never twice: every confirmation is claimed in Supabase (order_tracker_sheet_orders,
+Never twice: every confirmation is claimed in Supabase (package_tracker_sheet_orders,
 keyed by Gmail message id, order number unique) BEFORE the sheet is written. A claimed
 email or order number is never written again, and a write that fails midway is left
 claimed and reported instead of retried, so the worst case is a reported missing row,
@@ -60,7 +60,7 @@ line discount, before tax and shipping) exactly as shown, e.g. "$579.98". null i
 - subtotal: the order subtotal (before tax and shipping) exactly as shown. null if not shown.
 Never compute or guess a number that isn't printed in the email."""
 
-CLAIMS_DDL = """CREATE TABLE IF NOT EXISTS order_tracker_sheet_orders (
+CLAIMS_DDL = """CREATE TABLE IF NOT EXISTS package_tracker_sheet_orders (
     message_id    TEXT PRIMARY KEY,
     order_number  TEXT NOT NULL UNIQUE,
     status        TEXT NOT NULL,          -- pending | written | needs_review
@@ -240,7 +240,7 @@ def write_rows(session: AuthorizedSession, rows: list[Row]) -> int:
 def _claimed(conn, message_ids: list[str]) -> tuple[set, set]:
     with conn.cursor() as cur:
         cur.execute(CLAIMS_DDL)
-        cur.execute("SELECT message_id, order_number FROM order_tracker_sheet_orders")
+        cur.execute("SELECT message_id, order_number FROM package_tracker_sheet_orders")
         rows = cur.fetchall()
     conn.commit()
     return {r[0] for r in rows}, {r[1] for r in rows}
@@ -250,7 +250,7 @@ def _claim(conn, message_id: str, order_number: str, status: str, detail: dict) 
     """Insert the claim; False if this email or order number was already claimed."""
     with conn.cursor() as cur:
         cur.execute(
-            """INSERT INTO order_tracker_sheet_orders (message_id, order_number, status, detail)
+            """INSERT INTO package_tracker_sheet_orders (message_id, order_number, status, detail)
                VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING""",
             (message_id, order_number, status, json.dumps(detail)))
         inserted = cur.rowcount == 1
@@ -260,7 +260,7 @@ def _claim(conn, message_id: str, order_number: str, status: str, detail: dict) 
 
 def _set_status(conn, message_id: str, status: str, detail: dict) -> None:
     with conn.cursor() as cur:
-        cur.execute("""UPDATE order_tracker_sheet_orders SET status = %s, detail = %s,
+        cur.execute("""UPDATE package_tracker_sheet_orders SET status = %s, detail = %s,
                        updated_at = NOW() WHERE message_id = %s""",
                     (status, json.dumps(detail), message_id))
     conn.commit()

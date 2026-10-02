@@ -60,7 +60,8 @@ def search_ids(session, query: str) -> list[str]:
 
 def _exclude_self() -> str:
     start = int(datetime.fromisoformat(config.TRACKING_START).timestamp())
-    return f'after:{start} -from:me -subject:"{config.SUMMARY_EMAIL_SUBJECT}"'
+    subjects = [config.SUMMARY_EMAIL_SUBJECT, *config.OLD_SUMMARY_EMAIL_SUBJECTS]
+    return f'after:{start} -from:me ' + " ".join(f'-subject:"{s}"' for s in subjects)
 
 
 def _allowed_from() -> str:

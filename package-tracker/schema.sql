@@ -1,11 +1,11 @@
 -- ============================================================
--- ORDER TASK TRACKER
+-- PACKAGE TRACKER
 -- One row per Gmail message examined, so Claude reads each email once.
 -- extraction holds email metadata + Claude's raw output; normalization (merchant,
 -- exclusions, dates) is applied when read, so config edits apply to old rows too.
 -- Rows with extract_version below config.EXTRACT_VERSION are re-read by Claude.
 -- ============================================================
-CREATE TABLE IF NOT EXISTS order_tracker_emails (
+CREATE TABLE IF NOT EXISTS package_tracker_emails (
     message_id    TEXT PRIMARY KEY,
     received_at   TIMESTAMPTZ NOT NULL,
     order_number  TEXT,
@@ -15,12 +15,12 @@ CREATE TABLE IF NOT EXISTS order_tracker_emails (
     processed_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS order_tracker_emails_order_idx ON order_tracker_emails (order_number);
-CREATE INDEX IF NOT EXISTS order_tracker_emails_trackings_idx ON order_tracker_emails USING GIN (trackings);
+CREATE INDEX IF NOT EXISTS package_tracker_emails_order_idx ON package_tracker_emails (order_number);
+CREATE INDEX IF NOT EXISTS package_tracker_emails_trackings_idx ON package_tracker_emails USING GIN (trackings);
 
 -- Which Google Task belongs to which order / package. Kept here instead of in the
 -- task description so descriptions stay concise and can be edited freely.
-CREATE TABLE IF NOT EXISTS order_tracker_tasks (
+CREATE TABLE IF NOT EXISTS package_tracker_tasks (
     task_id       TEXT PRIMARY KEY,
     merchant      TEXT NOT NULL,
     order_number  TEXT NOT NULL,
@@ -28,14 +28,14 @@ CREATE TABLE IF NOT EXISTS order_tracker_tasks (
     created_at    TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS order_tracker_tasks_order_idx ON order_tracker_tasks (merchant, order_number);
+CREATE INDEX IF NOT EXISTS package_tracker_tasks_order_idx ON package_tracker_tasks (merchant, order_number);
 
 -- Topps order confirmations already turned into Sealed Set Release Calendar rows
 -- (topps_sheet.py; also created by the code itself if missing). A claim is written
 -- BEFORE the sheet, so an email or order number here is never written twice.
 -- status: pending (write started; if it stays pending the write failed - check the
 -- sheet by hand) | written | needs_review (numbers didn't check out, nothing written).
-CREATE TABLE IF NOT EXISTS order_tracker_sheet_orders (
+CREATE TABLE IF NOT EXISTS package_tracker_sheet_orders (
     message_id    TEXT PRIMARY KEY,
     order_number  TEXT NOT NULL UNIQUE,
     status        TEXT NOT NULL,

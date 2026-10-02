@@ -5,7 +5,7 @@ Credentials: FEDEX_API_KEY / FEDEX_SECRET_KEY (production keys from developer.fe
 project with the Track API). OAuth client-credentials token, then batched track calls.
 
 Probe one number (prints status and dates only, no addresses):
-    python order-task-tracker/fedex_track.py --probe 383881342851
+    python package-tracker/fedex_track.py --probe 383881342851
 """
 
 import argparse

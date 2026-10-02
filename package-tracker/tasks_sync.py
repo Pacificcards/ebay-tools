@@ -8,7 +8,7 @@ Task model (one task per order, split per extra package):
   - Each extra package -> its own task, "(k of n)".
 
 Tasks carry no machine-readable labels: which task belongs to which order/package is
-kept in Supabase (order_tracker_tasks), so the description can be edited freely.
+kept in Supabase (package_tracker_tasks), so the description can be edited freely.
 """
 
 from dataclasses import dataclass, field
@@ -37,7 +37,7 @@ class TaskIndex:
 
     @classmethod
     def build(cls, tasks: list[dict], links: list[dict]) -> "TaskIndex":
-        """links: rows of order_tracker_tasks {task_id, merchant, order_number, tracking}.
+        """links: rows of package_tracker_tasks {task_id, merchant, order_number, tracking}.
 
         A linked task no longer returned by the API (deleted and purged) counts as deleted,
         so it is never recreated.

@@ -1,4 +1,4 @@
-"""Constants for the order task tracker."""
+"""Constants for the package tracker."""
 
 TIMEZONE = "America/Los_Angeles"          # all date logic in Pacific, never UTC
 EMAIL_LOOKBACK_DAYS = 14                  # newer_than:14d
@@ -74,7 +74,8 @@ TOPPS_CONFIRMATION_ADDRESSES = {"store+66297495709@t.shopifyemail.com"}   # Topp
 TOPPS_CONFIRMATION_DOMAINS = {"topps.com", "runfair.com"}                   # Topps' other senders (ALLOWED_SENDERS)
 TOPPS_CONFIRMATION_SUBJECT_RE = r"Order #?([A-Za-z0-9][A-Za-z0-9-]*) confirmed"   # whole subject must match
 
-SUMMARY_EMAIL_SUBJECT = "Order Task Tracker"     # excluded from searches so the tool never reads its own report
+SUMMARY_EMAIL_SUBJECT = "Package Tracker"     # excluded from searches so the tool never reads its own report
+OLD_SUMMARY_EMAIL_SUBJECTS = ["Order Task Tracker"]   # reports sent before the 2026-10-02 rename
 
 # Claude (headless Claude Code on the Pro subscription)
 EXTRACT_VERSION = 2                      # bump when the extraction schema/prompt changes -> cached rows re-read

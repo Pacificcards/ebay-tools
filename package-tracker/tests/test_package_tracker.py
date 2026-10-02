@@ -1,5 +1,5 @@
 """
-Tests for order-task-tracker pure logic: date/year resolution, merchant normalization,
+Tests for package-tracker pure logic: date/year resolution, merchant normalization,
 order aggregation, task formatting, and the create / update / skip plan.
 
 No network, DB, Gmail, Tasks or Claude calls.

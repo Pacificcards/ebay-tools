@@ -131,7 +131,7 @@ GOOD = _ex([("2026 Bowman Football - Hobby Box", 2, "$579.98")], "$579.98")
 
 
 class FakeDB:
-    """order_tracker_sheet_orders in memory, honoring both unique keys."""
+    """package_tracker_sheet_orders in memory, honoring both unique keys."""
 
     def __init__(self, claims=()):
         self.claims = {c["message_id"]: dict(c) for c in claims}
