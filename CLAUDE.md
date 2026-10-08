@@ -5,7 +5,7 @@ Monorepo for Pacific Cards Co. eBay operations. Three independent subprojects sh
 ## Subprojects
 
 ### 1. Traffic Analytics (`traffic_analytics/`)
-Daily pipeline fetching eBay data into Supabase. Runs via `analytics-ingest.yml` at 12:00 UTC (5am PT).
+Daily pipeline fetching eBay data into Supabase. Runs via `analytics-ingest.yml`, triggered twice daily by cron-job.org at 11:00 UTC (3am PST) and 20:00 UTC (12pm PST) — updated from once-daily 2026-10-08.
 
 Steps in order:
 1. `sync_listings` — active listings → `listing_metadata` (also backfills `quantity`/`quantity_sold` and, incrementally, `category_id`/`category_name`)
@@ -437,6 +437,12 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - Whether to expose raw price range alongside the two recommendations
 
 ## Session Log
+
+### 2026-10-08 — Analytics daily ingest: cron-job.org schedule moved to twice daily
+- Traffic Analytics: user updated the cron-job.org job to fire `analytics-ingest.yml` twice daily — 3am and 12pm PST (11:00 UTC and 20:00 UTC) — instead of once at 3am. Change made directly in cron-job.org, not in this repo.
+- Updated doc/comment references to match: `.github/workflows/analytics-ingest.yml` trigger comment, and the Traffic Analytics subproject overview line in this file (which was also stale — previously said 12:00 UTC/5am PT, a leftover from before the 2026-06-22 move to cron-job.org at 10:00 UTC/3am PT; now corrected and updated together).
+- Downstream effect: `pl-ingest.yml` is triggered via `workflow_run` on Analytics daily ingest's completion (not its own schedule — see P&L section), so P&L ingest now also effectively runs twice daily. `ebay-purchases.yml` (Purchases tab feeder) is unaffected — it has its own separate cron-job.org schedule, still once daily at 10:00 UTC/3am PT, not chained to Analytics daily ingest.
+- Not independently verified live in this session (no cron-job.org API access here) — taking the user's description of the new schedule at face value.
 
 ### 2026-09-15 — P&L sheet improvements; multi-qty purchase bug fixed; Monthly tab added
 
