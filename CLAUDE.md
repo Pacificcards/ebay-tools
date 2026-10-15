@@ -230,18 +230,16 @@ Reads `docs/market/market_data.json` at page load (~1.1MB; Chart.js 4.4.3, no ba
 Pauses/resumes eBay Promoted Listings campaigns on a schedule. Triggered by cron-job.org → `workflow_dispatch` on `campaign-scheduler.yml`.
 
 - Campaigns defined in `scheduler/campaigns.json` (id + name — edit here to add/remove/rename)
-- Schedule: Pause Mon–Thu 1:30am PT (08:30 UTC), Resume Mon–Wed+Fri 1:30pm PT (20:30 UTC)
+- Schedule (updated 2026-10-14): Pause daily 5:00am PT, Resume daily 6:00pm PT. Two cron-job.org jobs ("eBay Campaign Pause" 7685869, "eBay Campaign Resume" 7685870), timezone America/Los_Angeles so DST is handled
 - Email notification sent on every run (success or failure) via Gmail secrets
 - `EBAY_CAMPAIGN_ID` secret is no longer used — campaigns.json is the source of truth
 
-#### Current campaigns (as of 2026-06-15)
+#### Current campaigns (as of 2026-10-14)
 | Name | ID |
 |------|----|
-| Pokemon Packs | 163073689018 |
-| Football Packs | 161285779018 |
-| 15 Pokemon Packs | 159727416018 |
-| JB Topps Now | 163743927018 |
-| Sealed Boxes | 163206658018 |
+| Pokemon Packs | 159727416018 |
+| High Value | 166098181018 |
+| Sealed Product | 163206658018 |
 
 ### 6. Listings Publisher (`listings-publisher/` + `pokemon-publisher/`)
 Publishes ungraded trading card listings to eBay from a Google Sheet + local photo folder. Run locally via a unified entry point.
