@@ -1,5 +1,18 @@
 # Next Steps
 
+## Order Task Tracker (live since 2026-09-27)
+
+1. **Check the first scheduled run's summary email (2026-09-28, 8am PT)** — first time Claude extraction runs on GitHub with the pinned version and new flags; if it fails, the email says FAILURE with the run link. (suggested)
+2. **Decide whether to move the start date back to Sep 20** — user asked for the 7-day view; orders confirmed Sep 20–24 (6 Topps orders, Best Buy, PSA) currently get no tasks. One-line change to `config.TRACKING_START`; first run after takes ~3–4 min. (suggested)
+3. **Watch the first real web ETA lookups** — only proven on a fake tracking number; if real ones keep returning null, set `MAX_WEB_LOOKUPS_PER_RUN = 0` so they stop spending Pro usage. (suggested)
+4. **Add retailers as orders show up from new stores** — user said the allow list will grow; find sender domains with a headers-only Gmail search, add a row to `ALLOWED_SENDERS`, filters re-screen automatically. (suggested)
+5. **Fix duplicate item names differing only by "®"** — cosmetic; dedupe shipment item names by `slug()` like order items. (suggested)
+6. **Low-priority review leftovers** — `--since` hardcodes `-07:00` (wrong after DST ends Nov 1); Google Tasks calls have no retry on transient 5xx; `resolve_date` only rolls years forward (a January "delivered Dec 31" lands a year late); pass 2 of `build_orders` doesn't re-check `is_purchase`/`is_physical_goods`; `cache.save` doesn't strip tracking numbers. (suggested)
+7. **Test trimming Claude Code's ~9K-token default system prompt** (`--system-prompt` replace) to cut Pro usage per call; measure `cacheCreationInputTokens` before/after. (suggested)
+8. **Renew the Claude Code auth token before ~2027-09** — run `claude setup-token`, update the GitHub secret; expiry shows up as FAILURE emails.
+
+---
+
 ## P&L — Code Review Fixes (2026-09-09 review, not yet applied)
 
 1. **`_backfill_record_ids` routes shipping/adjustment entries to wrong table** — `shipping` and `adjustment` type rows fall into the `else` branch and query `import_queue`, but those entries live in `order_fees`. Result: their `record_id` is never backfilled → "Marked for Deletion" permanently stamps `✗ No Record ID` and the entry can never be deleted. Fix: add branches for `SHIP-` and `ADJ-` prefixes that query `order_fees` instead.
@@ -17,6 +30,10 @@
 7. **Deletion loop calls `ws.update_cell()` per row** — each "Marked for Deletion" row triggers a separate Sheets API HTTP call instead of being batched into the `ws.batch_update()` at the end of `process_new_entries`. Fix: accumulate deletion stamps alongside the other status updates and send in one batch call.
 
 8. **`_backfill_record_ids` issues one DB round-trip per row** — queries `import_queue` (or `orders_raw`) individually for each row that needs backfilling. At 50+ rows this becomes 1–2s of avoidable latency. Fix: batch all lookups into one `IN (...)` query.
+
+---
+
+- **Update 2 stale P&L tests** — `tests/test_sync_to_sheets.py::TestPLTab` still expects the pre-2026-09-15 P&L by Group layout (no `margin` column); update expected headers/formula count. (suggested)
 
 ---
 
@@ -49,7 +66,7 @@
 
 ## Listener
 
-17. **Update cron-job.org frequency from every 15 min to hourly** — agreed 2026-06-21; reduces GHA spend ~75%. Job ID: 7684877. Needs cron-job.org dashboard update (or API call with key from `.claude/settings.local.json`).
+17. **Update cron-job.org frequency from every 15 min to hourly** — agreed 2026-06-21; reduces GHA spend ~75%. Job ID: 7684877. Needs cron-job.org dashboard update by the user (see CLAUDE.md Constraints).
 
 ---
 

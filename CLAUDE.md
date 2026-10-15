@@ -362,7 +362,7 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 - **eBay Finances API delay:** shipping label transactions can appear hours after purchase. If a label is missing, it may just not have been reported yet — trigger a manual `fetch_finances` re-run before assuming it was purchased externally.
 - eBay refresh token valid ~Nov 2027. Re-gen: `/Users/eastcoastlimited/ClaudeCode/ebay_campaign_scheduler/get_refresh_token.py`
 - Legacy scheduler repo at `/Users/eastcoastlimited/ClaudeCode/ebay_campaign_scheduler` — do not touch unless asked
-- cron-job.org API key is in `.claude/settings.local.json` (not in repo)
+- cron-job.org jobs can be listed/edited via its API using a key kept only in the local, gitignored `.env` (added 2026-10-14). New jobs are best created in the cron-job.org console (cloning an existing job keeps the GitHub auth header).
 - **Supabase schema changes must be pushed atomically with code:** the daily GHA jobs run whatever is on `main`, not local state. A local-only DB migration (e.g. a column rename) will crash the live job the next time it runs until the matching code is pushed. Always commit+push schema-dependent code changes in the same sitting as the migration, staging only the affected files by name (never `git add -A`, since this repo commonly has unrelated WIP sitting uncommitted).
 - **`listing_metrics_raw` / `listing_metrics_computed` CTR columns:** `ctr_ebay_search_page` (renamed from `ctr` 2026-07-29) is eBay's own `CLICK_THROUGH_RATE` metric — search-results-page views ÷ search-results-page impressions only. `ctr_calculated` is `views_total / impressions_all_sources` (as of 2026-07-31 — previously divided by the narrower `impressions_search_and_store`). They will not match; this is expected, not a bug.
 - **`listing_metrics_raw` impressions columns (renamed 2026-07-31 to stop two different columns both being called "total"):** `impressions_search_and_store` (was `impressions_total`) = eBay's `LISTING_IMPRESSION_TOTAL` = search-results-page + store impressions ONLY, despite the misleading eBay metric name. `impressions_all_sources` (new) = eBay's `TOTAL_IMPRESSION_TOTAL` = every placement (search, store, promoted, off-eBay, etc.) — this is the one that matches the Seller Hub traffic page, confirmed empirically 2026-07-29 to run 4-9x higher than `impressions_search_and_store`. User decision (2026-07-31): `impressions_all_sources` is the one that matters — it's now the denominator for `ctr_calculated`, `units_per_1k_impr`, and the traffic dashboard's KPIs/table. `impressions_search_and_store` is still fetched/stored but no longer feeds any derived metric.
@@ -413,6 +413,12 @@ Fully operational. Daily pipeline runs at 11:00 UTC (4am PDT) via `market-monito
 - **No real-browser pixel verification** — this environment has no browser, so the breakdown height-sync and the Qty/Unit-Price box-height fix were verified structurally (jsdom: right elements exist, mechanism runs without error) rather than visually. Worked from user-supplied screenshots each round; worth a final look in an actual browser to confirm no remaining sub-pixel drift.
 - No pending feature asks beyond the above as of 2026-08-12.
 
+### Order Task Tracker (live)
+- **First scheduled run 2026-09-28 8am PT** — first time Claude extraction runs on GitHub with the new flags (`--no-session-persistence`, pinned 2.1.283); earlier GitHub runs had 0 emails to read. Check the summary email.
+- **Web ETA lookups unproven** — only tested on a fake tracking number (returned null). If real lookups keep returning nothing, set `MAX_WEB_LOOKUPS_PER_RUN = 0` to save Pro usage.
+- **Orders Sep 20–24 not tracked** (6 Topps orders confirmed 9/21, Best Buy, PSA) because start date is 9/25 — user asked for the 7-day view but hasn't decided whether to move the start date.
+- Cosmetic: item names differing only by "®" can appear twice in a title.
+
 ### Price Check (planned, not yet built)
 New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy-skipping-teapot.md`
 
@@ -441,6 +447,14 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - Updated doc/comment references to match: `.github/workflows/analytics-ingest.yml` trigger comment, and the Traffic Analytics subproject overview line in this file (which was also stale — previously said 12:00 UTC/5am PT, a leftover from before the 2026-06-22 move to cron-job.org at 10:00 UTC/3am PT; now corrected and updated together).
 - Downstream effect: `pl-ingest.yml` is triggered via `workflow_run` on Analytics daily ingest's completion (not its own schedule — see P&L section), so P&L ingest now also effectively runs twice daily. `ebay-purchases.yml` (Purchases tab feeder) is unaffected — it has its own separate cron-job.org schedule, still once daily at 10:00 UTC/3am PT, not chained to Analytics daily ingest.
 - Not independently verified live in this session (no cron-job.org API access here) — taking the user's description of the new schedule at face value.
+
+### 2026-09-27 — Order Task Tracker built and shipped (subproject 8)
+- Reviewed user's spec (`~/Downloads/order-task-tracker-build-spec_1.md`, a port of a Gemini Skill) and adapted it: GitHub Actions instead of a web service, Claude via Pro subscription, user's own task model/format (see §8 Decisions).
+- Google Cloud OAuth app set up (Gmail readonly + Tasks, published to production; needed homepage/privacy pages → `docs/order-tracker/`). Google OAuth and Claude Code auth secrets added to GitHub Actions. Supabase tables `order_tracker_emails`, `order_tracker_tasks` created.
+- Iterated on filtering after real-inbox dry runs surfaced misses: Costco screened out, an eBay seller message became a task (deleted), Macy's stub text hid items, order number used as tracking. Ended on allow list + headers-first screening.
+- Live: commits 5721dae (initial), a3cf827 (Macy's), c780345 (review fixes: safe links, pinned Claude Code, no local transcripts, order-ETA fallback, tracking-less delivered, seller filters scoped, re-screening, 4-way parallel batches, slim requirements). Current tasks: Costco Lorcana, Macy's Pokemon posters, eBay Bowman Chrome.
+- Deleted 25 local `~/.claude/projects/*-T-tmp*` folders that held transcripts of email batches from local test runs (before `--no-session-persistence`).
+- Noted: 2 P&L tests in `tests/test_sync_to_sheets.py` fail (they predate the 9/15 Margin column) — unrelated to this work, left untouched.
 
 ### 2026-09-15 — P&L sheet improvements; multi-qty purchase bug fixed; Monthly tab added
 
