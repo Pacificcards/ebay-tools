@@ -326,6 +326,33 @@ Static, client-side-only page (no backend, no data pipeline) — live at `pacifi
 - Run locally: `.venv/bin/python package-tracker/main.py --dry-run`; tests: `.venv/bin/python -m pytest package-tracker/tests -q`
 - Summary email subject "[SUCCESS|FAILURE] Package Tracker — …"; searches exclude both it and the pre-rename "Order Task Tracker" subject.
 
+**Design decisions (locked — don't re-litigate; ported from the 2026-09-27 build notes):**
+- **Retailer allow list** instead of broad search nets. Specifics: Pokemon Center (`em.pokemon.com`, `pokemoncenter.narvar.com`), Costco (`orders.`/`logistics.costco.com`, not Citi Visa mail), Topps (`topps.com`, `runfair.com`, Shopify only when sender name is "Topps"), plus TAG, PSA, Best Buy, Walmart, Macy's. User adds retailers over time. Carrier mail (UPS/FedEx/USPS/DHL) is kept ("no cuts") but can only UPDATE a task via tracking number, never create one. Pirate Ship excluded (user's own outgoing-label account).
+- **Task lifecycle:** no delivery date → no due date; a shipping email with no confirmation on record still creates a task; delivered → status line only, **never auto-complete**; a completed OR deleted task = dismissed, never touched or recreated; already-delivered/cancelled orders with no task are skipped.
+- **Task format (concise, no labels):** title `[2x Item, Item] - [Retailer]`; notes = confirmation: order # / order date; shipped: tracking # / tracking link / order #; due date = delivery date. Status line on top: `Delivered Sep 26` · `Cancelled - refunded $X` · `No ETA - check tracking`. Qty shown only when >1.
+- **Task↔order links live in Supabase** (`package_tracker_tasks`), not in the task description, so the user can edit descriptions freely.
+- Claude runs on the user's Pro subscription by explicit choice; never pass an Anthropic API key to the workflow (it takes precedence and bills API credits).
+- User chose **not** to change the daily stale-order Gmail search (runs daily for open tasks quiet 14+ days).
+
+**Security posture:** Claude subprocess gets a stripped env (no Google/Supabase/API credentials), empty temp cwd, `--no-session-persistence` + `--strict-mcp-config`, no tools for extraction. Tracking links from emails are kept only for https allow-listed/carrier domains. Claude Code is pinned in the workflow — bump deliberately. Order numbers are sanitized before Gmail queries. Random `GITHUB_OUTPUT` delimiter. Email bodies are never stored.
+
+**Tried and dropped (don't re-suggest):**
+- Flask/FastAPI `/run` web service (from the original spec) → GitHub Actions + cron-job.org like other subprojects.
+- API credits for Claude → Pro subscription (user choice).
+- Per-item pre-tracking tasks and machine-readable `OrderRef:`/`TrackingRef:` lines in descriptions → one task per order, links in Supabase.
+- `is_preorder` flag → unnecessary once "no date = no due date" applied to all orders.
+- Broad Gmail search nets (Purchases category + known senders + subject words) and a "known sender auto-passes" rule → let seller mail, offers, saved searches, bids through; replaced by the allow list.
+- Downloading full bodies before filtering → headers-first screening (user: reading every email body was "incredibly inefficient").
+- Scanning the full 14-day backlog on first run → stopped; fresh start date instead.
+- Direct carrier-website fetches for ETAs → pages are JS-rendered/bot-blocked (since superseded by carrier APIs in `carrier_lookup.py`).
+
+**Gotchas:**
+- Some senders (Macy's) send a stub text/plain part next to the real HTML → body uses whichever part has more content.
+- Seller-mail patterns only apply to `SELLER_PLATFORMS` (eBay, Fanatics Collect) — a generic "ship by" rule once dropped real Target purchases.
+- Claude sometimes returned the order number as a tracking number (Costco) → guarded in the prompt and in `orders._apply_shipments`.
+- Headless Claude has ~1 min fixed overhead per call; daily runs (a few emails) take ~1 min, backlog catch-ups longer.
+- The Google OAuth app must stay "In production" or refresh tokens expire every 7 days; re-mint with `package-tracker/oauth_setup.py` (writes to `.env`; never prints secrets).
+
 ## Key Commands
 
 ```bash
