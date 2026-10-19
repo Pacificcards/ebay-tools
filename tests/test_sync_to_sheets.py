@@ -77,6 +77,22 @@ class TestFetchSales(unittest.TestCase):
         result = sts.fetch_sales(conn)
         self.assertEqual(result, [])
 
+    def test_gross_sale_nets_out_refunds(self):
+        """Cancelled/refunded sales must not overstate gross_sale — see CLAUDE.md
+        'cancellation revenue overstatement' fix. REFUND/CREDIT/ADJUSTMENT rows
+        linked by order_id should be netted out of gross_sale, proportionally
+        split across multi-line orders the same way shipping_cost already is."""
+        conn = _make_conn([self.FAKE_ROWS[0]])
+        sts.fetch_sales(conn)
+        executed_sql = conn.cursor.return_value.__enter__.return_value.execute.call_args[0][0]
+        self.assertIn("total_refund", executed_sql)
+        self.assertIn("REFUND", executed_sql)
+        self.assertIn("CREDIT", executed_sql)
+        self.assertIn("ADJUSTMENT", executed_sql)
+        # must not touch net_payout — profit/Adjustments column math stays as-is
+        net_payout_clause = executed_sql.split("AS gross_sale")[1].split("AS net_payout")[0]
+        self.assertNotIn("total_refund", net_payout_clause)
+
 
 # ── fetch_purchases ───────────────────────────────────────────────────────────
 
@@ -223,14 +239,14 @@ class TestPLTab(unittest.TestCase):
         sts.write_pl_tab(doc, sales_row_count=5, purchases_row_count=3, ad_fees_row_count=10)
 
         written = ws.update.call_args[0][0]
-        self.assertEqual(written[0], ["group", "net_payout", "costs", "ad_fees", "shipping_cost", "adjustments", "profit"])
+        self.assertEqual(written[0], ["group", "net_payout", "costs", "ad_fees", "shipping_cost", "adjustments", "profit", "margin"])
 
-    def test_pl_tab_data_row_has_seven_formulas(self):
+    def test_pl_tab_data_row_has_eight_formulas(self):
         doc, ws = self._make_doc_with_ws()
         sts.write_pl_tab(doc, sales_row_count=5, purchases_row_count=3, ad_fees_row_count=10)
 
         written = ws.update.call_args[0][0]
-        self.assertEqual(len(written[1]), 7)
+        self.assertEqual(len(written[1]), 8)
 
     def test_pl_tab_formulas_reference_correct_tabs(self):
         doc, ws = self._make_doc_with_ws()

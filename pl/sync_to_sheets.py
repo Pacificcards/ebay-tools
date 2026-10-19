@@ -65,8 +65,16 @@ def fetch_sales(conn) -> list[list]:
             SELECT
                 o.order_date::text,
                 COALESCE(lm.title, o.title, o.listing_id) AS title,
-                CASE WHEN o.order_id LIKE 'MANUAL-%' THEN CAST(o.sale_price AS text)
-                     ELSE CAST(o.sale_price + COALESCE(o.shipping_price, 0) AS text)
+                CASE
+                    WHEN o.order_id LIKE 'MANUAL-%' THEN CAST(o.sale_price AS text)
+                    WHEN rf.total_refund IS NULL THEN CAST(o.sale_price + COALESCE(o.shipping_price, 0) AS text)
+                    WHEN order_totals.total_gross <= 0 THEN CAST(o.sale_price + COALESCE(o.shipping_price, 0) AS text)
+                    ELSE CAST(
+                        (o.sale_price + COALESCE(o.shipping_price, 0)) - ROUND(
+                            rf.total_refund * (o.sale_price + COALESCE(o.shipping_price, 0))
+                            / order_totals.total_gross,
+                        2)
+                    AS text)
                 END AS gross_sale,
                 CAST(
                     CASE
@@ -126,6 +134,19 @@ def fetch_sales(conn) -> list[list]:
                 WHERE fee_type = 'SHIPPING_LABEL' AND booking_entry = 'DEBIT'
                 GROUP BY order_id
             ) sl ON sl.order_id = SPLIT_PART(o.order_id, '_', 1)
+            LEFT JOIN (
+                -- Cancelled/refunded sales: eBay issues a REFUND/CREDIT/ADJUSTMENT
+                -- transaction linked back to the order. Sum per order (an order can
+                -- get hit more than once, e.g. a dispute-hold reversal plus a refund)
+                -- and net it out of gross_sale below, so a cancelled sale doesn't
+                -- overstate revenue (it already nets to $0 profit via the Adjustments
+                -- column on P&L by Group — this only corrects the revenue figure that
+                -- Monthly/Sales report, net_payout and profit are untouched).
+                SELECT order_id, SUM(amount) AS total_refund
+                FROM order_fees
+                WHERE fee_type IN ('REFUND', 'CREDIT', 'ADJUSTMENT')
+                GROUP BY order_id
+            ) rf ON rf.order_id = SPLIT_PART(o.order_id, '_', 1)
             ORDER BY o.order_date DESC
         """)
         return [list(row) for row in cur.fetchall()]
