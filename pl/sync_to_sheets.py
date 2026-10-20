@@ -79,14 +79,20 @@ def fetch_sales(conn) -> list[list]:
                     -- order (not per line), so this is already the right denominator for
                     -- multi-line orders — no separate order_totals needed here.
                     WHEN f.amount IS NULL OR f.amount = 0 THEN CAST(o.sale_price + COALESCE(o.shipping_price, 0) AS text)
+                    -- bad-data guard: a refund up to 1.5x the payout is a full cancellation
+                    -- (eBay keeps its ~$0.40 fixed fee, so refunds can run slightly OVER the
+                    -- payout); beyond that something is off, so leave gross_sale alone.
                     WHEN ROUND(rf.total_refund * (o.sale_price + COALESCE(o.shipping_price, 0)) / f.amount, 2)
-                         > (o.sale_price + COALESCE(o.shipping_price, 0)) * 1.10
-                        THEN CAST(o.sale_price + COALESCE(o.shipping_price, 0) AS text)  -- bad-data guard, same pattern as net_payout
+                         > (o.sale_price + COALESCE(o.shipping_price, 0)) * 1.5
+                        THEN CAST(o.sale_price + COALESCE(o.shipping_price, 0) AS text)
+                    -- floor at 0: a cancelled sale is $0 revenue, never negative revenue
                     ELSE CAST(
-                        (o.sale_price + COALESCE(o.shipping_price, 0)) - ROUND(
-                            rf.total_refund * (o.sale_price + COALESCE(o.shipping_price, 0))
-                            / f.amount,
-                        2)
+                        GREATEST(
+                            (o.sale_price + COALESCE(o.shipping_price, 0)) - ROUND(
+                                rf.total_refund * (o.sale_price + COALESCE(o.shipping_price, 0))
+                                / f.amount,
+                            2),
+                        0)
                     AS text)
                 END AS gross_sale,
                 CAST(
