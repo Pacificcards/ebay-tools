@@ -93,6 +93,27 @@ class TestFetchSales(unittest.TestCase):
         net_payout_clause = executed_sql.split("AS gross_sale")[1].split("AS net_payout")[0]
         self.assertNotIn("total_refund", net_payout_clause)
 
+    def test_gross_sale_refund_netting_uses_net_payout_basis_not_gross(self):
+        """Regression test for a real bug (2026-10-20): eBay's REFUND/CREDIT amount
+        is on the NET-payout basis (what was actually credited, post-fee), the
+        same basis as f.amount (SALE CREDIT) — NOT the gross_sale basis. Netting
+        it straight against gross_sale without grossing it up first leaves a
+        leftover ~equal to the eBay fee on every refunded order, making a 100%
+        cancellation look like a partial one. Confirmed live: an $819.95 sale
+        with a $722.49 net payout, fully refunded for exactly $722.49, was
+        incorrectly showing gross_sale=$97.46 instead of ~$0.
+        The fix must divide by f.amount (order-level net payout), not
+        order_totals.total_gross, when scaling rf.total_refund up to a
+        gross-equivalent amount."""
+        conn = _make_conn([self.FAKE_ROWS[0]])
+        sts.fetch_sales(conn)
+        executed_sql = conn.cursor.return_value.__enter__.return_value.execute.call_args[0][0]
+        gross_sale_clause = executed_sql.split("AS gross_sale")[0]
+        # the refund-scaling division must be against f.amount, not order_totals.total_gross
+        self.assertIn("rf.total_refund", gross_sale_clause)
+        self.assertIn("/ f.amount", gross_sale_clause)
+        self.assertNotIn("rf.total_refund * (o.sale_price + COALESCE(o.shipping_price, 0))\n                            / order_totals.total_gross", gross_sale_clause)
+
 
 # ── fetch_purchases ───────────────────────────────────────────────────────────
 

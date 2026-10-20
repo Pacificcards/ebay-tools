@@ -68,11 +68,24 @@ def fetch_sales(conn) -> list[list]:
                 CASE
                     WHEN o.order_id LIKE 'MANUAL-%' THEN CAST(o.sale_price AS text)
                     WHEN rf.total_refund IS NULL THEN CAST(o.sale_price + COALESCE(o.shipping_price, 0) AS text)
-                    WHEN order_totals.total_gross <= 0 THEN CAST(o.sale_price + COALESCE(o.shipping_price, 0) AS text)
+                    -- rf.total_refund is on the NET-payout basis (eBay reverses what it
+                    -- actually credited, e.g. a $819.95 sale with a $722.49 net payout
+                    -- gets a $722.49 REFUND, not an $819.95 one) — the same basis as
+                    -- f.amount (SALE CREDIT), NOT the same basis as gross_sale. Gross it
+                    -- up via f.amount (order-level net payout) before subtracting, same
+                    -- direction as the net_payout computation below just inverted, so a
+                    -- full refund actually zeroes gross_sale instead of leaving a
+                    -- leftover equal to eBay's fee. f.amount is a single row per base
+                    -- order (not per line), so this is already the right denominator for
+                    -- multi-line orders — no separate order_totals needed here.
+                    WHEN f.amount IS NULL OR f.amount = 0 THEN CAST(o.sale_price + COALESCE(o.shipping_price, 0) AS text)
+                    WHEN ROUND(rf.total_refund * (o.sale_price + COALESCE(o.shipping_price, 0)) / f.amount, 2)
+                         > (o.sale_price + COALESCE(o.shipping_price, 0)) * 1.10
+                        THEN CAST(o.sale_price + COALESCE(o.shipping_price, 0) AS text)  -- bad-data guard, same pattern as net_payout
                     ELSE CAST(
                         (o.sale_price + COALESCE(o.shipping_price, 0)) - ROUND(
                             rf.total_refund * (o.sale_price + COALESCE(o.shipping_price, 0))
-                            / order_totals.total_gross,
+                            / f.amount,
                         2)
                     AS text)
                 END AS gross_sale,
