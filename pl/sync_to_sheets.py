@@ -90,24 +90,42 @@ def fetch_sales(conn) -> list[list]:
                     AS text)
                 END AS gross_sale,
                 CAST(
-                    CASE
-                        WHEN o.order_id LIKE 'MANUAL-%' THEN o.sale_price
-                        WHEN f.amount IS NULL THEN NULL
-                        WHEN order_totals.total_gross <= 0 THEN NULL
-                        ELSE (
-                            CASE
-                                WHEN ROUND(
-                                         f.amount * (o.sale_price + COALESCE(o.shipping_price, 0))
-                                         / order_totals.total_gross,
-                                     2) > (o.sale_price + COALESCE(o.shipping_price, 0)) * 1.10
-                                THEN NULL
-                                ELSE ROUND(
-                                         f.amount * (o.sale_price + COALESCE(o.shipping_price, 0))
-                                         / order_totals.total_gross,
-                                     2)
-                            END
-                        )
-                    END
+                    (
+                        CASE
+                            WHEN o.order_id LIKE 'MANUAL-%' THEN o.sale_price
+                            WHEN f.amount IS NULL THEN NULL
+                            WHEN order_totals.total_gross <= 0 THEN NULL
+                            ELSE (
+                                CASE
+                                    WHEN ROUND(
+                                             f.amount * (o.sale_price + COALESCE(o.shipping_price, 0))
+                                             / order_totals.total_gross,
+                                         2) > (o.sale_price + COALESCE(o.shipping_price, 0)) * 1.10
+                                    THEN NULL
+                                    ELSE ROUND(
+                                             f.amount * (o.sale_price + COALESCE(o.shipping_price, 0))
+                                             / order_totals.total_gross,
+                                         2)
+                                END
+                            )
+                        END
+                    )
+                    -- Net out refunds paid back to the buyer. rf.total_refund is already on
+                    -- the net-payout basis, so it subtracts directly (split across lines by
+                    -- gross share, like the payout itself). NULL payout stays NULL. These
+                    -- same rows are excluded from the Adjustments column in fetch_ad_fees
+                    -- (category 'Order Refund') so profit isn't double-counted.
+                    - COALESCE(
+                        CASE
+                            WHEN o.order_id LIKE 'MANUAL-%' THEN 0
+                            WHEN rf.total_refund IS NULL THEN 0
+                            WHEN order_totals.total_gross <= 0 THEN 0
+                            ELSE ROUND(
+                                rf.total_refund * (o.sale_price + COALESCE(o.shipping_price, 0))
+                                / order_totals.total_gross,
+                            2)
+                        END,
+                    0)
                 AS text) AS net_payout,
                 CAST(
                     CASE
@@ -150,14 +168,16 @@ def fetch_sales(conn) -> list[list]:
             LEFT JOIN (
                 -- Cancelled/refunded sales: eBay issues a REFUND/CREDIT/ADJUSTMENT
                 -- transaction linked back to the order. Sum per order (an order can
-                -- get hit more than once, e.g. a dispute-hold reversal plus a refund)
-                -- and net it out of gross_sale below, so a cancelled sale doesn't
-                -- overstate revenue (it already nets to $0 profit via the Adjustments
-                -- column on P&L by Group — this only corrects the revenue figure that
-                -- Monthly/Sales report, net_payout and profit are untouched).
+                -- get hit more than once) and net it out of BOTH gross_sale and
+                -- net_payout above, so a cancelled sale doesn't overstate revenue.
+                -- DEBIT only: a DEBIT is money paid back to the buyer. CREDIT rows
+                -- (e.g. DISPUTE_HOLD_REVERSE) are money coming IN to the seller —
+                -- netting those like refunds would flip their sign, so they stay
+                -- in the Adjustments column untouched.
                 SELECT order_id, SUM(amount) AS total_refund
                 FROM order_fees
                 WHERE fee_type IN ('REFUND', 'CREDIT', 'ADJUSTMENT')
+                  AND booking_entry = 'DEBIT'
                 GROUP BY order_id
             ) rf ON rf.order_id = SPLIT_PART(o.order_id, '_', 1)
             ORDER BY o.order_date DESC
@@ -237,6 +257,13 @@ def fetch_ad_fees(conn) -> list[list]:
                     WHEN fl.fee_type = 'NON_SALE_CHARGE' THEN 'Ad Fee'
                     WHEN fl.fee_type IN ('SHIPPING_LABEL', 'SHIPPING_MANUAL')
                          AND COALESCE(fl.booking_entry, '') != 'CREDIT' THEN 'Shipping'
+                    -- Refunds paid back to a buyer on an order we have: already netted
+                    -- into that order's net_payout/gross_sale in fetch_sales(), so keep
+                    -- them visible here but OUT of the P&L Adjustments column.
+                    WHEN fl.fee_type IN ('REFUND', 'CREDIT', 'ADJUSTMENT')
+                         AND fl.booking_entry = 'DEBIT'
+                         AND EXISTS (SELECT 1 FROM orders_raw o2
+                                     WHERE SPLIT_PART(o2.order_id, '_', 1) = fl.order_id) THEN 'Order Refund'
                     WHEN fl.fee_type IN ('REFUND', 'CREDIT', 'ADJUSTMENT', 'ADJUSTMENT_MANUAL')
                          OR (fl.fee_type = 'SHIPPING_LABEL' AND fl.booking_entry = 'CREDIT') THEN 'Adjustment'
                     ELSE 'Other'

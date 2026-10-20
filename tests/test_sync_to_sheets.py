@@ -89,9 +89,22 @@ class TestFetchSales(unittest.TestCase):
         self.assertIn("REFUND", executed_sql)
         self.assertIn("CREDIT", executed_sql)
         self.assertIn("ADJUSTMENT", executed_sql)
-        # must not touch net_payout — profit/Adjustments column math stays as-is
+        # net_payout must ALSO net the refund (2026-10-20): a fully refunded order
+        # can't keep showing its payout as received. Profit stays identical because
+        # the same rows are excluded from the Adjustments column (see
+        # TestFetchAdFees) — netted in exactly one place, never both.
         net_payout_clause = executed_sql.split("AS gross_sale")[1].split("AS net_payout")[0]
-        self.assertNotIn("total_refund", net_payout_clause)
+        self.assertIn("total_refund", net_payout_clause)
+
+    def test_refund_netting_only_counts_debit_rows(self):
+        """Only DEBIT refunds (money paid back to a buyer) are netted against
+        revenue. CREDIT rows (e.g. DISPUTE_HOLD_REVERSE) are money coming IN —
+        netting them like refunds would flip their sign and wrongly cut profit."""
+        conn = _make_conn([self.FAKE_ROWS[0]])
+        sts.fetch_sales(conn)
+        executed_sql = conn.cursor.return_value.__enter__.return_value.execute.call_args[0][0]
+        rf_join = executed_sql.split("AS total_refund")[1].split(") rf ON")[0]
+        self.assertIn("booking_entry = 'DEBIT'", rf_join)
 
     def test_gross_sale_refund_netting_uses_net_payout_basis_not_gross(self):
         """Regression test for a real bug (2026-10-20): eBay's REFUND/CREDIT amount
@@ -113,6 +126,26 @@ class TestFetchSales(unittest.TestCase):
         self.assertIn("rf.total_refund", gross_sale_clause)
         self.assertIn("/ f.amount", gross_sale_clause)
         self.assertNotIn("rf.total_refund * (o.sale_price + COALESCE(o.shipping_price, 0))\n                            / order_totals.total_gross", gross_sale_clause)
+
+
+# ── fetch_ad_fees ─────────────────────────────────────────────────────────────
+
+class TestFetchAdFees(unittest.TestCase):
+
+    def test_order_refunds_excluded_from_adjustment_category(self):
+        """Order-linked DEBIT refunds are netted into the Sales row's net_payout,
+        so they must get their own category ('Order Refund') and NOT 'Adjustment' —
+        otherwise the P&L Adjustments column would subtract them a second time."""
+        conn = _make_conn([])
+        sts.fetch_ad_fees(conn)
+        sql = conn.cursor.return_value.__enter__.return_value.execute.call_args[0][0]
+        self.assertIn("'Order Refund'", sql)
+        # the Order Refund branch must come before the generic Adjustment branch
+        self.assertLess(sql.index("'Order Refund'"), sql.index("THEN 'Adjustment'"))
+        # and must be restricted to DEBIT rows that match an order we actually have
+        refund_branch = sql.split("'Order Refund'")[0].rsplit("WHEN", 1)[1]
+        self.assertIn("'DEBIT'", refund_branch)
+        self.assertIn("orders_raw", refund_branch)
 
 
 # ── fetch_purchases ───────────────────────────────────────────────────────────
