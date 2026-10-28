@@ -12,10 +12,6 @@ on:
         description: "Dry run (plan only, no task writes)"
         type: boolean
         default: false
-      sheet_preview_since:
-        description: "TESTING ONLY (dry run): preview Topps sheet rows for confirmations since YYYY-MM-DD"
-        type: string
-        default: ""
 
 concurrency:
   group: package-tracker
@@ -51,13 +47,10 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           FEDEX_API_KEY: ${{ secrets.FEDEX_API_KEY }}
           FEDEX_SECRET_KEY: ${{ secrets.FEDEX_SECRET_KEY }}
-          GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
-          SHEET_PREVIEW_SINCE: ${{ github.event.inputs.sheet_preview_since }}
         run: |
           set -o pipefail
           args=()
           [ "${{ github.event.inputs.dry_run }}" = "true" ] && args+=(--dry-run)
-          [ -n "$SHEET_PREVIEW_SINCE" ] && args+=(--sheet-preview-since "$SHEET_PREVIEW_SINCE")
           python package-tracker/main.py "${args[@]}" 2>&1 | tee /tmp/output.txt
 
       - name: Read output
@@ -75,11 +68,10 @@ jobs:
         if: always()
         run: |
           # Catches: WARNING: lines (carrier-lookup issues, a single email Claude
-          # couldn't parse), the "Emails Claude could not read" header (also covers
-          # an email Claude's batch call silently dropped with no exception raised),
-          # and "  ! " Topps-sheet problem lines (needs_review / sheet write failed).
+          # couldn't parse) and the "Emails Claude could not read" header (also covers
+          # an email Claude's batch call silently dropped with no exception raised).
           found=false
-          if [ -f /tmp/output.txt ] && grep -qE '^WARNING: |Emails Claude could not read|^ *! ' /tmp/output.txt; then
+          if [ -f /tmp/output.txt ] && grep -qE '^WARNING: |Emails Claude could not read' /tmp/output.txt; then
             found=true
           fi
           echo "found=$found" >> $GITHUB_OUTPUT

@@ -11,8 +11,7 @@ import config
 # Tables renamed 2026-10-02 (Order Task Tracker -> Package Tracker). Renamed in place on the
 # first connection, data untouched; a no-op once done.
 _RENAMED_TABLES = [("order_tracker_emails", "package_tracker_emails"),
-                   ("order_tracker_tasks", "package_tracker_tasks"),
-                   ("order_tracker_sheet_orders", "package_tracker_sheet_orders")]
+                   ("order_tracker_tasks", "package_tracker_tasks")]
 
 
 def connect():
