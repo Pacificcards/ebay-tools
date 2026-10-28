@@ -70,8 +70,24 @@ jobs:
           cat /tmp/output.txt >> $GITHUB_OUTPUT
           echo "$delim" >> $GITHUB_OUTPUT
 
-      - name: Send email notification
+      - name: Check for problems
+        id: problem
         if: always()
+        run: |
+          # Catches: WARNING: lines (carrier-lookup issues, a single email Claude
+          # couldn't parse), the "Emails Claude could not read" header (also covers
+          # an email Claude's batch call silently dropped with no exception raised),
+          # and "  ! " Topps-sheet problem lines (needs_review / sheet write failed).
+          found=false
+          if [ -f /tmp/output.txt ] && grep -qE '^WARNING: |Emails Claude could not read|^ *! ' /tmp/output.txt; then
+            found=true
+          fi
+          echo "found=$found" >> $GITHUB_OUTPUT
+
+      - name: Send email notification
+        # Only on an actual failure, or a successful run that still printed a problem line -
+        # a clean run with nothing to flag sends no email at all.
+        if: always() && (steps.tracker.outcome == 'failure' || steps.problem.outputs.found == 'true')
         uses: dawidd6/action-send-mail@4226df7daafa6fc901a43789c49bf7ab309066e7  # v3
         with:
           server_address: smtp.gmail.com
@@ -81,7 +97,7 @@ jobs:
           to: ${{ secrets.GMAIL_ADDRESS }}
           from: Package Tracker
           # subject must contain config.SUMMARY_EMAIL_SUBJECT so the tracker never reads its own report
-          subject: "[${{ steps.tracker.outcome == 'success' && 'SUCCESS' || 'FAILURE' }}] Package Tracker — ${{ steps.ts.outputs.value }}"
+          subject: "[${{ steps.tracker.outcome == 'success' && 'WARNING' || 'FAILURE' }}] Package Tracker — ${{ steps.ts.outputs.value }}"
           body: |
             ${{ steps.output.outputs.result }}
 
