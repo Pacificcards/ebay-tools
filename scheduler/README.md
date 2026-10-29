@@ -10,8 +10,8 @@ The GitHub Actions workflow (`campaign-scheduler.yml`) is triggered externally b
 
 | Action | Days | Time (PT) | Time (UTC) |
 |--------|------|-----------|------------|
-| Pause  | Daily | 5:00am | cron-job.org timezone America/Los_Angeles (DST-aware) |
-| Resume | Daily | 6:00pm | cron-job.org timezone America/Los_Angeles (DST-aware) |
+| Pause  | Daily | 1:00am | cron-job.org timezone America/Los_Angeles (DST-aware) |
+| Resume | Daily | 10:00am | cron-job.org timezone America/Los_Angeles (DST-aware) |
 
 ## Required secrets (GitHub Actions)
 
