@@ -46,7 +46,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Send email notification
-        if: always()
+        if: failure()
         uses: dawidd6/action-send-mail@4226df7daafa6fc901a43789c49bf7ab309066e7  # v3
         with:
           server_address: smtp.gmail.com
