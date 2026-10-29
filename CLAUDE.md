@@ -235,12 +235,12 @@ Pauses/resumes eBay Promoted Listings campaigns on a schedule. Triggered by cron
 - Email notification sent on every run (success or failure) via Gmail secrets
 - `EBAY_CAMPAIGN_ID` secret is no longer used — campaigns.json is the source of truth
 
-#### Current campaigns (as of 2026-10-14)
+#### Current campaigns (as of 2026-10-21)
 | Name | ID |
 |------|----|
-| Pokemon Packs | 159727416018 |
-| High Value | 166098181018 |
 | Sealed Product | 163206658018 |
+
+Pokemon Packs (159727416018) and High Value (166098181018) were intentionally removed from the schedule (confirmed by user 2026-10-29) — they are no longer paused/resumed. `campaigns.json` was briefly an empty list before 2026-10-21, likely why the Oct 20–21 runs failed (logs not checked).
 
 ### 6. Listings Publisher (`listings-publisher/` + `pokemon-publisher/`)
 Publishes ungraded trading card listings to eBay from a Google Sheet + local photo folder. Run locally via a unified entry point.
