@@ -1,8 +1,8 @@
 name: eBay Campaign Scheduler
 
 # Triggered externally by cron-job.org:
-#   Pause:  daily at 5:00am PT   → POST action=pause
-#   Resume: daily at 6:00pm PT   → POST action=resume
+#   Pause:  daily at 1:00am PT   → POST action=pause
+#   Resume: daily at 10:00am PT  → POST action=resume
 # Both cron-job.org jobs use timezone America/Los_Angeles (DST-aware).
 
 on:

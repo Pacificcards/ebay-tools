@@ -231,7 +231,7 @@ Reads `docs/market/market_data.json` at page load (~1.1MB; Chart.js 4.4.3, no ba
 Pauses/resumes eBay Promoted Listings campaigns on a schedule. Triggered by cron-job.org → `workflow_dispatch` on `campaign-scheduler.yml`.
 
 - Campaigns defined in `scheduler/campaigns.json` (id + name — edit here to add/remove/rename)
-- Schedule (updated 2026-10-14): Pause daily 5:00am PT, Resume daily 6:00pm PT. Two cron-job.org jobs ("eBay Campaign Pause" 7685869, "eBay Campaign Resume" 7685870), timezone America/Los_Angeles so DST is handled
+- Schedule (updated 2026-10-29): Pause daily 1:00am PT, Resume daily 10:00am PT (campaigns live 10am–1am, off 1am–10am). Previously Pause 5:00am / Resume 6:00pm (2026-10-14). Two cron-job.org jobs ("eBay Campaign Pause" 7685869, "eBay Campaign Resume" 7685870), timezone America/Los_Angeles so DST is handled
 - Email notification sent on every run (success or failure) via Gmail secrets
 - `EBAY_CAMPAIGN_ID` secret is no longer used — campaigns.json is the source of truth
 
