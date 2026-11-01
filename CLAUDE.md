@@ -233,6 +233,7 @@ Pauses/resumes eBay Promoted Listings campaigns on a schedule. Triggered by cron
 - Campaigns defined in `scheduler/campaigns.json` (id + name — edit here to add/remove/rename)
 - Schedule (updated 2026-10-29): Pause daily 1:00am PT, Resume daily 10:00am PT (campaigns live 10am–1am, off 1am–10am). Previously Pause 5:00am / Resume 6:00pm (2026-10-14). Two cron-job.org jobs ("eBay Campaign Pause" 7685869, "eBay Campaign Resume" 7685870), timezone America/Los_Angeles so DST is handled
 - Email notification sent only when a run fails (changed 2026-10-29 from every run), via Gmail secrets
+- Discord summary posted after every pause/resume (2026-10-31) to `#campaign-status` via `DISCORD_SCHEDULER_WEBHOOK_URL` secret (optional; skipped if unset, never affects run success). Format: `[timestamp PT] Campaigns Paused/Resumed` + ✅/❌ line per campaign (name + ID)
 - `EBAY_CAMPAIGN_ID` secret is no longer used — campaigns.json is the source of truth
 
 #### Current campaigns (as of 2026-10-21)
@@ -354,6 +355,9 @@ Static, client-side-only page (no backend, no data pipeline) — live at `pacifi
 - Headless Claude has ~1 min fixed overhead per call; daily runs (a few emails) take ~1 min, backlog catch-ups longer.
 - The Google OAuth app must stay "In production" or refresh tokens expire every 7 days; re-mint with `package-tracker/oauth_setup.py` (writes to `.env`; never prints secrets).
 
+### 9. Sealed Price Data (`sealed-price-data/`)
+Scraped DealernetX sealed-box price history in its **own, separate Supabase project** (not the main ebay-tools DB), with HTML charts of price indexed to MSRP for the first 45 days after release. Started 2026-10-16. Full context, decisions and the pending Supabase MCP setup are in `sealed-price-data/CLAUDE.md` and `sealed-price-data/next.md` — read those first when working there.
+
 ## Key Commands
 
 ```bash
@@ -389,8 +393,8 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 - **gspread 6.x:** `ws.update()` takes `(values, range_name)` — values first. Always pass explicit `'A1'` as range_name to avoid ambiguity. `ws.clear()` may not clear beyond gspread's tracked column range; user-added columns in the sheet survive a clear.
 - **Google Sheets API returns intermittent transient 5xx errors** (observed: `503 The service is currently unavailable`) with no fault on our end — confirmed 2026-08-26 via `listener.yml` run history, same error at the same call (`client.open_by_key`) across every failure sampled from 2026-08-21 through 2026-08-26. gspread does not retry these itself. All Google Sheets calls in `listener/sheets.py` are now wrapped in `_retry()` (exponential backoff, 4 attempts, non-5xx errors like 403 fail immediately). If this pattern shows up in `pl/sync_to_sheets.py` or elsewhere, apply the same fix there — it isn't listener-specific, just where it was first diagnosed.
 - **eBay Finances API delay:** shipping label transactions can appear hours after purchase. If a label is missing, it may just not have been reported yet — trigger a manual `fetch_finances` re-run before assuming it was purchased externally.
-- eBay refresh token valid ~Nov 2027. Re-gen: `/Users/eastcoastlimited/ClaudeCode/ebay_campaign_scheduler/get_refresh_token.py`
-- Legacy scheduler repo at `/Users/eastcoastlimited/ClaudeCode/ebay_campaign_scheduler` — do not touch unless asked
+- eBay refresh token valid ~Nov 2027. The old `get_refresh_token.py` (in the retired `ebay_campaign_scheduler` repo) is gone locally; the original is still in `Pacificcards/ebay-campaign-scheduler` on GitHub (marketing scope only). `listings-publisher/get_write_token.py` is the in-repo equivalent for the write token.
+- Old scheduler repo `Pacificcards/ebay-campaign-scheduler` is retired (workflow disabled, local folder deleted 2026-10-31); GitHub repo kept as archive. Don't revive it — `scheduler/` here is the only scheduler.
 - cron-job.org jobs can be listed/edited via its API using a key kept only in the local, gitignored `.env` (added 2026-10-14). New jobs are best created in the cron-job.org console (cloning an existing job keeps the GitHub auth header).
 - **Supabase schema changes must be pushed atomically with code:** the daily GHA jobs run whatever is on `main`, not local state. A local-only DB migration (e.g. a column rename) will crash the live job the next time it runs until the matching code is pushed. Always commit+push schema-dependent code changes in the same sitting as the migration, staging only the affected files by name (never `git add -A`, since this repo commonly has unrelated WIP sitting uncommitted).
 - **`listing_metrics_raw` / `listing_metrics_computed` CTR columns:** `ctr_ebay_search_page` (renamed from `ctr` 2026-07-29) is eBay's own `CLICK_THROUGH_RATE` metric — search-results-page views ÷ search-results-page impressions only. `ctr_calculated` is `views_total / impressions_all_sources` (as of 2026-07-31 — previously divided by the narrower `impressions_search_and_store`). They will not match; this is expected, not a bug.
@@ -413,7 +417,8 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 - **Google Sheets 503 retry logic shipped 2026-08-26** (see Constraints and Session Log) — watch `listener.yml` run history over the next week to confirm the failure rate actually drops; if 503s are frequent enough to still exhaust 4 retries occasionally, consider raising `_MAX_RETRIES`/`_RETRY_BASE_DELAY` in `listener/sheets.py`.
 
 ### Campaign Scheduler
-- No open items — campaigns.json migration complete and tested 2026-06-15
+- Verify the first scheduled **pause** (1am PT) posts the "Paused" Discord message — only "Resumed" was tested live on 2026-10-31; ❌/FAILED format is mock-tested only.
+- Discord post is skipped if the eBay token refresh fails (script exits before results exist) — in that case only the failure email fires.
 
 ### P&L
 1. **Listing-level hierarchy refactor** — Group > Listing > Order; new `listing_groups` table; design complete, not yet built (see full spec in P&L section above)
@@ -471,6 +476,11 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - Whether to expose raw price range alongside the two recommendations
 
 ## Session Log
+
+### 2026-10-31 — Campaign scheduler: Discord notifications; old scheduler repo retired
+- Found the earlier "stop emails" change was PR #17 on `ebay-tools` (merged 2026-10-29), not the old `ebay-campaign-scheduler` repo (workflow `disabled_manually`, last run 2026-05-27). Deleted the old local folder + worktree (user chose local-only; GitHub repo kept; discarded its uncommitted `get_refresh_token.py` scope edit).
+- Added Discord summary to `scheduler/campaign_control.py` (`send_discord_summary`, stdlib urllib, custom User-Agent because Discord 403s Python's default) + `DISCORD_SCHEDULER_WEBHOOK_URL` env in `campaign-scheduler.yml`. New channel `#campaign-status`, new secret (not the listener's `DISCORD_WEBHOOK_URL`, to keep card alerts separate). Best-effort: skipped if secret unset, failure only warns. Email-on-failure kept as backup. Commit 7cdcb3f.
+- Verified live: manual `resume` run succeeded and the message arrived in Discord. Pause + failure formats not yet seen live.
 
 ### 2026-10-20 — Cancellation fix corrected twice after user caught it (read this before touching refund netting)
 - The 2026-10-19 fix shipped with a **unit-basis bug**: eBay `REFUND`/`CREDIT` amounts are on the net-payout basis, but they were subtracted raw from `gross_sale` (gross basis). A fully refunded $819.95 order (net payout $722.49, refunded $722.49) showed `gross_sale` $97.46 — the eBay fee — instead of $0. User caught it in the Sales tab; I had said it was working without checking a refunded row against the data. Root cause confirmed with a one-order diagnostic (orders_raw + every order_fees row), fixed by grossing the refund up via the order's SALE CREDIT (`f.amount`).

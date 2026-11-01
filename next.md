@@ -1,5 +1,10 @@
 # Next Steps
 
+## Campaign Scheduler
+
+1. **Confirm tonight's 1am PT pause posts to `#campaign-status`** — only the resume message has been seen live. (suggested)
+2. **Optional: also notify on token-refresh failure** — script exits before the Discord step, so only email fires; could post a failure line to Discord too. (suggested)
+
 ## Order Task Tracker (live since 2026-09-27)
 
 1. **Check the first scheduled run's summary email (2026-09-28, 8am PT)** — first time Claude extraction runs on GitHub with the pinned version and new flags; if it fails, the email says FAILURE with the run link. (suggested)
