@@ -12,6 +12,9 @@ Required environment variables:
     EBAY_CLIENT_ID
     EBAY_CLIENT_SECRET
     EBAY_REFRESH_TOKEN
+
+Optional environment variable:
+    DISCORD_SCHEDULER_WEBHOOK_URL  — if set, posts a pause/resume summary to Discord
 """
 
 import base64
@@ -21,6 +24,8 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 TOKEN_URL = "https://api.ebay.com/identity/v1/oauth2/token"
 API_BASE = "https://api.ebay.com/sell/marketing/v1"
@@ -111,6 +116,38 @@ def load_campaigns() -> list[dict]:
     return campaigns
 
 
+def send_discord_summary(action: str, campaigns: list[dict], results: dict) -> None:
+    """Post a pause/resume summary to Discord. Best-effort: never affects the exit code."""
+    webhook_url = os.environ.get("DISCORD_SCHEDULER_WEBHOOK_URL", "").strip()
+    if not webhook_url:
+        print("DISCORD_SCHEDULER_WEBHOOK_URL not set — skipping Discord message.")
+        return
+
+    timestamp = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d %-I:%M %p PT")
+    past = "Paused" if action == "pause" else "Resumed"
+    any_failed = not all(results.values())
+    header = f"[{timestamp}] Campaigns {past}" if not any_failed else f"[{timestamp}] Campaign {action} FAILED"
+
+    lines = [header]
+    for campaign in campaigns:
+        name = campaign.get("name", campaign["id"])
+        mark = "✅" if results[name] else "❌"
+        lines.append(f"{mark} {name} ({campaign['id']})")
+
+    req = urllib.request.Request(
+        webhook_url,
+        data=json.dumps({"content": "\n".join(lines)}).encode(),
+        # Discord rejects Python's default User-Agent with a 403.
+        headers={"Content-Type": "application/json", "User-Agent": "ebay-campaign-scheduler"},
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req).close()
+        print("Discord message sent.")
+    except Exception as e:
+        print(f"WARNING: Discord message failed: {e}")
+
+
 def main():
     if len(sys.argv) != 2 or sys.argv[1] not in ("pause", "resume"):
         print("Usage: python3 -m scheduler.campaign_control [pause|resume]")
@@ -141,6 +178,8 @@ def main():
         print(f"  {name}: {status}")
         if not success:
             any_failed = True
+
+    send_discord_summary(action, campaigns, results)
 
     if any_failed:
         sys.exit(1)

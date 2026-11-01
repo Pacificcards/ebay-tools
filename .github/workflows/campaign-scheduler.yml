@@ -33,6 +33,7 @@ jobs:
           EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
           EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
           EBAY_REFRESH_TOKEN: ${{ secrets.EBAY_REFRESH_TOKEN }}
+          DISCORD_SCHEDULER_WEBHOOK_URL: ${{ secrets.DISCORD_SCHEDULER_WEBHOOK_URL }}
         run: |
           set -o pipefail
           python3 -m scheduler.campaign_control ${{ github.event.inputs.action }} 2>&1 | tee /tmp/output.txt
