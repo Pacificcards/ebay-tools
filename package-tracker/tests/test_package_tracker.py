@@ -540,5 +540,45 @@ class TestHeaderScreen(unittest.TestCase):
         self.assertNotIn("click.example.com", text)                         # other links dropped
 
 
+    @staticmethod
+    def _html_payload(markup):
+        import base64
+        return {"mimeType": "text/html",
+                "body": {"data": base64.urlsafe_b64encode(markup.encode()).decode()}}
+
+    FANATICS_ITEMS = ('<h1>THANKS FOR YOUR ORDER</h1><p>Order Number: 279-6718-4964</p><p>6 Items : $539.91</p>'
+                      '<table><tr><td>2026 Topps Chrome Football Factory Sealed Fanatics Exclusive Mega Box</td></tr>'
+                      '<tr><td>Size: No Size Qty: 6 $599.94</td></tr></table>')
+
+    def test_items_survive_invisible_preheader_padding(self):
+        import config
+        import gmail_search as g
+        padding = "&#847;&zwnj;&nbsp;" * 3000          # ~9000 invisible characters
+        markup = f'<div style="display:none">Order Details Inside{padding}</div>{self.FANATICS_ITEMS}'
+        text = g._body_text(self._html_payload(markup))
+        self.assertLess(len(text), 400)
+        self.assertIn("Qty: 6", text[:config.EMAIL_BODY_MAX_CHARS])
+        self.assertIn("Mega Box", text[:config.EMAIL_BODY_MAX_CHARS])
+
+    def test_long_click_tracking_links_do_not_crowd_out_items(self):
+        import config
+        import gmail_search as g
+        # ESP click-tracking links: contain "track", sit on the retailer's own domain, huge tokens
+        links = "".join(f'<a href="https://click.s.fanatics.com/track?qs={"x" * 600}{i}">Link {i}</a>'
+                        for i in range(40))
+        text = g._body_text(self._html_payload(f"{links}{self.FANATICS_ITEMS}"))
+        self.assertNotIn("click.s.fanatics.com", text)
+        self.assertIn("Mega Box", text[:config.EMAIL_BODY_MAX_CHARS])
+
+    def test_real_tracking_links_are_still_kept(self):
+        import gmail_search as g
+        markup = ('<a href="https://www.fedex.com/apps/fedextrack?trknbr=123456789012">Track package</a>'
+                  '<a href="https://www.fanatics.com/track?order=279-6718-4964">Track order</a>'
+                  '<a href="https://evil.example.com/track?x=1">Track</a>')
+        text = g._body_text(self._html_payload(markup))
+        self.assertIn("https://www.fedex.com/apps/fedextrack?trknbr=123456789012", text)
+        self.assertIn("https://www.fanatics.com/track?order=279-6718-4964", text)
+        self.assertNotIn("evil.example.com", text)
+
 if __name__ == "__main__":
     unittest.main()
