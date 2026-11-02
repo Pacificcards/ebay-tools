@@ -15,6 +15,7 @@
 6. **Low-priority review leftovers** — `--since` hardcodes `-07:00` (wrong after DST ends Nov 1); Google Tasks calls have no retry on transient 5xx; `resolve_date` only rolls years forward (a January "delivered Dec 31" lands a year late); pass 2 of `build_orders` doesn't re-check `is_purchase`/`is_physical_goods`; `cache.save` doesn't strip tracking numbers. (suggested)
 7. **Test trimming Claude Code's ~9K-token default system prompt** (`--system-prompt` replace) to cut Pro usage per call; measure `cacheCreationInputTokens` before/after. (suggested)
 8. **Renew the Claude Code auth token before ~2027-09** — run `claude setup-token`, update the GitHub secret; expiry shows up as FAILURE emails.
+9. **Move Package Tracker run alerts from email to Discord** — today the `[WARNING]`/`[FAILURE]` email (only sent on a problem since 2026-10-28) is the only alert. Post to Discord instead, leaving the email as-is until the Discord version is proven. Reuse the Campaign Scheduler pattern: `send_discord_summary` in `scheduler/campaign_control.py` (stdlib `urllib`, custom User-Agent because Discord 403s Python's default, best-effort so a Discord failure only warns) with its own webhook secret/channel rather than the listener's `DISCORD_WEBHOOK_URL`. Open design question: keep the alert to just the problem lines (the full run summary is too long to be useful). (suggested)
 
 ---
 
