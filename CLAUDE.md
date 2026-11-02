@@ -351,6 +351,7 @@ Static, client-side-only page (no backend, no data pipeline) — live at `pacifi
 - Some senders (Macy's) send a stub text/plain part next to the real HTML → body uses whichever part has more content.
 - Seller-mail patterns only apply to `SELLER_PLATFORMS` (eBay, Fanatics Collect) — a generic "ship by" rule once dropped real Target purchases.
 - Claude sometimes returned the order number as a tracking number (Costco) → guarded in the prompt and in `orders._apply_shipments`.
+- **Hidden preview padding + click-tracking URLs can push the order items past the 6,000-char body cap** (Fanatics, found 2026-11-02): `gmail_search._clean` strips invisible/zero-width characters and `_keep_track_link` keeps a link's URL only if it is short (≤300 chars) and on a trusted retailer/carrier domain. An order whose confirmation was read before this fix has `items=0` cached at the same `extract_version`, so it is NOT re-read automatically — bump `EXTRACT_VERSION` (re-reads every cached email in the search window) or delete that email's row.
 - Headless Claude has ~1 min fixed overhead per call; daily runs (a few emails) take ~1 min, backlog catch-ups longer.
 - The Google OAuth app must stay "In production" or refresh tokens expire every 7 days; re-mint with `package-tracker/oauth_setup.py` (writes to `.env`; never prints secrets).
 
@@ -475,6 +476,12 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - Whether to expose raw price range alongside the two recommendations
 
 ## Session Log
+
+### 2026-11-02 — Package Tracker: Fanatics orders showing "Order #…" with no items (root cause found and fixed)
+- Symptom: Fanatics orders 279-6718-4964 / -5054 got tasks titled `Order #… - Fanatics` (no item names). Root cause, confirmed on the real emails via a temporary read-only diagnostic run from a branch (stats only, since Actions logs are public): the confirmation's HTML is ~120K chars; the old cleaner left ~1,800 invisible padding characters (the hidden "Order Details Inside" preview line) and kept 35 full click-tracking URLs (~17.7K chars, every one contains "track"), so the cleaned text was ~25K chars and the item line sat at char ~8,300 — past the 6,000 cap Claude is given. Claude on the old text: `items=0`; on the new text: `items=1` (6x Mega Box) for both orders. New cleaned text is ~2.4K chars with the item line at ~736.
+- Fix (`gmail_search.py`): `_clean()` removes invisible/zero-width characters and collapses Unicode spaces; `_keep_track_link()` keeps a URL only if ≤300 chars and `tasks_sync._trusted_url` accepts it (the same test that decides whether a URL is ever used). 3 new tests built from the Fanatics email's shape fail on the old code and pass on the new (72 total).
+- **Not yet repaired:** the two existing orders' cached rows are `extract_version=2` with `items=0`, so they are not re-read until `EXTRACT_VERSION` is bumped (or their rows deleted). Bumping re-reads every cached email in the 14-day window (a few minutes of Pro usage, and open tasks may be retitled if Claude words an item differently).
+- Also seen, not acted on: several `s.fanatics.com` emails with "Confirm" in the subject (10/27, and four on 11/02) are cached as `is_order_email=false` even though their bodies contain item lists; the new cleaner doesn't change that verdict. Unknown whether they are real orders being missed or something else (e.g. a confirm-your-order prompt) — needs a look at one.
 
 ### 2026-10-31 — Campaign scheduler: Discord notifications; old scheduler repo retired
 - Found the earlier "stop emails" change was PR #17 on `ebay-tools` (merged 2026-10-29), not the old `ebay-campaign-scheduler` repo (workflow `disabled_manually`, last run 2026-05-27). Deleted the old local folder + worktree (user chose local-only; GitHub repo kept; discarded its uncommitted `get_refresh_token.py` scope edit).
