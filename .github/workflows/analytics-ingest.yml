@@ -12,9 +12,15 @@ on:
 permissions:
   contents: write
 
+# One run at a time: overlapping runs double-spend the eBay Analytics daily quota and race on the git push.
+concurrency:
+  group: analytics-ingest
+  cancel-in-progress: false
+
 jobs:
   ingest:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -22,7 +28,10 @@ jobs:
           python-version: '3.11'
       - run: pip install -r requirements.txt
 
+      # Code pushes only re-run compute + dashboard generation from data already in the DB;
+      # the eBay fetches run on the nightly workflow_dispatch so pushes don't burn API quota.
       - name: Fetch from eBay APIs
+        if: github.event_name != 'push'
         env:
           EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
           EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
@@ -31,6 +40,7 @@ jobs:
         run: python -m traffic_analytics.run_ingest
 
       - name: Fetch billing activity (fees)
+        if: github.event_name != 'push'
         env:
           EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
           EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}

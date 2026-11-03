@@ -18,6 +18,7 @@ def get_access_token(client_id: str, client_secret: str, refresh_token: str) -> 
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
         },
+        timeout=30,
     )
     response.raise_for_status()
     return response.json()["access_token"]
