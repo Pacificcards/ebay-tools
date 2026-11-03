@@ -194,6 +194,13 @@
 
   .count-note { font-size: 12px; color: var(--text-3); white-space: nowrap; }
 
+  .stale-banner {
+    margin: 0 0 16px; padding: 10px 14px; border-radius: 8px; font-size: 12.5px; font-weight: 600;
+    color: var(--critical); background: color-mix(in srgb, var(--critical) 10%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--critical) 35%, var(--border));
+  }
+  .stale-banner[hidden] { display: none; }
+
   .data-note {
     font-size: 11.5px; color: var(--text-3); margin: -10px 0 16px; padding-left: 2px;
   }
@@ -368,6 +375,8 @@
       <button class="jump-btn" id="jump-worst-btn">↓ Worst Performers</button>
     </div>
   </header>
+
+  <p class="stale-banner" id="stale-banner" hidden></p>
 
   <div class="kpi-row" id="kpi-row">
     <div class="kpi-tile">
@@ -552,6 +561,19 @@
     try { localStorage.setItem(FAV_STORAGE_KEY, JSON.stringify([...state.favorites])); } catch (e) {}
   }
 
+  // The nightly run normally leaves data through yesterday (UTC date minus 1). Warn when it has
+  // fallen further behind, so a failed run doesn't silently show an old day as "Yesterday".
+  (function showStaleBanner() {
+    const now = new Date();
+    const todayUtc = new Date(now.toISOString().slice(0, 10) + 'T00:00:00Z');
+    const daysBehind = Math.round((todayUtc - new Date(maxDate + 'T00:00:00Z')) / 86400000);
+    if (!(daysBehind >= 3 || (daysBehind === 2 && now.getUTCHours() >= 14))) return;
+    const lag = daysBehind - 1;
+    const banner = document.getElementById('stale-banner');
+    banner.textContent = 'Traffic data is ' + lag + (lag === 1 ? ' day' : ' days') + ' behind (latest is ' + fmtDateLong(maxDate) + '). The nightly update may have failed.';
+    banner.hidden = false;
+  })();
+
   const state = { preset: '1d', customStart: null, customEnd: null, search: '', hideZero: true, category: '', sortKey: 'views', sortDir: 'desc', expanded: null, favorites: loadFavorites() };
 
   // Build short, collision-safe labels for the category dropdown (e.g. "CCG Individual Cards"
@@ -614,8 +636,20 @@
     return (cur - prior) / prior;
   }
 
+  // Row metrics depend only on the listing and the date window, so keep them across the
+  // search/sort/filter re-renders (every keystroke) and drop them when the window changes.
+  let rowCache = new Map();
+  let rowCacheKey = '';
   function computeRow(l) {
     const [start, end] = windowFor(state.preset);
+    const key = start + '|' + end;
+    if (key !== rowCacheKey) { rowCache = new Map(); rowCacheKey = key; }
+    let row = rowCache.get(l.id);
+    if (!row) { row = computeRowUncached(l, start, end); rowCache.set(l.id, row); }
+    return row;
+  }
+
+  function computeRowUncached(l, start, end) {
     const [pStart, pEnd] = priorWindow(start, end);
     const impr = sumRange(l.days, start, end, 0);
     const views = sumRange(l.days, start, end, 1);
@@ -662,6 +696,17 @@
     return '<span class="metric-delta ' + dir + '">' + sign + formatted + '</span>';
   }
 
+  // getComputedStyle forces a style recalc; read the theme tokens once per render instead of per chart.
+  let themeCache = null;
+  function themeColors() {
+    if (!themeCache) {
+      const cs = getComputedStyle(document.documentElement);
+      const read = (name) => cs.getPropertyValue(name).trim();
+      themeCache = { sparkLine: read('--spark-line'), accent: read('--accent'), border: read('--border'), surface: read('--surface') };
+    }
+    return themeCache;
+  }
+
   function sparkSvg(vals, w, h) {
     const clean = vals.map(v => v === null ? null : v);
     const present = clean.filter(v => v !== null);
@@ -687,8 +732,7 @@
     }
     const lastPt = pts[lastIdx];
     const lastVal = clean[lastIdx];
-    const svLine = getComputedStyle(document.documentElement).getPropertyValue('--spark-line').trim();
-    const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+    const { sparkLine: svLine, accent } = themeColors();
     return '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
       '<path d="' + area + '" fill="' + accent + '" opacity="0.08"></path>' +
       '<path d="' + path + '" fill="none" stroke="' + svLine + '" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"></path>' +
@@ -710,6 +754,7 @@
   }
 
   function render() {
+    themeCache = null;
     const [start, end] = windowFor(state.preset);
     document.getElementById('data-note').textContent =
       'Showing ' + fmtDateShort(start) + '–' + fmtDateShort(end) +
@@ -848,6 +893,7 @@
   }
 
   function renderFavorites() {
+    themeCache = null;
     const favListings = [...state.favorites].map(id => listingById.get(id)).filter(Boolean);
     const section = document.getElementById('favorites-section');
     const tbody = document.getElementById('fav-tbody');
@@ -920,8 +966,7 @@
     const range = (max - min) || 1;
     const n = series.length;
     const stepX = (w - padL - padR) / (n - 1);
-    const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
-    const border = getComputedStyle(document.documentElement).getPropertyValue('--border').trim();
+    const { accent, border } = themeColors();
 
     const pts = series.map((s, i) => s.val === null ? null : [
       padL + i * stepX,
@@ -967,7 +1012,7 @@
       const dot = document.createElementNS(svgNS, 'circle');
       dot.setAttribute('cx', pts[lastIdx][0]); dot.setAttribute('cy', pts[lastIdx][1]);
       dot.setAttribute('r', '3'); dot.setAttribute('fill', accent);
-      dot.setAttribute('stroke', getComputedStyle(document.documentElement).getPropertyValue('--surface').trim());
+      dot.setAttribute('stroke', themeColors().surface);
       dot.setAttribute('stroke-width', '2');
       svg.appendChild(dot);
     }
@@ -1043,7 +1088,12 @@
   document.getElementById('custom-start').min = minDate; document.getElementById('custom-start').max = maxDate;
   document.getElementById('custom-end').min = minDate; document.getElementById('custom-end').max = maxDate;
 
-  document.getElementById('search').addEventListener('input', (e) => { state.search = e.target.value; render(); });
+  let searchTimer = null;
+  document.getElementById('search').addEventListener('input', (e) => {
+    state.search = e.target.value;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(render, 150);
+  });
   document.getElementById('qty-filter').addEventListener('change', (e) => { state.hideZero = e.target.checked; render(); });
   document.getElementById('category-filter').addEventListener('change', (e) => { state.category = e.target.value; render(); });
 

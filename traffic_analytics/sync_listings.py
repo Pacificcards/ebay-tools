@@ -18,6 +18,9 @@ from shared.ebay_auth import get_access_token
 TRADING_API_URL = "https://api.ebay.com/ws/api.dll"
 NS = {"e": "urn:ebay:apis:eBLBaseComponents"}
 PAGE_SIZE = 200
+# Refuse to sync if the active-listing count falls by more than this fraction versus what's
+# already stored: _mark_ended() would otherwise flag everything missing from a bad response as ended.
+MAX_ACTIVE_DROP = 0.5
 
 
 def sync() -> None:
@@ -30,11 +33,36 @@ def sync() -> None:
     all_items = _fetch_all_active(token)
     print(f"[sync_listings] fetched {len(all_items)} active listings from eBay")
 
+    _validate_active_count(_count_stored_active(), len(all_items))
+
     _upsert(all_items)
     _mark_ended(all_items)
     _backfill_categories(token)
 
     print("[sync_listings] done")
+
+
+def _count_stored_active() -> int:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM listing_metadata WHERE status != 'ended'")
+            return cur.fetchone()[0]
+    finally:
+        conn.close()
+
+
+def _validate_active_count(stored_active: int, fetched: int) -> None:
+    if fetched == 0 and stored_active > 0:
+        raise RuntimeError(
+            f"GetMyeBaySelling returned 0 active listings but {stored_active} are stored; "
+            "refusing to mark them all ended"
+        )
+    if stored_active >= 20 and fetched < stored_active * (1 - MAX_ACTIVE_DROP):
+        raise RuntimeError(
+            f"GetMyeBaySelling returned {fetched} active listings, down from {stored_active} stored "
+            f"(more than a {MAX_ACTIVE_DROP:.0%} drop); refusing to mark the rest ended"
+        )
 
 
 def _backfill_categories(token: str) -> None:
@@ -93,7 +121,7 @@ def _fetch_category(token: str, listing_id: str) -> dict | None:
         "X-EBAY-API-IAF-TOKEN": token,
         "Content-Type": "text/xml",
     }
-    response = requests.post(TRADING_API_URL, data=body.encode("utf-8"), headers=headers)
+    response = requests.post(TRADING_API_URL, data=body.encode("utf-8"), headers=headers, timeout=60)
     if not response.ok:
         print(f"[sync_listings] GetItem HTTP {response.status_code} for {listing_id}: {response.text[:200]}")
         return None
@@ -141,7 +169,7 @@ def _fetch_page(token: str, page: int) -> tuple[list[dict], int]:
         "Content-Type": "text/xml",
     }
 
-    response = requests.post(TRADING_API_URL, data=body.encode("utf-8"), headers=headers)
+    response = requests.post(TRADING_API_URL, data=body.encode("utf-8"), headers=headers, timeout=60)
     if not response.ok:
         print(f"[sync_listings] HTTP {response.status_code}: {response.text}")
         response.raise_for_status()

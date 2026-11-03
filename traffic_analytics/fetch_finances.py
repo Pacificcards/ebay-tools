@@ -58,7 +58,7 @@ def _paginate(token: str, filter_str: str) -> list[dict]:
             "limit": PAGE_SIZE,
             "offset": offset,
         }
-        response = requests.get(FINANCES_URL, headers=headers, params=params)
+        response = requests.get(FINANCES_URL, headers=headers, params=params, timeout=60)
         if response.status_code == 204:
             break
         if not response.ok:

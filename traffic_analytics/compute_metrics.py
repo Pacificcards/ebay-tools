@@ -1,12 +1,23 @@
-"""Read raw tables, compute metrics, upsert into listing_metrics_computed."""
+"""Read raw tables, compute metrics, upsert into listing_metrics_computed.
+
+Only the trailing LOOKBACK_DAYS are recomputed each run (older rows don't change; orders
+arrive at most a couple of days late). Set COMPUTE_FULL=1 to rebuild the whole history,
+e.g. after a formula change.
+"""
+import os
+from datetime import date, timedelta
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
 from shared.db import get_connection
 
+LOOKBACK_DAYS = 14
 
-def compute() -> None:
+
+def compute(full: bool = False) -> None:
+    cutoff = date.min if full else date.today() - timedelta(days=LOOKBACK_DAYS)
     conn = get_connection()
     try:
         with conn, conn.cursor() as cur:
@@ -47,8 +58,10 @@ def compute() -> None:
                         SUM(quantity)                                    AS quantity,
                         SUM(sale_price)                                  AS revenue
                     FROM orders_raw
+                    WHERE order_date >= %s
                     GROUP BY listing_id, order_date
                 ) o USING (listing_id, date)
+                WHERE r.date >= %s
                 ON CONFLICT (listing_id, date) DO UPDATE SET
                     ctr_ebay_search_page = EXCLUDED.ctr_ebay_search_page,
                     ctr_calculated   = EXCLUDED.ctr_calculated,
@@ -59,7 +72,7 @@ def compute() -> None:
                     units_per_view   = EXCLUDED.units_per_view,
                     units_per_1k_impr = EXCLUDED.units_per_1k_impr,
                     computed_at      = NOW()
-            """)
+            """, (cutoff, cutoff))
             rowcount = cur.rowcount
         print(f"[compute_metrics] upserted {rowcount} rows into listing_metrics_computed")
     finally:
@@ -67,4 +80,4 @@ def compute() -> None:
 
 
 if __name__ == "__main__":
-    compute()
+    compute(full=bool(os.environ.get("COMPUTE_FULL")))

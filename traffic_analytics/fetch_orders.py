@@ -49,7 +49,7 @@ def _paginate(token: str, filter_str: str) -> list[dict]:
 
     while True:
         params = {"filter": filter_str, "limit": PAGE_LIMIT, "offset": offset}
-        response = requests.get(ORDERS_URL, headers=headers, params=params)
+        response = requests.get(ORDERS_URL, headers=headers, params=params, timeout=60)
         if not response.ok:
             print(f"[fetch_orders] HTTP {response.status_code}: {response.text}")
             response.raise_for_status()

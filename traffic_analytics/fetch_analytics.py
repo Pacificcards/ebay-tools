@@ -42,6 +42,10 @@ METRICS = ",".join([
 
 CATCHUP_WINDOW_DAYS = 30
 CATCHUP_DAYS_PER_RUN = 5
+# A date counts as partially fetched when it has fewer rows than this fraction of an
+# adjacent day. Day-to-day listing growth is a few percent, so 0.8 only trips on real gaps
+# (e.g. a rate-limited run that stored 91 of ~265 rows).
+PARTIAL_DAY_RATIO = 0.8
 
 
 def fetch_and_store() -> None:
@@ -61,7 +65,7 @@ def fetch_and_store() -> None:
     catchup_start = yesterday - timedelta(days=CATCHUP_WINDOW_DAYS - 1)
     catchup_dates = _get_missing_dates(catchup_start, yesterday, CATCHUP_DAYS_PER_RUN)
 
-    windows = [yesterday] + catchup_dates
+    windows = [yesterday] + [d for d in catchup_dates if d != yesterday]
     if catchup_dates:
         print(f"[fetch_analytics] catch-up: {len(catchup_dates)} dates queued ({catchup_dates[-1]} .. {catchup_dates[0]})")
 
@@ -89,22 +93,36 @@ def fetch_and_store() -> None:
 
 
 def _get_missing_dates(start: date, end: date, limit: int) -> list[date]:
-    """Return up to `limit` dates in [start, end] with no rows in listing_metrics_raw."""
-    all_dates = list(_date_range(start, end))
-    if not all_dates:
+    """Return up to `limit` dates in [start, end] that are unfetched or only partially fetched."""
+    if start > end:
         return []
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT DISTINCT date FROM listing_metrics_raw WHERE date BETWEEN %s AND %s",
-                (start, end),
+                "SELECT date, COUNT(*) FROM listing_metrics_raw "
+                "WHERE date BETWEEN %s AND %s GROUP BY date",
+                (start - timedelta(days=1), end + timedelta(days=1)),
             )
-            fetched = {row[0] for row in cur.fetchall()}
+            counts = {row[0]: row[1] for row in cur.fetchall()}
     finally:
         conn.close()
-    missing = sorted([d for d in all_dates if d not in fetched], reverse=True)
-    return missing[:limit]
+    return _incomplete_dates(counts, start, end, limit)
+
+
+def _incomplete_dates(counts: dict[date, int], start: date, end: date, limit: int) -> list[date]:
+    """Dates in [start, end], newest first, with no rows or far fewer rows than a neighboring day.
+
+    "Any row at all" used to count as fetched, so a run that was cut short by the rate
+    limit left a partial day that was never retried.
+    """
+    incomplete = []
+    for d in _date_range(start, end):
+        n = counts.get(d, 0)
+        neighbor = max(counts.get(d - timedelta(days=1), 0), counts.get(d + timedelta(days=1), 0))
+        if n == 0 or (neighbor and n < PARTIAL_DAY_RATIO * neighbor):
+            incomplete.append(d)
+    return sorted(incomplete, reverse=True)[:limit]
 
 
 def _fetch_window_with_retry(token: str, start_date: date, end_date: date, listing_ids: list[str], retries: int = 3) -> list[dict]:
@@ -143,7 +161,7 @@ def _fetch_batch(token: str, start_date: date, end_date: date, listing_ids: list
     url = f"{ANALYTICS_URL}?dimension=LISTING&metric={METRICS}&filter={filter_str}"
     headers = {"Authorization": f"Bearer {token}", "Content-Language": "en-US"}
 
-    response = requests.get(url, headers=headers)
+    response = requests.get(url, headers=headers, timeout=60)
     if not response.ok:
         print(f"[fetch_analytics] HTTP {response.status_code}: {response.text}")
         response.raise_for_status()
