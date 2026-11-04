@@ -88,8 +88,12 @@
 ## Traffic Analytics
 
 23. **Backfill the 8/6 gap** — partial coverage left over from the 2026-08-07 pagination-bug backfill hitting the API's daily rate limit. Low priority, explicitly deferred by user until requested — re-run `_fetch_window_with_retry` for just that date.
-24. **Verify `views_total` is actually comprehensive** — same `LISTING_*_TOTAL` naming pattern that undersold impressions; not yet checked against Seller Hub. (suggested)
-25. **Confirm the mobile fixes actually look right on a real device** — the 2026-08-08/09 mobile pass was iterated purely from user screenshots; worth a final on-device pass. (suggested)
+24. **Verify `views_total` is actually comprehensive** — same `LISTING_*_TOTAL` naming pattern that undersold impressions; not yet checked against Seller Hub. Matters less now that the dashboard shows search-only views + a Non-Search sum, but still worth checking `views_search + non-search == views_total`. (suggested)
+25. **Check the reworked dashboard on a phone** — 8 columns now (table min-width 840px, was 760px/7); user said the layout "looks good" but didn't say which device. Confirm the sticky first column and swipe still work on mobile. (suggested)
+29. **Re-tune Worst Performers thresholds after a week of data** — Lowest Impressions is now "0 search impressions in 7d" (82 listings after the new-listing hold-back) and Lowest CTR is "0% at ≥50 search impressions" (39); revisit `IMPR_THRESHOLD` / `CTR_IMPR_FLOOR` in `docs/traffic/index.html` once the picture settles. (suggested)
+30. **Decide whether Non-Search Views deserves a detail chart** — currently only in the table/favorites; the expanded-row panel shows CTR, Impressions, Views only. (suggested)
+31. **Align `compute_metrics` with the search-only choice, or leave inert** — `ctr_calculated`/`units_per_1k_impr` still divide by `impressions_all_sources`; nothing reads `listing_metrics_computed` today, so only change it if something starts using it. (suggested)
+32. **Watch tonight's/tomorrow's scheduled runs (11:00 + 20:00 UTC)** — the new `start_time` column and JSON shape ran green on a manual dispatch (2026-11-04 01:55 UTC) but not yet on the cron-job.org trigger. (suggested)
 
 ---
 
