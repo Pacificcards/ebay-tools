@@ -111,5 +111,19 @@ class TestComputeMetricsWindow(unittest.TestCase):
         self.assertEqual(params, (date.min, date.min))
 
 
+class TestParseStartTime(unittest.TestCase):
+    XML = """<GetMyeBaySellingResponse xmlns="urn:ebay:apis:eBLBaseComponents"><Ack>Success</Ack>
+    <ActiveList><ItemArray>
+      <Item><ItemID>1</ItemID><ListingDetails><StartTime>2026-10-04T18:28:24.000Z</StartTime></ListingDetails></Item>
+      <Item><ItemID>2</ItemID></Item>
+    </ItemArray><PaginationResult><TotalNumberOfPages>1</TotalNumberOfPages></PaginationResult></ActiveList>
+    </GetMyeBaySellingResponse>"""
+
+    def test_start_time_parsed_as_utc_and_missing_is_none(self):
+        items, _ = sync_listings._parse(self.XML)
+        self.assertEqual(items[0]["start_time"].isoformat(), "2026-10-04T18:28:24+00:00")
+        self.assertIsNone(items[1]["start_time"])
+
+
 if __name__ == "__main__":
     unittest.main()

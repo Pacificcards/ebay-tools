@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS listing_metadata (
     quantity_sold       INTEGER,            -- SellingStatus.QuantitySold; remaining = quantity - quantity_sold
     category_id         TEXT,               -- PrimaryCategory.CategoryID (GetItem; backfilled incrementally, rarely changes)
     category_name       TEXT,               -- PrimaryCategory.CategoryName, full breadcrumb (e.g. "Toys & Hobbies:...:CCG Individual Cards")
+    start_time          TIMESTAMPTZ,        -- ListingDetails.StartTime from GetMyeBaySelling (when the listing went live; resets on relist)
     last_synced_at      TIMESTAMPTZ,        -- when sync_listings last ran
     updated_at          TIMESTAMPTZ DEFAULT NOW()
 );

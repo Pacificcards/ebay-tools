@@ -197,6 +197,7 @@ def _parse(xml_text: str) -> tuple[list[dict], int]:
 
         qty_text = item_el.findtext("e:Quantity", namespaces=NS)
         qty_sold_text = item_el.findtext("e:SellingStatus/e:QuantitySold", namespaces=NS)
+        start_text = item_el.findtext("e:ListingDetails/e:StartTime", namespaces=NS)
 
         items.append({
             "listing_id": listing_id,
@@ -208,6 +209,7 @@ def _parse(xml_text: str) -> tuple[list[dict], int]:
             "status": "active_hidden" if hide_from_search else "active",
             "quantity": int(qty_text) if qty_text else None,
             "quantity_sold": int(qty_sold_text) if qty_sold_text else 0,
+            "start_time": _parse_time(start_text),
         })
 
     total_pages_text = root.findtext(
@@ -216,6 +218,15 @@ def _parse(xml_text: str) -> tuple[list[dict], int]:
     total_pages = int(total_pages_text) if total_pages_text else 1
 
     return items, total_pages
+
+
+def _parse_time(text: str | None) -> datetime | None:
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _price(item_el) -> float | None:
@@ -239,12 +250,12 @@ def _upsert(items: list[dict]) -> None:
                     INSERT INTO listing_metadata (
                         listing_id, title, sku, current_price,
                         status, hide_from_search, hide_reason,
-                        quantity, quantity_sold,
+                        quantity, quantity_sold, start_time,
                         last_synced_at, updated_at
                     ) VALUES (
                         %(listing_id)s, %(title)s, %(sku)s, %(current_price)s,
                         %(status)s, %(hide_from_search)s, %(hide_reason)s,
-                        %(quantity)s, %(quantity_sold)s,
+                        %(quantity)s, %(quantity_sold)s, %(start_time)s,
                         %(now)s, %(now)s
                     )
                     ON CONFLICT (listing_id) DO UPDATE SET
@@ -256,6 +267,7 @@ def _upsert(items: list[dict]) -> None:
                         hide_reason      = EXCLUDED.hide_reason,
                         quantity         = EXCLUDED.quantity,
                         quantity_sold    = EXCLUDED.quantity_sold,
+                        start_time       = EXCLUDED.start_time,
                         last_synced_at   = EXCLUDED.last_synced_at,
                         updated_at       = EXCLUDED.updated_at
                     """,

@@ -211,7 +211,7 @@
     box-shadow: var(--shadow); overflow: hidden;
   }
   .table-scroll { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; min-width: 760px; }
+  table { width: 100%; border-collapse: collapse; min-width: 840px; }
   thead th {
     position: sticky; top: 0; background: var(--surface-2);
     text-align: right; font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
@@ -352,7 +352,7 @@
     .listing-title { max-width: 128px; }
     .listing-meta { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 128px; }
     /* The expanded detail panel lives inside the same wide, horizontally-scrolling
-       <table> (min-width 760px for its 7 columns) as a colspan cell, so without this
+       <table> (min-width 840px for its 8 columns) as a colspan cell, so without this
        it inherits that 760px+ width -- which is what was making the chart render at
        roughly double its intended height (aspect-ratio computed off the wrong width).
        Sticky-pinning it to the left edge of the table's own scroll viewport and
@@ -429,10 +429,11 @@
               <th style="text-align:left">Listing</th>
               <th>Price</th>
               <th>Qty</th>
+              <th>CTR</th>
               <th>Impressions</th>
               <th>Views</th>
-              <th>CTR</th>
-              <th>Views Trend (7D)</th>
+              <th>Non-Search Views</th>
+              <th>CTR Trend (7D)</th>
             </tr>
           </thead>
           <tbody id="fav-tbody"></tbody>
@@ -476,10 +477,11 @@
             <th data-sort="title" style="text-align:left">Listing<span class="arrow">▾</span></th>
             <th data-sort="price">Price<span class="arrow">▾</span></th>
             <th data-sort="qty">Qty<span class="arrow">▾</span></th>
+            <th data-sort="ctr">CTR<span class="arrow">▾</span></th>
             <th data-sort="impressions">Impressions<span class="arrow">▾</span></th>
             <th data-sort="views">Views<span class="arrow">▾</span></th>
-            <th data-sort="ctr">CTR<span class="arrow">▾</span></th>
-            <th>Views Trend (7D)</th>
+            <th data-sort="nsviews">Non-Search Views<span class="arrow">▾</span></th>
+            <th>CTR Trend (7D)</th>
           </tr>
         </thead>
         <tbody id="tbody"></tbody>
@@ -494,14 +496,14 @@
     <p class="scroll-hint">↔ Swipe each table sideways to see more columns</p>
     <div class="worst-tables">
       <div class="worst-card">
-        <h3 class="worst-card-title">Lowest Impressions <span class="worst-count" id="low-impr-count"></span></h3>
+        <h3 class="worst-card-title">Lowest Search Impressions <span class="worst-count" id="low-impr-count"></span></h3>
         <div class="worst-scroll-wrap">
           <table class="mini-table">
             <thead><tr>
               <th data-sort="listing" style="text-align:left">Listing<span class="arrow">▾</span></th>
               <th data-sort="price">Price<span class="arrow">▾</span></th>
-              <th data-sort="impr">Impr (7D)<span class="arrow">▾</span></th>
-              <th data-sort="views">Views (7D)<span class="arrow">▾</span></th>
+              <th data-sort="impr">Search Impr (7D)<span class="arrow">▾</span></th>
+              <th data-sort="views">Search Views (7D)<span class="arrow">▾</span></th>
               <th data-sort="ctr">CTR<span class="arrow">▾</span></th>
             </tr></thead>
             <tbody id="low-impr-tbody"></tbody>
@@ -515,8 +517,8 @@
             <thead><tr>
               <th data-sort="listing" style="text-align:left">Listing<span class="arrow">▾</span></th>
               <th data-sort="price">Price<span class="arrow">▾</span></th>
-              <th data-sort="impr">Impr (7D)<span class="arrow">▾</span></th>
-              <th data-sort="views">Views (7D)<span class="arrow">▾</span></th>
+              <th data-sort="impr">Search Impr (7D)<span class="arrow">▾</span></th>
+              <th data-sort="views">Search Views (7D)<span class="arrow">▾</span></th>
               <th data-sort="ctr">CTR<span class="arrow">▾</span></th>
             </tr></thead>
             <tbody id="low-ctr-tbody"></tbody>
@@ -539,12 +541,14 @@
   }
   const DATA = _json.listings;
   const SALES = _json.sales;
+  // When the analytics sync last ran; listings that went live <24h before it are held out of Worst Performers.
+  const SYNCED_AT = _json.synced_at ? new Date(_json.synced_at) : null;
+  const NEW_LISTING_HOURS = 24;
   const listings = Object.entries(DATA).map(([id, v]) => ({ id, ...v }));
   const listingById = new Map(listings.map(l => [l.id, l]));
   const allDates = Array.from(new Set(listings.flatMap(l => Object.keys(l.days)))).sort();
   const maxDate = allDates[allDates.length - 1];
   const minDate = allDates[0];
-  const IMPR_START = "2026-07-31"; // impressions_all_sources has no data before this date
 
   document.getElementById('listing-count').textContent = listings.length + ' active listings · data through ' + fmtDateLong(maxDate) + ' · generated ' + _json.generated_at;
 
@@ -653,27 +657,27 @@
     const [pStart, pEnd] = priorWindow(start, end);
     const impr = sumRange(l.days, start, end, 0);
     const views = sumRange(l.days, start, end, 1);
-    const imprNarrow = sumRange(l.days, start, end, 2);
+    const nsViews = sumRange(l.days, start, end, 2);
     const imprP = sumRange(l.days, pStart, pEnd, 0);
     const viewsP = sumRange(l.days, pStart, pEnd, 1);
-    const imprNarrowP = sumRange(l.days, pStart, pEnd, 2);
+    const nsViewsP = sumRange(l.days, pStart, pEnd, 2);
     const ctr = (impr && impr > 0) ? views / impr : null;
     const ctrP = (imprP && imprP > 0) ? viewsP / imprP : null;
-    // sparkline: fixed last-7-days window of views, independent of the picker
+    // sparkline: fixed last-7-days window of daily CTR (search views / search impressions), independent of the picker
     const sparkStart = addDays(maxDate, -6);
     const sparkVals = [];
     let d = sparkStart;
     while (d <= maxDate) {
       const v = l.days[d];
-      sparkVals.push(v && v[1] !== null && v[1] !== undefined ? v[1] : null);
+      sparkVals.push(v && v[0] > 0 && v[1] !== null && v[1] !== undefined ? v[1] / v[0] : null);
       d = addDays(d, 1);
     }
     return {
-      l, impr, views, ctr, imprNarrow,
+      l, impr, views, ctr, nsViews,
       imprDelta: pctDelta(impr, imprP),
       viewsDelta: pctDelta(views, viewsP),
       ctrDelta: pctDelta(ctr, ctrP),
-      imprNarrowDelta: pctDelta(imprNarrow, imprNarrowP),
+      nsViewsDelta: pctDelta(nsViews, nsViewsP),
       sparkVals,
     };
   }
@@ -758,7 +762,7 @@
     const [start, end] = windowFor(state.preset);
     document.getElementById('data-note').textContent =
       'Showing ' + fmtDateShort(start) + '–' + fmtDateShort(end) +
-      '. Impressions shown as narrow|all-sources — narrow is search+store only; all-sources is the one that matches Seller Hub and is tracked from ' + fmtDateLong(IMPR_START) + ' onward (earlier dates show narrow only).';
+      '. Impressions and Views count eBay search results only; CTR = search views ÷ search impressions. Non-Search Views = store + direct + off-eBay + other-eBay views (blank where eBay did not report every source).';
 
     let rows = listings.map(computeRow);
 
@@ -778,6 +782,7 @@
       if (key === 'impressions') { av = a.impr ?? -1; bv = b.impr ?? -1; }
       if (key === 'views') { av = a.views ?? -1; bv = b.views ?? -1; }
       if (key === 'ctr') { av = a.ctr ?? -1; bv = b.ctr ?? -1; }
+      if (key === 'nsviews') { av = a.nsViews ?? -1; bv = b.nsViews ?? -1; }
       return (av - bv) * dir;
     });
 
@@ -793,7 +798,7 @@
 
     rows.forEach(r => {
       tbody.appendChild(buildListingRow(r));
-      if (state.expanded === r.l.id) tbody.appendChild(buildDetailRow(r.l, 7));
+      if (state.expanded === r.l.id) tbody.appendChild(buildDetailRow(r.l, 8));
     });
   }
 
@@ -843,13 +848,13 @@
     tdQty.appendChild(qtyPill);
 
     const tdImpr = document.createElement('td');
-    tdImpr.innerHTML = '<div class="metric-stack">' +
-      '<span class="metric-val">' + fmtNum(r.imprNarrow) + '<span class="metric-divider">|</span>' + fmtNum(r.impr) + '</span>' +
-      '<span class="metric-pair">' + deltaHtml(r.imprNarrowDelta) + '<span class="metric-divider">|</span>' + deltaHtml(r.imprDelta) + '</span>' +
-      '</div>';
+    tdImpr.innerHTML = '<div class="metric-stack"><span class="metric-val">' + fmtNum(r.impr) + '</span>' + deltaHtml(r.imprDelta) + '</div>';
 
     const tdViews = document.createElement('td');
     tdViews.innerHTML = '<div class="metric-stack"><span class="metric-val">' + fmtNum(r.views) + '</span>' + deltaHtml(r.viewsDelta) + '</div>';
+
+    const tdNsViews = document.createElement('td');
+    tdNsViews.innerHTML = '<div class="metric-stack"><span class="metric-val">' + fmtNum(r.nsViews) + '</span>' + deltaHtml(r.nsViewsDelta) + '</div>';
 
     const tdCtr = document.createElement('td');
     tdCtr.innerHTML = '<div class="metric-stack"><span class="metric-val">' + fmtPct(r.ctr) + '</span>' + deltaHtml(r.ctrDelta) + '</div>';
@@ -861,8 +866,8 @@
     sparkWrap.innerHTML = sparkSvg(r.sparkVals, 110, 30);
     tdSpark.appendChild(sparkWrap);
 
-    tr.appendChild(tdName); tr.appendChild(tdPrice); tr.appendChild(tdQty); tr.appendChild(tdImpr);
-    tr.appendChild(tdViews); tr.appendChild(tdCtr); tr.appendChild(tdSpark);
+    tr.appendChild(tdName); tr.appendChild(tdPrice); tr.appendChild(tdQty); tr.appendChild(tdCtr);
+    tr.appendChild(tdImpr); tr.appendChild(tdViews); tr.appendChild(tdNsViews); tr.appendChild(tdSpark);
 
     tr.addEventListener('click', () => toggleExpand(r.l.id));
     if (state.expanded === r.l.id) tr.classList.add('expanded');
@@ -912,7 +917,7 @@
     tbody.innerHTML = '';
     rows.forEach(r => {
       tbody.appendChild(buildListingRow(r));
-      if (state.expanded === r.l.id) tbody.appendChild(buildDetailRow(r.l, 7));
+      if (state.expanded === r.l.id) tbody.appendChild(buildDetailRow(r.l, 8));
     });
   }
 
@@ -923,16 +928,16 @@
     grid.className = 'detail-charts';
 
     const dates = allDates.filter(d => d in l.days);
-    const imprSeries = dates.filter(d => d >= IMPR_START).map(d => ({ date: d, val: l.days[d][0] }));
+    const imprSeries = dates.map(d => ({ date: d, val: l.days[d][0] }));
     const viewsSeries = dates.map(d => ({ date: d, val: l.days[d][1] }));
-    const ctrSeries = dates.filter(d => d >= IMPR_START).map(d => {
+    const ctrSeries = dates.map(d => {
       const [imp, v] = l.days[d];
-      return { date: d, val: (imp && imp > 0) ? v / imp : null };
+      return { date: d, val: (imp && imp > 0 && v !== null && v !== undefined) ? v / imp : null };
     });
 
-    grid.appendChild(chartCard('Impressions', 'since ' + fmtDateShort(IMPR_START), imprSeries, fmtNum));
-    grid.appendChild(chartCard('Views', 'since ' + fmtDateShort(minDate), viewsSeries, fmtNum));
-    grid.appendChild(chartCard('CTR', 'since ' + fmtDateShort(IMPR_START), ctrSeries, fmtPct));
+    grid.appendChild(chartCard('Impressions (search)', 'since ' + fmtDateShort(minDate), imprSeries, fmtNum));
+    grid.appendChild(chartCard('Views (search)', 'since ' + fmtDateShort(minDate), viewsSeries, fmtNum));
+    grid.appendChild(chartCard('CTR', 'since ' + fmtDateShort(minDate), ctrSeries, fmtPct));
 
     panel.appendChild(grid);
     return panel;
@@ -1156,21 +1161,26 @@
   }
 
   // ---- Worst Performers ----
-  // Thresholds picked from this catalog's real distribution (in-stock, currently-tracked
-  // listings only): impressions <= 25 over trailing 7d sits around the bottom decile;
-  // 0% CTR at >=50 impressions isolates listings that ARE getting seen but never clicked,
-  // vs. the median currently-tracked listing which sits well above zero. Both are easy to
-  // re-tune later -- see IMPR_THRESHOLD / CTR_IMPR_FLOOR below.
+  // Both rules use SEARCH-results impressions/views only (2026-11-03). Search impressions are
+  // small for most listings (median 5 over 7d across ~640 in-stock tracked listings), so the
+  // old all-sources threshold of <=25 would flag ~77% of the catalog; <=0 (no search
+  // impressions at all in 7d) flags ~22%. 0% CTR at >=50 search impressions isolates listings
+  // that ARE being seen but never clicked (~39 listings). Easy to re-tune -- see
+  // IMPR_THRESHOLD / CTR_IMPR_FLOOR below.
   const WORST_WINDOW_DAYS = 7;
-  const IMPR_THRESHOLD = 25;
+  const IMPR_THRESHOLD = 0;
   const CTR_IMPR_FLOOR = 50;
 
   function computeWorstPerformers() {
     const start = addDays(maxDate, -(WORST_WINDOW_DAYS - 1));
     const rows = [];
-    let excluded = 0;
+    let excluded = 0, tooNew = 0;
+    const newCutoff = SYNCED_AT ? SYNCED_AT.getTime() - NEW_LISTING_HOURS * 3600000 : null;
     listings.forEach(l => {
       if (!(l.qty > 0)) return; // sold-out listings aren't actionable "fix the listing" targets
+      // Started <24h before the sync: too new to have meaningful traffic, so don't judge it yet.
+      // Listings with no known start time (not yet synced) are judged as before.
+      if (newCutoff !== null && l.start && new Date(l.start).getTime() > newCutoff) { tooNew++; return; }
       let impr = 0, views = 0, any = false;
       let d = start;
       while (d <= maxDate) {
@@ -1185,7 +1195,7 @@
     });
     const lowImpr = rows.filter(r => r.impr <= IMPR_THRESHOLD);
     const lowCtr = rows.filter(r => r.impr >= CTR_IMPR_FLOOR && r.ctr === 0);
-    return { lowImpr, lowCtr, excluded, tracked: rows.length };
+    return { lowImpr, lowCtr, excluded, tooNew, tracked: rows.length };
   }
 
   const worstSort = {
@@ -1246,9 +1256,10 @@
     const wp = computeWorstPerformers();
     document.getElementById('worst-caption').textContent =
       'Trailing 7 days (' + fmtDateShort(addDays(maxDate, -6)) + '–' + fmtDateShort(maxDate) + '), in-stock listings only. Click any column to sort. ' +
-      wp.excluded + ' in-stock listings excluded — no traffic data reported at all in this window, which looks like a pipeline gap under investigation, not confirmed zero real-world traffic.';
-    document.getElementById('low-impr-count').textContent = wp.lowImpr.length + ' listings ≤ ' + IMPR_THRESHOLD + ' impressions';
-    document.getElementById('low-ctr-count').textContent = wp.lowCtr.length + ' listings at 0% CTR (≥ ' + CTR_IMPR_FLOOR + ' impressions)';
+      wp.excluded + ' in-stock listings excluded — no traffic data reported at all in this window, which looks like a pipeline gap under investigation, not confirmed zero real-world traffic. ' +
+      wp.tooNew + ' more excluded because they went live less than ' + NEW_LISTING_HOURS + ' hours before the latest sync.';
+    document.getElementById('low-impr-count').textContent = wp.lowImpr.length + ' listings ≤ ' + IMPR_THRESHOLD + ' search impressions';
+    document.getElementById('low-ctr-count').textContent = wp.lowCtr.length + ' listings at 0% CTR (≥ ' + CTR_IMPR_FLOOR + ' search impressions)';
     fillWorstTable('low-impr-tbody', sortWorstRows(wp.lowImpr, worstSort['low-impr']), 'No listings currently meet this threshold.');
     fillWorstTable('low-ctr-tbody', sortWorstRows(wp.lowCtr, worstSort['low-ctr']), 'No listings currently meet this threshold.');
     updateWorstSortIndicators();
