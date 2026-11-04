@@ -935,9 +935,9 @@
       return { date: d, val: (imp && imp > 0 && v !== null && v !== undefined) ? v / imp : null };
     });
 
+    grid.appendChild(chartCard('CTR', 'since ' + fmtDateShort(minDate), ctrSeries, fmtPct));
     grid.appendChild(chartCard('Impressions (search)', 'since ' + fmtDateShort(minDate), imprSeries, fmtNum));
     grid.appendChild(chartCard('Views (search)', 'since ' + fmtDateShort(minDate), viewsSeries, fmtNum));
-    grid.appendChild(chartCard('CTR', 'since ' + fmtDateShort(minDate), ctrSeries, fmtPct));
 
     panel.appendChild(grid);
     return panel;
