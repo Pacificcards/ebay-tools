@@ -23,7 +23,7 @@ orders, page = [], 1
 while True:
     batch, h = get(f"/orders?page_size=100&page={page}&updated_at_min={since.replace(' ', '%20')}")
     orders += batch
-    if page >= int(h.get("X-Total-Pages-Count", 1)) or not batch:
+    if len(batch) < 100 or page >= 60:
         break
     page += 1
 print("orders pulled (updated last 60d):", len(orders))
