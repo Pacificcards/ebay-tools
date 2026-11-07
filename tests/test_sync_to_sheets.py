@@ -77,75 +77,76 @@ class TestFetchSales(unittest.TestCase):
         result = sts.fetch_sales(conn)
         self.assertEqual(result, [])
 
-    def test_gross_sale_nets_out_refunds(self):
-        """Cancelled/refunded sales must not overstate gross_sale — see CLAUDE.md
-        'cancellation revenue overstatement' fix. REFUND/CREDIT/ADJUSTMENT rows
-        linked by order_id should be netted out of gross_sale, proportionally
-        split across multi-line orders the same way shipping_cost already is."""
+    def test_refunds_are_not_netted_in_sales(self):
+        """A refunded sale stays an ordinary sale on the Sales tab. The refund lives on
+        the Ad Fees tab and is subtracted in P&L by Group / Monthly instead."""
         conn = _make_conn([self.FAKE_ROWS[0]])
         sts.fetch_sales(conn)
-        executed_sql = conn.cursor.return_value.__enter__.return_value.execute.call_args[0][0]
-        self.assertIn("total_refund", executed_sql)
-        self.assertIn("REFUND", executed_sql)
-        self.assertIn("CREDIT", executed_sql)
-        self.assertIn("ADJUSTMENT", executed_sql)
-        # net_payout must ALSO net the refund (2026-10-20): a fully refunded order
-        # can't keep showing its payout as received. Profit stays identical because
-        # the same rows are excluded from the Adjustments column (see
-        # TestFetchAdFees) — netted in exactly one place, never both.
-        net_payout_clause = executed_sql.split("AS gross_sale")[1].split("AS net_payout")[0]
-        self.assertIn("total_refund", net_payout_clause)
+        sql = conn.cursor.return_value.__enter__.return_value.execute.call_args[0][0]
+        self.assertNotIn("total_refund", sql)
+        self.assertNotIn(" rf ", sql)
+        self.assertNotIn("'REFUND'", sql)
 
-    def test_refund_netting_only_counts_debit_rows(self):
-        """Only DEBIT refunds (money paid back to a buyer) are netted against
-        revenue. CREDIT rows (e.g. DISPUTE_HOLD_REVERSE) are money coming IN —
-        netting them like refunds would flip their sign and wrongly cut profit."""
+    def test_manual_sale_gross_equals_entered_amount(self):
+        """Manual sales: gross_sale is the entered amount (same as net_payout)."""
         conn = _make_conn([self.FAKE_ROWS[0]])
         sts.fetch_sales(conn)
-        executed_sql = conn.cursor.return_value.__enter__.return_value.execute.call_args[0][0]
-        rf_join = executed_sql.split("AS total_refund")[1].split(") rf ON")[0]
-        self.assertIn("booking_entry = 'DEBIT'", rf_join)
-
-    def test_gross_sale_refund_netting_uses_net_payout_basis_not_gross(self):
-        """Regression test for a real bug (2026-10-20): eBay's REFUND/CREDIT amount
-        is on the NET-payout basis (what was actually credited, post-fee), the
-        same basis as f.amount (SALE CREDIT) — NOT the gross_sale basis. Netting
-        it straight against gross_sale without grossing it up first leaves a
-        leftover ~equal to the eBay fee on every refunded order, making a 100%
-        cancellation look like a partial one. Confirmed live: an $819.95 sale
-        with a $722.49 net payout, fully refunded for exactly $722.49, was
-        incorrectly showing gross_sale=$97.46 instead of ~$0.
-        The fix must divide by f.amount (order-level net payout), not
-        order_totals.total_gross, when scaling rf.total_refund up to a
-        gross-equivalent amount."""
-        conn = _make_conn([self.FAKE_ROWS[0]])
-        sts.fetch_sales(conn)
-        executed_sql = conn.cursor.return_value.__enter__.return_value.execute.call_args[0][0]
-        gross_sale_clause = executed_sql.split("AS gross_sale")[0]
-        # the refund-scaling division must be against f.amount, not order_totals.total_gross
-        self.assertIn("rf.total_refund", gross_sale_clause)
-        self.assertIn("/ f.amount", gross_sale_clause)
-        self.assertNotIn("rf.total_refund * (o.sale_price + COALESCE(o.shipping_price, 0))\n                            / order_totals.total_gross", gross_sale_clause)
+        sql = conn.cursor.return_value.__enter__.return_value.execute.call_args[0][0]
+        gross_clause = sql.split("AS gross_sale")[0]
+        self.assertIn("LIKE 'MANUAL-%' THEN CAST(o.sale_price AS text)", gross_clause)
 
 
 # ── fetch_ad_fees ─────────────────────────────────────────────────────────────
 
 class TestFetchAdFees(unittest.TestCase):
 
+    def _ad_fees_sql(self):
+        conn = _make_conn([])
+        sts.fetch_ad_fees(conn)
+        return conn.cursor.return_value.__enter__.return_value.execute.call_args[0][0]
+
     def test_order_refunds_excluded_from_adjustment_category(self):
-        """Order-linked DEBIT refunds are netted into the Sales row's net_payout,
-        so they must get their own category ('Order Refund') and NOT 'Adjustment' —
-        otherwise the P&L Adjustments column would subtract them a second time."""
+        """Order-linked DEBIT refunds get their own category ('Order Refund') and NOT
+        'Adjustment' — the P&L subtracts them from net_payout/gross_sales itself, so the
+        Adjustments column must not subtract them a second time."""
+        sql = self._ad_fees_sql()
+        self.assertIn("'Order Refund'", sql)
+        self.assertLess(sql.index("'Order Refund'"), sql.index("THEN 'Adjustment'"))
+        # the shared definition: DEBIT refund-type rows on an order we actually have
+        flag_def = sql.split("AS is_order_refund")[0].rsplit("(f.fee_type IN", 1)[1]
+        self.assertIn("'DEBIT'", flag_def)
+        self.assertIn("orders_raw", flag_def)
+        category = sql.split("AS category")[0].rsplit("WHEN fl.is_order_refund", 1)[1]
+        self.assertIn("'Order Refund'", category)
+
+    def test_ad_fees_has_eleven_columns_ending_in_gross_refund(self):
+        self.assertEqual(sts.AD_FEES_HEADERS[-1], "gross_refund")
+        self.assertEqual(len(sts.AD_FEES_HEADERS), 11)
+        # group/transaction_id/category/booking_entry positions must not move
+        self.assertEqual(sts.AD_FEES_HEADERS[6:10], ["transaction_id", "group", "category", "booking_entry"])
+
+    def test_gross_refund_is_grossed_up_from_net_payout_basis(self):
+        """Regression (2026-10-20): eBay's refund is on the NET-payout basis, so it must be
+        scaled by order gross / order payout, else a full refund leaves ~eBay's fee behind."""
+        sql = self._ad_fees_sql()
+        self.assertIn("fl.amount * ob.gross / op.payout", sql)
+        self.assertIn("fee_type = 'SALE' AND booking_entry = 'CREDIT'", sql)
+
+    def test_gross_refund_capped_and_guarded(self):
+        sql = self._ad_fees_sql()
+        self.assertIn("rc.g_total > rc.gross * 1.5 THEN '0'", sql)      # bad-data guard
+        self.assertIn("rc.g_total > rc.gross THEN", sql)                 # never exceed order gross
+        self.assertIn("PARTITION BY fl.order_id", sql)                   # per-order total
+
+    def test_order_refunds_inherit_sale_group(self):
+        """Order Refund rows take their sale's group so they aren't left unassigned in
+        Ad Fees. Safe because the 'Order Refund' category keeps them out of P&L sums."""
         conn = _make_conn([])
         sts.fetch_ad_fees(conn)
         sql = conn.cursor.return_value.__enter__.return_value.execute.call_args[0][0]
-        self.assertIn("'Order Refund'", sql)
-        # the Order Refund branch must come before the generic Adjustment branch
-        self.assertLess(sql.index("'Order Refund'"), sql.index("THEN 'Adjustment'"))
-        # and must be restricted to DEBIT rows that match an order we actually have
-        refund_branch = sql.split("'Order Refund'")[0].rsplit("WHEN", 1)[1]
-        self.assertIn("'DEBIT'", refund_branch)
-        self.assertIn("orders_raw", refund_branch)
+        group_expr = sql.split("AS group_name")[0]
+        inherit = group_expr.split("WHEN fl.is_order_refund THEN")[1].split("WHEN fl.fee_type = 'NON_SALE_CHARGE'")[0]
+        self.assertIn("o.group_name", inherit)
 
 
 # ── fetch_purchases ───────────────────────────────────────────────────────────
@@ -293,14 +294,14 @@ class TestPLTab(unittest.TestCase):
         sts.write_pl_tab(doc, sales_row_count=5, purchases_row_count=3, ad_fees_row_count=10)
 
         written = ws.update.call_args[0][0]
-        self.assertEqual(written[0], ["group", "net_payout", "costs", "ad_fees", "shipping_cost", "adjustments", "profit", "margin"])
+        self.assertEqual(written[0], ["group", "gross_sales", "net_payout", "costs", "ad_fees", "shipping_cost", "adjustments", "profit", "margin"])
 
-    def test_pl_tab_data_row_has_eight_formulas(self):
+    def test_pl_tab_data_row_has_nine_formulas(self):
         doc, ws = self._make_doc_with_ws()
         sts.write_pl_tab(doc, sales_row_count=5, purchases_row_count=3, ad_fees_row_count=10)
 
         written = ws.update.call_args[0][0]
-        self.assertEqual(len(written[1]), 8)
+        self.assertEqual(len(written[1]), 9)
 
     def test_pl_tab_formulas_reference_correct_tabs(self):
         doc, ws = self._make_doc_with_ws()
@@ -311,18 +312,48 @@ class TestPLTab(unittest.TestCase):
 
         self.assertIn("Sales!",       formula_row[0])  # group formula covers Sales
         self.assertIn("Purchases!",   formula_row[0])  # group formula covers Purchases
-        self.assertIn("Sales!D",      formula_row[1])  # net_payout pulls from Sales col D
-        self.assertIn("Purchases!",   formula_row[2])  # costs pull from Purchases
-        self.assertIn("BYROW",        formula_row[3])  # ad_fees uses BYROW+LAMBDA
-        self.assertIn("Ad Fee",       formula_row[3])  # ad_fees filters by "Ad Fee" category
-        self.assertIn("BYROW",        formula_row[4])  # shipping_cost uses BYROW+LAMBDA
-        self.assertIn("Shipping",     formula_row[4])  # shipping_cost filters by "Shipping" category
-        self.assertIn("BYROW",        formula_row[5])  # adjustments uses BYROW+LAMBDA
-        self.assertIn("Adjustment",   formula_row[5])  # adjustments filters by "Adjustment" category
-        self.assertIn("CREDIT",       formula_row[5])  # adjustments sums credits
-        self.assertIn("DEBIT",        formula_row[5])  # adjustments subtracts debits
-        self.assertIn("B2:B-C2:C-D2:D-E2:E+F2:F", formula_row[6])  # profit = net - costs - ads - shipping + adj
+        self.assertIn("Sales!C",      formula_row[1])  # gross_sales pulls Sales gross_sale (col C)
+        self.assertIn("'Ad Fees'!K",  formula_row[1])  # ...minus Ad Fees gross_refund (col K)
+        self.assertIn("Sales!D",      formula_row[2])  # net_payout pulls from Sales col D
+        self.assertIn("Order Refund", formula_row[2])  # ...minus Order Refund amounts
+        self.assertIn("Purchases!",   formula_row[3])  # costs pull from Purchases
+        self.assertIn("BYROW",        formula_row[4])  # ad_fees uses BYROW+LAMBDA
+        self.assertIn("Ad Fee",       formula_row[4])
+        self.assertIn("BYROW",        formula_row[5])  # shipping_cost
+        self.assertIn("Shipping",     formula_row[5])
+        self.assertIn("Adjustment",   formula_row[6])  # adjustments
+        self.assertIn("CREDIT",       formula_row[6])
+        self.assertIn("DEBIT",        formula_row[6])
 
+    def test_profit_and_margin_ignore_gross_sales(self):
+        """gross_sales (col B) is for tax reporting only — it must not feed profit or margin."""
+        doc, ws = self._make_doc_with_ws()
+        sts.write_pl_tab(doc, sales_row_count=10, purchases_row_count=7, ad_fees_row_count=20)
+        formula_row = ws.update.call_args[0][0][1]
+        # profit = net_payout - costs - ad_fees - shipping + adjustments (C, D, E, F, G)
+        self.assertIn("C2:C-D2:D-E2:E-F2:F+G2:G", formula_row[7])
+        self.assertNotIn("B2", formula_row[7])
+        # margin = profit / costs (H / D)
+        self.assertIn("H2:H/D2:D", formula_row[8])
+        self.assertNotIn("B2", formula_row[8])
+
+
+class TestMonthlyTab(unittest.TestCase):
+
+    def test_monthly_subtracts_gross_refunds_from_ebay_and_total_only(self):
+        ws = MagicMock()
+        doc = MagicMock()
+        doc.worksheet.return_value = ws
+        sts.write_monthly_tab(doc)
+        rows = ws.update.call_args[0][0]
+        jan = rows[1]  # header is rows[0]
+        # columns: Month | eBay | Dealernet | Tradepost | WhatNot | Card Show | Other | Total
+        self.assertIn("'Ad Fees'!$K", jan[1])      # eBay minus refunds
+        self.assertIn('"2026-01"', jan[1])
+        self.assertIn("'Ad Fees'!$K", jan[7])      # Total minus refunds
+        for i in (2, 3, 4, 5):                      # other channels untouched
+            self.assertNotIn("Ad Fees", jan[i])
+        self.assertNotIn("Ad Fees", jan[6])         # Other = Total - named columns
 
 
 # ── New Entries: record_id and deletion ──────────────────────────────────────
