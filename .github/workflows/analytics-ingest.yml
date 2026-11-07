@@ -48,6 +48,23 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: python -m traffic_analytics.fetch_finances
 
+      # Non-blocking: a Veeqo outage or bug here must never stop compute/dashboard or the chained
+      # P&L ingest (which only runs when this workflow concludes "success"). Bounded so a hang
+      # can't eat the job's 30-minute budget. Failures are surfaced by the warning step below.
+      - name: Fetch Veeqo shipping labels
+        id: veeqo
+        if: github.event_name != 'push'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          VEEQO_API_KEY: ${{ secrets.VEEQO_API_KEY }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: python -m traffic_analytics.fetch_veeqo_labels
+
+      - name: Warn if Veeqo import failed
+        if: steps.veeqo.outcome == 'failure'
+        run: echo "::warning title=Veeqo label import failed::Shipping labels were NOT imported this run. The rest of the ingest ran normally. Check the 'Fetch Veeqo shipping labels' step log; the next run's 14-day lookback will catch up."
+
       - name: Compute metrics
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}

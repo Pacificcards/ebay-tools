@@ -12,6 +12,7 @@ Steps in order:
 2. `fetch_analytics` — traffic metrics → `listing_metrics_raw`
 3. `fetch_orders` — order line items → `orders_raw`
 4. `fetch_finances` — all financial transactions → `order_fees`
+4b. `fetch_veeqo_labels` — shipping labels bought in Veeqo → `order_fees` (added 2026-11-07). `fee_type='SHIPPING_LABEL'`, `DEBIT`, `billing_transaction_id='VEEQO-<shipment_id>'`, `ON CONFLICT DO NOTHING` (never resets a user-assigned group). eBay-channel orders use the eBay order id (Veeqo `number` == eBay order id) so they flow into Sales `shipping_cost`; any other channel gets a made-up `order_id` of `VEEQO-<veeqo number>` (e.g. `VEEQO-P-2245589525`) and shows in Ad Fees only, group assigned by hand. eBay does NOT report Veeqo-bought labels, so no dedupe. 14-day lookback daily; `--backfill` pulls everything since 2026-11-04. Skips zero-cost (marked shipped, no label) and `tracking_number.cancelled` shipments. **Voids are not handled**: a label voided after import stays in the DB — offset it with a negative `shipping` row in New Entries. Never print Veeqo order JSON (PII; public Actions logs).
 5. `compute_metrics` — derived metrics → `listing_metrics_computed` (recomputes only the trailing 14 days; `COMPUTE_FULL=1` rebuilds all history, needed after a formula change. Nothing downstream reads this table today — the dashboard reads `listing_metrics_raw` + `orders_raw` directly)
 6. `traffic_dashboard.generate_dashboard` — writes `docs/traffic/traffic_data.json`, committed back to the repo by the workflow so GitHub Pages picks it up
 
@@ -383,7 +384,7 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 - `pl/credentials/` is gitignored — never commit
 
 ## GitHub Secrets (org: Pacificcards)
-`EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_REFRESH_TOKEN`, `SUPABASE_DB_URL`, `GOOGLE_SHEETS_CREDENTIALS`, `LISTENER_SHEET_ID`, `PL_SHEETS_DOC_ID`, `MARKET_MONITOR_SHEET_ID`, `DISCORD_WEBHOOK_URL`, `DISCORD_BOT_TOKEN`, `DISCORD_WATCHLIST_CHANNEL_ID`, `ANTHROPIC_API_KEY`, `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`, `SOLD_COMPS_API_KEY`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `FEDEX_API_KEY`, `FEDEX_SECRET_KEY`
+`EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_REFRESH_TOKEN`, `SUPABASE_DB_URL`, `GOOGLE_SHEETS_CREDENTIALS`, `LISTENER_SHEET_ID`, `PL_SHEETS_DOC_ID`, `MARKET_MONITOR_SHEET_ID`, `DISCORD_WEBHOOK_URL`, `DISCORD_BOT_TOKEN`, `DISCORD_WATCHLIST_CHANNEL_ID`, `ANTHROPIC_API_KEY`, `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`, `SOLD_COMPS_API_KEY`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `FEDEX_API_KEY`, `FEDEX_SECRET_KEY`, `VEEQO_API_KEY` (add to local `.env` too for local runs)
 
 ## Constraints
 - Do NOT fetch eBay developer docs from the web — user downloads PDFs and places in `/Users/eastcoastlimited/ClaudeCode/ebay_dev_docs/`
@@ -475,6 +476,11 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - Whether to expose raw price range alongside the two recommendations
 
 ## Session Log
+
+### 2026-11-07 — Veeqo shipping-label importer built (not yet merged/run)
+- Built `traffic_analytics/fetch_veeqo_labels.py` + `tests/test_fetch_veeqo_labels.py` (9 tests, mocked HTTP/DB; suite 60/60) and a "Fetch Veeqo shipping labels" step in `analytics-ingest.yml` (skipped on push triggers, after fetch_finances). No schema change. Discovery notes were in `veeqo-integration-handoff.md` on branch `claude/inspiring-maxwell-qw21hs`.
+- User decisions: eBay will not report Veeqo labels (no dedupe); non-eBay orders get a made-up `VEEQO-<number>` order id; backfill from Nov 4.
+- Not verified against the live Veeqo API (no `VEEQO_API_KEY` in local `.env`); first real run is the GitHub Action. Voided-label behavior still untested.
 
 ### 2026-10-31 — Campaign scheduler: Discord notifications; old scheduler repo retired
 - Found the earlier "stop emails" change was PR #17 on `ebay-tools` (merged 2026-10-29), not the old `ebay-campaign-scheduler` repo (workflow `disabled_manually`, last run 2026-05-27). Deleted the old local folder + worktree (user chose local-only; GitHub repo kept; discarded its uncommitted `get_refresh_token.py` scope edit).
