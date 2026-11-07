@@ -2,12 +2,11 @@
 
 ## Veeqo labels / refunds / gross sales (shipped 2026-11-07)
 
-1. **Assign groups to the 3 direct Veeqo labels** — Ad Fees tab col H, rows with `VEEQO-…` order ids ($13.48, $22.03, $13.56); until then they hit no group's shipping_cost. (user)
-2. **Look up the 4 unlinked shipping labels in Seller Hub** (ids 17-15144-34415, 06-15188-83009, 16-15256-24667, 09-15328-38320) and tell me what they are so they can be grouped; if they are returns/second labels, items 10-11 below (Unassigned Shipping Labels group) covers the rest. (user)
-3. **Watch the next few scheduled ingests for the "Veeqo label import failed" warning** — step is non-blocking, so failure only shows as a yellow annotation in the run summary, never an email. (suggested)
-4. **Optional: Discord/email alert when the Veeqo step fails** — the run stays green by design, so nobody hears about it; the campaign scheduler's Discord webhook pattern would fit. (suggested)
-5. **Handle voided Veeqo labels** — today a label voided after import stays in the P&L (workaround: negative `shipping` row in New Entries). Behavior of `tracking_number.cancelled` / charges on a real void is untested; once one exists, decide whether the importer deletes or offsets the row. (suggested)
-6. **Spot-check P&L by Group `gross_sales` and Monthly against the tax filing view** — verified numerically against the DB, not visually in the browser. (suggested)
+1. **Look up the 4 unlinked shipping labels in Seller Hub** (ids 17-15144-34415, 06-15188-83009, 16-15256-24667, 09-15328-38320) and tell me what they are so they can be grouped; if they are returns/second labels, the 'Auto-assign Unassigned Shipping Labels group' item under P&L — Features covers the rest. (user)
+2. **Watch the next few scheduled ingests for the "Veeqo label import failed" warning** — step is non-blocking, so failure only shows as a yellow annotation in the run summary, never an email. (suggested)
+3. **Optional: Discord/email alert when the Veeqo step fails** — the run stays green by design, so nobody hears about it; the campaign scheduler's Discord webhook pattern would fit. (suggested)
+4. **Handle voided Veeqo labels** — today a label voided after import stays in the P&L (workaround: negative `shipping` row in New Entries). Behavior of `tracking_number.cancelled` / charges on a real void is untested; once one exists, decide whether the importer deletes or offsets the row. (suggested)
+5. **Spot-check P&L by Group `gross_sales` and Monthly against the tax filing view** — verified numerically against the DB, not visually in the browser. (suggested)
 
 ---
 
