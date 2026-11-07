@@ -49,7 +49,7 @@ _RECORD_ID_COL = NEW_ENTRIES_HEADERS.index("record_id") + 1  # col 9
 # Sales: order_date | title | gross_sale | net_payout | shipping_cost | order_id | ebay_order_id | group | source
 SALES_HEADERS     = ["order_date", "title", "gross_sale", "net_payout", "shipping_cost", "order_id", "ebay_order_id", "listing_id", "group", "source"]
 PURCHASES_HEADERS = ["purchase_date", "description", "vendor", "total_cost", "source", "id", "group"]
-AD_FEES_HEADERS   = ["date", "fee_type", "amount", "order_id", "listing_id", "title", "transaction_id", "group", "category", "booking_entry"]
+AD_FEES_HEADERS   = ["date", "fee_type", "amount", "order_id", "listing_id", "title", "transaction_id", "group", "category", "booking_entry", "gross_refund"]
 
 PLAIN_FORMAT = {
     "backgroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
@@ -65,35 +65,12 @@ def fetch_sales(conn) -> list[list]:
             SELECT
                 o.order_date::text,
                 COALESCE(lm.title, o.title, o.listing_id) AS title,
+                -- Refunds are NOT netted here: a refunded sale stays a normal sale. The refund
+                -- is its own Ad Fees row ('Order Refund') and is subtracted from net_payout and
+                -- gross_sales in the P&L by Group tab (and from the Monthly tab).
                 CASE
                     WHEN o.order_id LIKE 'MANUAL-%' THEN CAST(o.sale_price AS text)
-                    WHEN rf.total_refund IS NULL THEN CAST(o.sale_price + COALESCE(o.shipping_price, 0) AS text)
-                    -- rf.total_refund is on the NET-payout basis (eBay reverses what it
-                    -- actually credited, e.g. a $819.95 sale with a $722.49 net payout
-                    -- gets a $722.49 REFUND, not an $819.95 one) — the same basis as
-                    -- f.amount (SALE CREDIT), NOT the same basis as gross_sale. Gross it
-                    -- up via f.amount (order-level net payout) before subtracting, same
-                    -- direction as the net_payout computation below just inverted, so a
-                    -- full refund actually zeroes gross_sale instead of leaving a
-                    -- leftover equal to eBay's fee. f.amount is a single row per base
-                    -- order (not per line), so this is already the right denominator for
-                    -- multi-line orders — no separate order_totals needed here.
-                    WHEN f.amount IS NULL OR f.amount = 0 THEN CAST(o.sale_price + COALESCE(o.shipping_price, 0) AS text)
-                    -- bad-data guard: a refund up to 1.5x the payout is a full cancellation
-                    -- (eBay keeps its ~$0.40 fixed fee, so refunds can run slightly OVER the
-                    -- payout); beyond that something is off, so leave gross_sale alone.
-                    WHEN ROUND(rf.total_refund * (o.sale_price + COALESCE(o.shipping_price, 0)) / f.amount, 2)
-                         > (o.sale_price + COALESCE(o.shipping_price, 0)) * 1.5
-                        THEN CAST(o.sale_price + COALESCE(o.shipping_price, 0) AS text)
-                    -- floor at 0: a cancelled sale is $0 revenue, never negative revenue
-                    ELSE CAST(
-                        GREATEST(
-                            (o.sale_price + COALESCE(o.shipping_price, 0)) - ROUND(
-                                rf.total_refund * (o.sale_price + COALESCE(o.shipping_price, 0))
-                                / f.amount,
-                            2),
-                        0)
-                    AS text)
+                    ELSE CAST(o.sale_price + COALESCE(o.shipping_price, 0) AS text)
                 END AS gross_sale,
                 CAST(
                     (
@@ -116,22 +93,6 @@ def fetch_sales(conn) -> list[list]:
                             )
                         END
                     )
-                    -- Net out refunds paid back to the buyer. rf.total_refund is already on
-                    -- the net-payout basis, so it subtracts directly (split across lines by
-                    -- gross share, like the payout itself). NULL payout stays NULL. These
-                    -- same rows are excluded from the Adjustments column in fetch_ad_fees
-                    -- (category 'Order Refund') so profit isn't double-counted.
-                    - COALESCE(
-                        CASE
-                            WHEN o.order_id LIKE 'MANUAL-%' THEN 0
-                            WHEN rf.total_refund IS NULL THEN 0
-                            WHEN order_totals.total_gross <= 0 THEN 0
-                            ELSE ROUND(
-                                rf.total_refund * (o.sale_price + COALESCE(o.shipping_price, 0))
-                                / order_totals.total_gross,
-                            2)
-                        END,
-                    0)
                 AS text) AS net_payout,
                 CAST(
                     CASE
@@ -171,21 +132,6 @@ def fetch_sales(conn) -> list[list]:
                 WHERE fee_type = 'SHIPPING_LABEL' AND booking_entry = 'DEBIT'
                 GROUP BY order_id
             ) sl ON sl.order_id = SPLIT_PART(o.order_id, '_', 1)
-            LEFT JOIN (
-                -- Cancelled/refunded sales: eBay issues a REFUND/CREDIT/ADJUSTMENT
-                -- transaction linked back to the order. Sum per order (an order can
-                -- get hit more than once) and net it out of BOTH gross_sale and
-                -- net_payout above, so a cancelled sale doesn't overstate revenue.
-                -- DEBIT only: a DEBIT is money paid back to the buyer. CREDIT rows
-                -- (e.g. DISPUTE_HOLD_REVERSE) are money coming IN to the seller —
-                -- netting those like refunds would flip their sign, so they stay
-                -- in the Adjustments column untouched.
-                SELECT order_id, SUM(amount) AS total_refund
-                FROM order_fees
-                WHERE fee_type IN ('REFUND', 'CREDIT', 'ADJUSTMENT')
-                  AND booking_entry = 'DEBIT'
-                GROUP BY order_id
-            ) rf ON rf.order_id = SPLIT_PART(o.order_id, '_', 1)
             ORDER BY o.order_date DESC
         """)
         return [list(row) for row in cur.fetchall()]
@@ -221,9 +167,38 @@ def fetch_ad_fees(conn) -> list[list]:
                          FROM orders_raw o
                          WHERE SPLIT_PART(o.order_id, '_', 1) = f.order_id
                          LIMIT 1)
-                    ) AS resolved_listing_id
+                    ) AS resolved_listing_id,
+                    -- Refund paid back to a buyer on an order we have a sale for. Single
+                    -- definition used for category, group inheritance and gross_refund.
+                    (f.fee_type IN ('REFUND', 'CREDIT', 'ADJUSTMENT')
+                     AND f.booking_entry = 'DEBIT'
+                     AND EXISTS (SELECT 1 FROM orders_raw o2
+                                 WHERE SPLIT_PART(o2.order_id, '_', 1) = f.order_id)
+                    ) AS is_order_refund
                 FROM order_fees f
                 WHERE f.fee_type != 'SALE'
+            ),
+            -- eBay states a refund on the NET-payout basis (an $819.95 sale with a $722.49
+            -- payout is refunded $722.49). gross_refund restates it on the GROSS basis
+            -- (refund x order gross / order payout) so a fully refunded sale offsets its
+            -- whole gross_sale, not gross minus eBay's fee. Used for gross_sales (tax).
+            refund_calc AS (
+                SELECT
+                    fl.billing_transaction_id AS txn_id,
+                    ob.gross,
+                    ROUND(fl.amount * ob.gross / op.payout, 2) AS g,
+                    SUM(ROUND(fl.amount * ob.gross / op.payout, 2))
+                        OVER (PARTITION BY fl.order_id) AS g_total
+                FROM fee_listing fl
+                JOIN (SELECT SPLIT_PART(order_id, '_', 1) AS oid,
+                             SUM(sale_price + COALESCE(shipping_price, 0)) AS gross
+                      FROM orders_raw
+                      GROUP BY 1) ob ON ob.oid = fl.order_id
+                JOIN (SELECT order_id AS oid, SUM(amount) AS payout
+                      FROM order_fees
+                      WHERE fee_type = 'SALE' AND booking_entry = 'CREDIT'
+                      GROUP BY order_id) op ON op.oid = fl.order_id AND op.payout > 0
+                WHERE fl.is_order_refund
             )
             SELECT
                 fl.transaction_date::text,
@@ -249,6 +224,13 @@ def fetch_ad_fees(conn) -> list[list]:
                               AND o.group_name IS NOT NULL
                             LIMIT 1
                         )
+                        -- Order Refund rows take their sale's group, like shipping labels.
+                        WHEN fl.is_order_refund THEN (
+                            SELECT o.group_name FROM orders_raw o
+                            WHERE SPLIT_PART(o.order_id, '_', 1) = fl.order_id
+                              AND o.group_name IS NOT NULL
+                            LIMIT 1
+                        )
                         WHEN fl.fee_type = 'NON_SALE_CHARGE' AND fl.resolved_listing_id IS NOT NULL THEN (
                             SELECT o.group_name FROM orders_raw o
                             WHERE o.listing_id = fl.resolved_listing_id
@@ -263,19 +245,26 @@ def fetch_ad_fees(conn) -> list[list]:
                     WHEN fl.fee_type = 'NON_SALE_CHARGE' THEN 'Ad Fee'
                     WHEN fl.fee_type IN ('SHIPPING_LABEL', 'SHIPPING_MANUAL')
                          AND COALESCE(fl.booking_entry, '') != 'CREDIT' THEN 'Shipping'
-                    -- Refunds paid back to a buyer on an order we have: already netted
-                    -- into that order's net_payout/gross_sale in fetch_sales(), so keep
-                    -- them visible here but OUT of the P&L Adjustments column.
-                    WHEN fl.fee_type IN ('REFUND', 'CREDIT', 'ADJUSTMENT')
-                         AND fl.booking_entry = 'DEBIT'
-                         AND EXISTS (SELECT 1 FROM orders_raw o2
-                                     WHERE SPLIT_PART(o2.order_id, '_', 1) = fl.order_id) THEN 'Order Refund'
+                    -- Refunds paid back to a buyer on an order we have. The P&L by Group tab
+                    -- subtracts these from net_payout (amount) and gross_sales (gross_refund),
+                    -- so they stay OUT of the Adjustments column to avoid counting twice.
+                    WHEN fl.is_order_refund THEN 'Order Refund'
                     WHEN fl.fee_type IN ('REFUND', 'CREDIT', 'ADJUSTMENT', 'ADJUSTMENT_MANUAL')
                          OR (fl.fee_type = 'SHIPPING_LABEL' AND fl.booking_entry = 'CREDIT') THEN 'Adjustment'
                     ELSE 'Other'
                 END AS category,
-                COALESCE(fl.booking_entry, '') AS booking_entry
+                COALESCE(fl.booking_entry, '') AS booking_entry,
+                -- gross-basis refund (Order Refund rows only). Capped so an order's refunds
+                -- never exceed its gross; refunds beyond 1.5x gross are treated as bad data
+                -- and offset nothing. Blank if the order's payout isn't in the DB yet.
+                CASE
+                    WHEN rc.txn_id IS NULL THEN ''
+                    WHEN rc.g_total > rc.gross * 1.5 THEN '0'
+                    WHEN rc.g_total > rc.gross THEN CAST(ROUND(rc.g * rc.gross / rc.g_total, 2) AS text)
+                    ELSE CAST(rc.g AS text)
+                END AS gross_refund
             FROM fee_listing fl
+            LEFT JOIN refund_calc rc ON rc.txn_id = fl.billing_transaction_id
             ORDER BY fl.transaction_date DESC
         """)
         return [list(row) for row in cur.fetchall()]
@@ -924,21 +913,26 @@ def write_pl_tab(doc: gspread.Spreadsheet, sales_row_count: int, purchases_row_c
     ag  = f"'Ad Fees'!H2:H{ad_fees_end}"     # Ad Fees group col
     ai  = f"'Ad Fees'!I2:I{ad_fees_end}"     # Ad Fees category col
     ab  = f"'Ad Fees'!J2:J{ad_fees_end}"     # Ad Fees booking_entry col
+    sgs = f"Sales!C2:C{sales_end}"           # Sales gross_sale
     sd  = f"Sales!D2:D{sales_end}"           # Sales net_payout
     pc  = f"Purchases!D2:D{purchases_end}"   # Purchases total_cost
     ac  = f"'Ad Fees'!C2:C{ad_fees_end}"     # Ad Fees amount
+    agr = f"'Ad Fees'!K2:K{ad_fees_end}"     # Ad Fees gross_refund (gross-basis refund)
 
-    headers = [["group", "net_payout", "costs", "ad_fees", "shipping_cost", "adjustments", "profit", "margin"]]
+    # gross_sales is for sales-tax reporting only: profit and margin never read it.
+    # Refunds ('Order Refund' rows): amount lowers net_payout, gross_refund lowers gross_sales.
+    headers = [["group", "gross_sales", "net_payout", "costs", "ad_fees", "shipping_cost", "adjustments", "profit", "margin"]]
     data = [
         [
             f'=IFERROR(UNIQUE(FILTER({{{sg};{pg};{ag}}},{{{sg};{pg};{ag}}}<>"")),"")',
-            f'=IFERROR(ARRAYFORMULA(SUMIF({sg},A2:A,{sd})),"")',
+            f'=IFERROR(BYROW(A2:A,LAMBDA(g,IF(g="","",SUMIF({sg},g,{sgs})-SUMIFS({agr},{ag},g)))),"")',
+            f'=IFERROR(BYROW(A2:A,LAMBDA(g,IF(g="","",SUMIF({sg},g,{sd})-SUMIFS({ac},{ag},g,{ai},"Order Refund")))),"")',
             f'=IFERROR(ARRAYFORMULA(SUMIF({pg},A2:A,{pc})),"")',
             f'=IFERROR(BYROW(A2:A,LAMBDA(g,IF(g="","",SUMIFS({ac},{ag},g,{ai},"Ad Fee")))),"")' ,
             f'=IFERROR(BYROW(A2:A,LAMBDA(g,IF(g="","",SUMIFS({ac},{ag},g,{ai},"Shipping")))),"")' ,
             f'=IFERROR(BYROW(A2:A,LAMBDA(g,IF(g="","",SUMIFS({ac},{ag},g,{ai},"Adjustment",{ab},"CREDIT")-SUMIFS({ac},{ag},g,{ai},"Adjustment",{ab},"DEBIT")))),"")' ,
-            '=IFERROR(ARRAYFORMULA(IF(A2:A="","",B2:B-C2:C-D2:D-E2:E+F2:F)),"")',
-            '=IFERROR(ARRAYFORMULA(IF(C2:C=0,"",G2:G/C2:C)),"")',
+            '=IFERROR(ARRAYFORMULA(IF(A2:A="","",C2:C-D2:D-E2:E-F2:F+G2:G)),"")',
+            '=IFERROR(ARRAYFORMULA(IF(D2:D=0,"",H2:H/D2:D)),"")',
         ]
     ]
 
@@ -959,6 +953,11 @@ def write_monthly_tab(doc: gspread.Spreadsheet) -> None:
     G = "Sales!$C$2:$C$5000"   # gross_sale column
     S = "Sales!$J$2:$J$5000"   # source column
     gross = f"IFERROR(VALUE({G}),0)"
+    # Refunds (Ad Fees gross_refund, col K) come off the month the refund was issued. All
+    # Order Refund rows are eBay orders, so they reduce the eBay column and the Total.
+    AD = "'Ad Fees'!$A$2:$A$5000"   # Ad Fees date column
+    AR = "'Ad Fees'!$K$2:$K$5000"   # Ad Fees gross_refund column
+    refund = f"IFERROR(VALUE({AR}),0)"
 
     headers = [["Month", "eBay", "Dealernet", "Tradepost", "WhatNot", "Card Show", "Other", "Total"]]
     rows = []
@@ -966,12 +965,13 @@ def write_monthly_tab(doc: gspread.Spreadsheet) -> None:
         r = i + 2  # sheet row number for this data row
         df = f'(LEFT({D},7)="{ym}")'  # date filter
 
-        ebay      = f'=IFERROR(SUMPRODUCT({df}*(({S}="eBay")+({S}="eBay (Manual)")>0)*{gross}),"")'
+        rf = f'SUMPRODUCT((LEFT({AD},7)="{ym}")*{refund})'
+        ebay      = f'=IFERROR(SUMPRODUCT({df}*(({S}="eBay")+({S}="eBay (Manual)")>0)*{gross})-{rf},"")'
         dealernet = f'=IFERROR(SUMPRODUCT({df}*({S}="Dealernet")*{gross}),"")'
         tradepost = f'=IFERROR(SUMPRODUCT({df}*({S}="Tradepost")*{gross}),"")'
         whatnot   = f'=IFERROR(SUMPRODUCT({df}*({S}="WhatNot")*{gross}),"")'
         cardshow  = f'=IFERROR(SUMPRODUCT({df}*({S}="Card Show")*{gross}),"")'
-        total     = f'=IFERROR(SUMPRODUCT({df}*{gross}),"")'
+        total     = f'=IFERROR(SUMPRODUCT({df}*{gross})-{rf},"")'
         other     = f'=IFERROR(H{r}-B{r}-C{r}-D{r}-E{r}-F{r},"")'
 
         rows.append([label, ebay, dealernet, tradepost, whatnot, cardshow, other, total])
