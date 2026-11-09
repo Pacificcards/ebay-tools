@@ -289,6 +289,17 @@ class TestPLTab(unittest.TestCase):
         sts.write_pl_tab(doc, sales_row_count=5, purchases_row_count=3, ad_fees_row_count=10)
         ws.update.assert_called_once()
 
+    def test_purchases_tab_removes_filter_and_tables(self):
+        doc, ws = self._make_doc_with_ws()
+        ws.get_all_values.return_value = []
+        ws.id = 7
+        doc.fetch_sheet_metadata.return_value = {"sheets": [
+            {"properties": {"sheetId": 7}, "tables": [{"tableId": "t1"}]},
+            {"properties": {"sheetId": 8}, "tables": [{"tableId": "other"}]}]}
+        sts.write_purchases_tab(doc, [])
+        ws.clear_basic_filter.assert_called_once()
+        doc.batch_update.assert_called_once_with({"requests": [{"deleteTable": {"tableId": "t1"}}]})
+
     def test_pl_tab_sets_number_formats(self):
         doc, ws = self._make_doc_with_ws()
         sts.write_pl_tab(doc, sales_row_count=5, purchases_row_count=3, ad_fees_row_count=10)

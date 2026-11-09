@@ -872,6 +872,31 @@ def write_purchases_tab(doc: gspread.Spreadsheet, rows: list[list]) -> None:
     ws.clear()
     ws.update([PURCHASES_HEADERS] + rows, 'A1', value_input_option="USER_ENTERED")
     _reset_header_format(ws)
+    _remove_filters_and_tables(doc, ws)
+
+
+def _remove_filters_and_tables(doc: gspread.Spreadsheet, ws: gspread.Worksheet) -> None:
+    """Drop any basic filter / Sheets "table" on this tab.
+
+    Their range is fixed when created, so rows added by later syncs fall outside it
+    (the Purchases filter was leaving off the last ~10 rows). Best-effort: never fails a sync.
+    """
+    try:
+        ws.clear_basic_filter()
+    except Exception as e:
+        print(f"  (no basic filter cleared on {ws.title}: {e})")
+    try:
+        meta = doc.fetch_sheet_metadata({"fields": "sheets(properties.sheetId,tables.tableId)"})
+        requests = [
+            {"deleteTable": {"tableId": t["tableId"]}}
+            for sh in meta.get("sheets", [])
+            if sh.get("properties", {}).get("sheetId") == ws.id
+            for t in sh.get("tables", [])
+        ]
+        if requests:
+            doc.batch_update({"requests": requests})
+    except Exception as e:
+        print(f"  (could not remove tables on {ws.title}: {e})")
 
 
 def write_ad_fees_tab(doc: gspread.Spreadsheet, rows: list[list]) -> None:
