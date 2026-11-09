@@ -939,6 +939,11 @@ def write_pl_tab(doc: gspread.Spreadsheet, sales_row_count: int, purchases_row_c
     ws.clear()
     ws.update(headers + data, 'A1', value_input_option="USER_ENTERED")
     _reset_header_format(ws)
+    # ws.clear() keeps cell number formats, so when columns shift (e.g. gross_sales
+    # added as col B) old formats land on the wrong columns (profit showed as a %).
+    # Set them explicitly on every sync.
+    ws.format("B2:H", {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00;-$#,##0.00"}})
+    ws.format("I2:I", {"numberFormat": {"type": "PERCENT", "pattern": "0.0%"}})
 
 
 def write_monthly_tab(doc: gspread.Spreadsheet) -> None:

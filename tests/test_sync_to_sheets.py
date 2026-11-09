@@ -289,6 +289,12 @@ class TestPLTab(unittest.TestCase):
         sts.write_pl_tab(doc, sales_row_count=5, purchases_row_count=3, ad_fees_row_count=10)
         ws.update.assert_called_once()
 
+    def test_pl_tab_sets_number_formats(self):
+        doc, ws = self._make_doc_with_ws()
+        sts.write_pl_tab(doc, sales_row_count=5, purchases_row_count=3, ad_fees_row_count=10)
+        fmts = {c[0][0]: c[0][1]["numberFormat"]["type"] for c in ws.format.call_args_list if "numberFormat" in c[0][1]}
+        self.assertEqual(fmts, {"B2:H": "CURRENCY", "I2:I": "PERCENT"})
+
     def test_pl_tab_headers_correct(self):
         doc, ws = self._make_doc_with_ws()
         sts.write_pl_tab(doc, sales_row_count=5, purchases_row_count=3, ad_fees_row_count=10)
