@@ -15,7 +15,6 @@ from listener.ebay import get_app_token, get_item_image_urls, search_listings_by
 
 QUERY = "pokemon"
 MIN_PRICE, MAX_PRICE = 10.0, 500.0
-ALERTS_TO_SEND = 2
 
 
 def main() -> int:
@@ -29,22 +28,26 @@ def main() -> int:
     dist = Counter(len(l["image_urls"]) for l in listings)
     print("Photos per listing from search alone:", dict(sorted(dist.items())))
 
-    for listing in listings[:ALERTS_TO_SEND]:
-        search_photos = len(listing["image_urls"])
-        lookup_photos = None
-        if search_photos < MAX_ALERT_IMAGES:
-            item_photos = get_item_image_urls(token, listing["item_id"])
-            lookup_photos = len(item_photos)
-            if lookup_photos > search_photos:
-                listing["image_urls"] = item_photos
-        print(f"- {listing['item_id']}: {search_photos} from search, item lookup "
-              f"{'not needed' if lookup_photos is None else f'gave {lookup_photos}'}, "
-              f"sending {min(len(listing['image_urls']), MAX_ALERT_IMAGES)}")
+    # Does the item lookup ever find photos that search missed? Log only, no posting.
+    few = [l for l in listings if len(l["image_urls"]) < MAX_ALERT_IMAGES][:10]
+    gained = 0
+    for listing in few:
+        item_photos = get_item_image_urls(token, listing["item_id"])
+        more = len(item_photos) > len(listing["image_urls"])
+        gained += more
+        print(f"- lookup check {listing['item_id']}: {len(listing['image_urls'])} from search, "
+              f"{len(item_photos)} from item lookup{'  <-- MORE' if more else ''}")
+    print(f"Item lookup found extra photos for {gained} of {len(few)} listings with <{MAX_ALERT_IMAGES} photos")
 
-        # Pretend market price sits 20% above the listing so the green tier/color shows.
-        market_price = round(listing["price"] / 0.8, 2)
-        send_alert(f"[TEST] Photo alert — {listing['title']}", listing, MAX_PRICE, 20.0,
-                   market_price=market_price)
+    # Post one alert with a full 4-photo gallery.
+    full = next((l for l in listings if len(l["image_urls"]) >= MAX_ALERT_IMAGES), None)
+    if full is None:
+        print("No listing with 4+ photos found — gallery not posted.")
+        return 1
+    print(f"Posting gallery alert for {full['item_id']} ({len(full['image_urls'])} photos, sending {MAX_ALERT_IMAGES})")
+    # Pretend market price sits 20% above the listing so the green tier/color shows.
+    market_price = round(full["price"] / 0.8, 2)
+    send_alert(f"[TEST] Photo alert — {full['title']}", full, MAX_PRICE, 20.0, market_price=market_price)
     return 0
 
 
