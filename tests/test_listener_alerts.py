@@ -3,7 +3,6 @@ Tests for listener photo alerts.
 
 Covers:
   - ebay._image_urls / _parse_items: photo URLs pulled from Browse API items, upsized, de-duplicated
-  - ebay.get_item_image_urls: returns [] instead of raising when the lookup fails
   - discord._build_alert_payload: embed gallery shape (max 4 photos, shared url), colors, no-photo case
   - discord.send_alert: falls back to a plain-text message if Discord rejects the embed
 
@@ -69,12 +68,6 @@ class TestImageUrls(unittest.TestCase):
             "image": {"imageUrl": _img(1)},
         }]}
         self.assertEqual(ebay._parse_items(resp)[0]["image_urls"], [_img(1, 1600)])
-
-    def test_get_item_image_urls_failure_returns_empty(self):
-        with patch.object(ebay.requests, "get", return_value=MagicMock(status_code=404)):
-            self.assertEqual(ebay.get_item_image_urls("tok", "123"), [])
-        with patch.object(ebay.requests, "get", side_effect=ebay.requests.ConnectionError("down")):
-            self.assertEqual(ebay.get_item_image_urls("tok", "123"), [])
 
 
 class TestAlertPayload(unittest.TestCase):

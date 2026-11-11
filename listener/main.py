@@ -2,10 +2,10 @@ import os
 from datetime import datetime, timezone, timedelta
 
 from shared.db import get_connection
-from listener.ebay import get_app_token, get_item_image_urls, search_listings_by_epid, search_listings_by_keyword
+from listener.ebay import get_app_token, search_listings_by_epid, search_listings_by_keyword
 from listener.epid_resolver import resolve_epid
 from listener.sheets import load_watchlist, update_epid_in_sheet, append_observed_listing
-from listener.discord import MAX_ALERT_IMAGES, send_alert, send_stale_alert
+from listener.discord import send_alert, send_stale_alert
 from listener.discord_ingest import run_ingest
 
 
@@ -150,14 +150,6 @@ def run():
                 "item_id": item_id,
                 "url": listing["url"],
             })
-            # Search results may not carry every photo; top up with one item lookup per new find.
-            search_photos = len(listing.get("image_urls") or [])
-            if search_photos < MAX_ALERT_IMAGES:
-                item_photos = get_item_image_urls(token, item_id)
-                if len(item_photos) > search_photos:
-                    listing["image_urls"] = item_photos
-            print(f"    photos: {search_photos} from search, {len(listing.get('image_urls') or [])} used")
-
             send_alert(description, listing, max_price, pct_below, market_price=market_price)
             print(f"  ✓ New: {listing['title']} @ ${listing['price']:.2f}")
 

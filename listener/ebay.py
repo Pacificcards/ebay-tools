@@ -100,22 +100,6 @@ def _image_urls(item: dict) -> list[str]:
     return result
 
 
-def get_item_image_urls(token: str, item_id: str) -> list[str]:
-    """All photo URLs for one listing via the Browse API's item endpoint. [] on any failure."""
-    try:
-        resp = requests.get(
-            f"{BROWSE_BASE}/item/get_item_by_legacy_id",
-            headers=_headers(token),
-            params={"legacy_item_id": item_id},
-            timeout=15,
-        )
-    except requests.RequestException:
-        return []
-    if resp.status_code != 200:
-        return []
-    return _image_urls(resp.json())
-
-
 def _parse_items(response_json: dict) -> list[dict]:
     results = []
     for item in response_json.get("itemSummaries", []):
