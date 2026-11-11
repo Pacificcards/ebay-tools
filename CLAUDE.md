@@ -135,7 +135,7 @@ Scans eBay every 15 minutes for underpriced cards on a watchlist. Fires Discord 
 - Discord alert is an **embed with up to 4 listing photos** (added 2026-11-11): first embed holds title (links to listing), price line, listed/seller line, color matching the emoji tier, and photo 1; photos 2–4 are extra embeds sharing the same `url`, which Discord merges into one gallery. Photos load straight from eBay's CDN (`i.ebayimg.com`, upsized to `s-l1600`) — nothing is uploaded to Discord. Photo URLs come from the search response only (`image` + `additionalImages`, parsed into `image_urls` by `_parse_items`) — no extra eBay calls. Search returns a listing's full photo set (verified live 2026-11-11: up to 23 per listing; an item lookup on 12 listings with <4 photos never found more), so don't re-add a per-item top-up lookup. If Discord rejects the embed, `send_alert` resends the old plain-text message.
 - Listing time shown as time-only in PT (e.g. `Listed: 2:32 PM`)
 - Sellers with 0 feedback score or 0% positive rating are silently skipped — no sheet write, no alert
-- Stale alert: daily ~8am PST (16:03 UTC), consolidated Discord message for active rows with no new listings in 3+ days
+- Stale alert: daily ~8am PST (16:03 UTC), consolidated Discord message for active rows with no new alert in 3+ days. **"Last alert" comes from Supabase** (`MAX(first_seen_at)` per `watchlist_description` in `listener_seen_items`, matched case/space-insensitively), not the sheet's `Last Hit` column (fixed 2026-11-11 — rows added via `#watchlist-add` had a blank Last Hit with no formula, so they were flagged stale every day). `Last Hit` (col J) is display-only; `append_watchlist_row` now writes `=MAXIFS(...INDIRECT("B"&ROW()))` there for new rows.
 - Discord ingestion: post natural language in `#watchlist-add` → Claude Haiku parses → new Watchlist row + bot reply
 - EPID lookup: uses Hint URL → Browse API → Catalog API fallback → keyword search
 - `COL_EPID = 8`, `COL_EPID_STATUS = 9` (1-based, in `listener/sheets.py`)
@@ -416,6 +416,7 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 ## Open TODOs
 
 ### Listener
+- **Observed Listings tab is missing recent finds** (found 2026-11-11, not yet investigated) — see Session Log 2026-11-11. Suspects: `append_row` table detection writing rows mid-sheet/overwriting (default insert option), or the seen-item DB insert being committed before the sheet write + Discord alert so a mid-way failure drops the find permanently.
 - Raw cards only — watchlist assumes every card is raw/ungraded (2026-07-22, see Session Log). Graded-card watching not yet supported.
 - The 3 hardcoded category IDs in `_RAW_CARD_CATEGORY_IDS` were supplied by the user, not verified live against eBay's API from this environment — confirm the `Graded` aspect actually resolves correctly for all 3 on the first live run.
 - **Google Sheets 503 retry logic shipped 2026-08-26** (see Constraints and Session Log) — watch `listener.yml` run history over the next week to confirm the failure rate actually drops; if 503s are frequent enough to still exhaust 4 retries occasionally, consider raising `_MAX_RETRIES`/`_RETRY_BASE_DELAY` in `listener/sheets.py`.
@@ -480,6 +481,11 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - Whether to expose raw price range alongside the two recommendations
 
 ## Session Log
+
+### 2026-11-11 — Listener: stale alert flagging every card fixed
+- Symptom: the daily stale alert listed all 3 active cards, including ones with fresh hits. Diagnosed with a read-only push-triggered diagnostic (sheet + DB, nothing written): Blastoise ex 200 and Charizard SWSH262 (added via `#watchlist-add`) had a blank `Last Hit` cell with no MAXIFS formula → always "stale"; pikachu 173's formula read 8/24.
+- Fix: `_check_stale` now reads `MAX(first_seen_at)` per card from `listener_seen_items` (`_last_hits` + pure `_stale_cards`); old sheet-date parsing (`_parse_last_hit`) removed. Verified live before merge: DB showed all 3 cards alerted 2026-11-11; new check flags none. `tests/test_listener_stale.py` (6 tests).
+- **Open, not fixed:** the Observed Listings tab is missing recent finds — pikachu 173 and Charizard SWSH262 have DB alerts dated 2026-11-11 but no Observed row that day (Charizard has none ever), and the tab's last rows are out of date order (`2026-08-24, 2026-11-11, 2026-08-24`), which suggests `append_row` is landing rows mid-sheet / overwriting. Also possible: `main.py` commits the seen-item insert before the sheet write and Discord alert, so a failure there loses the find for good. Not investigated yet — see Open TODOs.
 
 ### 2026-11-11 — Listener: Discord alerts now include up to 4 listing photos
 - User asked for listing photos in alerts, first 4 photos. Built as an embed gallery (see Key listener behavior). Discord cost: none (webhook embeds are free; images are loaded from eBay's servers, not uploaded). eBay cost: none (photos come with the existing search call).
