@@ -132,6 +132,7 @@ Scans eBay every 15 minutes for underpriced cards on a watchlist. Fires Discord 
 - Alert trigger is based on **Max Price**, not Market Price
 - % calculation uses Market Price when set, falls back to Max Price
 - Discord alert: 3-tier emoji 🟢 >5% below / 🟡 within ±5% / 🔴 >5% above market; only when Market Price is set
+- Discord alert is an **embed with up to 4 listing photos** (added 2026-11-11): first embed holds title (links to listing), price line, listed/seller line, color matching the emoji tier, and photo 1; photos 2–4 are extra embeds sharing the same `url`, which Discord merges into one gallery. Photos load straight from eBay's CDN (`i.ebayimg.com`, upsized to `s-l1600`) — nothing is uploaded to Discord. Photo URLs come from the search response only (`image` + `additionalImages`, parsed into `image_urls` by `_parse_items`) — no extra eBay calls. Search returns a listing's full photo set (verified live 2026-11-11: up to 23 per listing; an item lookup on 12 listings with <4 photos never found more), so don't re-add a per-item top-up lookup. If Discord rejects the embed, `send_alert` resends the old plain-text message.
 - Listing time shown as time-only in PT (e.g. `Listed: 2:32 PM`)
 - Sellers with 0 feedback score or 0% positive rating are silently skipped — no sheet write, no alert
 - Stale alert: daily ~8am PST (16:03 UTC), consolidated Discord message for active rows with no new listings in 3+ days
@@ -479,6 +480,13 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - Whether to expose raw price range alongside the two recommendations
 
 ## Session Log
+
+### 2026-11-11 — Listener: Discord alerts now include up to 4 listing photos
+- User asked for listing photos in alerts, first 4 photos. Built as an embed gallery (see Key listener behavior). Discord cost: none (webhook embeds are free; images are loaded from eBay's servers, not uploaded). eBay cost: none (photos come with the existing search call).
+- `listener/ebay.py`: `_image_urls()`; `_parse_items` now returns `image_urls` (also flows into `search_all_listings` for Market Monitor, which ignores it). `listener/discord.py`: `_build_alert_payload()` (pure, tested) + plain-text fallback. New `tests/test_listener_alerts.py` (10 tests, all mocked).
+- Tested before merge with a temporary push-triggered workflow on the branch (real search, 3 `[TEST]` alerts posted to the live alerts channel, no Supabase/sheet writes; removed before merge). A workflow file that exists only on a branch CAN run on that branch via a `push` trigger — only `workflow_dispatch` needs it on `main`. Results: 91/100 live listings had 2+ photos from search alone; the planned per-item top-up lookup never found extra photos (12/12 matched), so it was dropped before merge. User confirmed the alerts, including a full 4-photo gallery, look right in Discord.
+- Known side effect: old alerts may show broken images once eBay removes a finished listing's photos.
+- Also noticed: `main`'s history was rewritten at some point (only ~50 commits, no shared ancestor with branches from Aug 2026) — old branches can't be rebased onto it; restart them from `origin/main` instead.
 
 ### 2026-11-07 — Refund handling redesigned; gross_sales column added (tax is on GROSS sales)
 - User confirmed sales tax is based on gross sales. New design (user's spec): a refunded sale is recorded as an ordinary sale; the refund is an Ad Fees row (group = the sale's group); it lowers P&L-by-Group `net_payout` (so profit is unchanged) and a new `gross_sales` column (tax). Replaces the 2026-10-19/20 approach of netting refunds inside the Sales rows.

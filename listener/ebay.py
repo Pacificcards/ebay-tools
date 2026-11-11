@@ -71,6 +71,35 @@ def get_epid_from_listing(token: str, hint_url: str) -> str | None:
     return resp.json().get("epid")
 
 
+_EBAY_IMAGE_SIZE_RE = re.compile(r"/s-l\d+\.")
+
+
+def _full_size(url: str) -> str:
+    """eBay serves the same photo at several sizes via an s-l<N> suffix; ask for the largest."""
+    if "i.ebayimg.com" in url:
+        return _EBAY_IMAGE_SIZE_RE.sub("/s-l1600.", url)
+    return url
+
+
+def _image_urls(item: dict) -> list[str]:
+    """Primary photo first, then additional photos, de-duplicated, in listing order."""
+    urls = []
+    primary = (item.get("image") or {}).get("imageUrl")
+    if primary:
+        urls.append(primary)
+    for img in item.get("additionalImages") or []:
+        if img.get("imageUrl"):
+            urls.append(img["imageUrl"])
+    seen: set[str] = set()
+    result = []
+    for url in urls:
+        url = _full_size(url)
+        if url not in seen:
+            seen.add(url)
+            result.append(url)
+    return result
+
+
 def _parse_items(response_json: dict) -> list[dict]:
     results = []
     for item in response_json.get("itemSummaries", []):
@@ -96,6 +125,7 @@ def _parse_items(response_json: dict) -> list[dict]:
             "seller_feedback_score": seller.get("feedbackScore", ""),
             "seller_feedback_pct": seller.get("feedbackPercentage", ""),
             "item_creation_date": item.get("itemCreationDate", ""),
+            "image_urls": _image_urls(item),
         })
     return results
 
