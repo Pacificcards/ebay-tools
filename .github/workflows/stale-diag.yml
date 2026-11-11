@@ -1,0 +1,23 @@
+# TEMPORARY — delete before merging. Read-only stale-check diagnostic.
+name: Stale check diagnostic (temporary)
+
+on:
+  push:
+    branches: [claude/ebay-listings-query-ta4stu]
+    paths:
+      - 'listener/stale_diag.py'
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - env:
+          GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+          GOOGLE_SHEET_ID: ${{ secrets.LISTENER_SHEET_ID }}
+        run: python -m listener.stale_diag
