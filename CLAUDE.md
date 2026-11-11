@@ -132,6 +132,7 @@ Scans eBay every 15 minutes for underpriced cards on a watchlist. Fires Discord 
 - Alert trigger is based on **Max Price**, not Market Price
 - % calculation uses Market Price when set, falls back to Max Price
 - Discord alert: 3-tier emoji 🟢 >5% below / 🟡 within ±5% / 🔴 >5% above market; only when Market Price is set
+- Discord alert is an **embed with up to 4 listing photos** (added 2026-11-11): first embed holds title (links to listing), price line, listed/seller line, color matching the emoji tier, and photo 1; photos 2–4 are extra embeds sharing the same `url`, which Discord merges into one gallery. Photos load straight from eBay's CDN (`i.ebayimg.com`, upsized to `s-l1600`) — nothing is uploaded to Discord. Photo URLs come from the search response (`image` + `additionalImages`, parsed into `image_urls` by `_parse_items`); if that gives fewer than 4, `main.py` makes one `get_item_by_legacy_id` call per new find to top up. If Discord rejects the embed, `send_alert` resends the old plain-text message.
 - Listing time shown as time-only in PT (e.g. `Listed: 2:32 PM`)
 - Sellers with 0 feedback score or 0% positive rating are silently skipped — no sheet write, no alert
 - Stale alert: daily ~8am PST (16:03 UTC), consolidated Discord message for active rows with no new listings in 3+ days
@@ -417,6 +418,7 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 ### Listener
 - Raw cards only — watchlist assumes every card is raw/ungraded (2026-07-22, see Session Log). Graded-card watching not yet supported.
 - The 3 hardcoded category IDs in `_RAW_CARD_CATEGORY_IDS` were supplied by the user, not verified live against eBay's API from this environment — confirm the `Graded` aspect actually resolves correctly for all 3 on the first live run.
+- **Photo alerts (2026-11-11) not yet seen live** — no eBay/Discord credentials in the session that built it. On the first runs with new finds, check the `photos: N from search, M used` log line: if search always gives 1, the extra eBay call per alert is what supplies photos 2–4 (fine at current alert volume). Also confirm the gallery renders in the channel.
 - **Google Sheets 503 retry logic shipped 2026-08-26** (see Constraints and Session Log) — watch `listener.yml` run history over the next week to confirm the failure rate actually drops; if 503s are frequent enough to still exhaust 4 retries occasionally, consider raising `_MAX_RETRIES`/`_RETRY_BASE_DELAY` in `listener/sheets.py`.
 
 ### Campaign Scheduler
@@ -479,6 +481,11 @@ New subproject — see plan file at `/Users/eastcoastlimited/.claude/plans/fancy
 - Whether to expose raw price range alongside the two recommendations
 
 ## Session Log
+
+### 2026-11-11 — Listener: Discord alerts now include up to 4 listing photos
+- User asked for listing photos in alerts, first 4 photos. Built as an embed gallery (see Key listener behavior). Discord cost: none (webhook embeds are free; images are loaded from eBay's servers, not uploaded). eBay cost: at most one extra Browse call per new find.
+- `listener/ebay.py`: `_image_urls()` + `get_item_image_urls()`; `_parse_items` now returns `image_urls` (also flows into `search_all_listings` for Market Monitor, which ignores it). `listener/discord.py`: `_build_alert_payload()` (pure, tested) + plain-text fallback. `listener/main.py`: top-up lookup + photo-count log line.
+- New `tests/test_listener_alerts.py` (11 tests, all mocked). Not verified live — see Open TODOs. Known side effect: old alerts may show broken images once eBay removes a finished listing's photos.
 
 ### 2026-11-07 — Refund handling redesigned; gross_sales column added (tax is on GROSS sales)
 - User confirmed sales tax is based on gross sales. New design (user's spec): a refunded sale is recorded as an ordinary sale; the refund is an Ad Fees row (group = the sale's group); it lowers P&L-by-Group `net_payout` (so profit is unchanged) and a new `gross_sales` column (tax). Replaces the 2026-10-19/20 approach of netting refunds inside the Sales rows.
