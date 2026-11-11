@@ -14,29 +14,24 @@ def _should_run_stale_check() -> bool:
     return now.hour == 16 and now.minute < 15
 
 
-_DATE_FORMATS = ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%-m/%-d/%Y", "%-m/%-d/%y")
+def _last_hits(conn) -> dict:
+    """Most recent alert date (UTC) per watchlist description, from listener_seen_items.
+
+    Every alert inserts a row there, so this is the source of truth for "last hit". The sheet's
+    Last Hit column is display-only: rows added via Discord ingestion used to have no formula
+    there, which made every such card look stale.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT watchlist_description, MAX(first_seen_at) FROM listener_seen_items "
+            "WHERE watchlist_description IS NOT NULL GROUP BY watchlist_description"
+        )
+        return {desc.strip().lower(): ts.astimezone(timezone.utc).date() for desc, ts in cur.fetchall() if ts}
 
 
-def _parse_last_hit(val: str):
-    """Parse a Last Hit date string in any common format. Returns date or None."""
-    for fmt in _DATE_FORMATS:
-        try:
-            return datetime.strptime(val, fmt).date()
-        except ValueError:
-            continue
-    # gspread may return a Google Sheets serial number as a string
-    try:
-        serial = float(val)
-        # Google Sheets epoch is Dec 30 1899
-        from datetime import date as date_cls
-        return (date_cls(1899, 12, 30) + timedelta(days=int(serial)))
-    except (ValueError, TypeError):
-        pass
-    return None
-
-
-def _check_stale(watchlist: list[dict]) -> None:
-    stale_threshold = datetime.now(timezone.utc).date() - timedelta(days=3)
+def _stale_cards(watchlist: list[dict], last_hits: dict, today) -> list[str]:
+    """Active cards with no alert in the 3 days before today (or never)."""
+    threshold = today - timedelta(days=3)
     stale = []
     for row in watchlist:
         if row.get("Active (Y/N)", "Y").strip().upper() != "Y":
@@ -44,16 +39,14 @@ def _check_stale(watchlist: list[dict]) -> None:
         description = row.get("Description", "").strip()
         if not description:
             continue
-        last_hit = str(row.get("Last Hit", "") or "").strip()
-        if not last_hit:
+        last_hit = last_hits.get(description.lower())
+        if last_hit is None or last_hit < threshold:
             stale.append(description)
-            continue
-        last_hit_date = _parse_last_hit(last_hit)
-        if last_hit_date is None:
-            print(f"  [stale] unrecognised Last Hit format for '{description}': {last_hit!r} — skipping")
-            continue
-        if last_hit_date < stale_threshold:
-            stale.append(description)
+    return stale
+
+
+def _check_stale(watchlist: list[dict], conn) -> None:
+    stale = _stale_cards(watchlist, _last_hits(conn), datetime.now(timezone.utc).date())
     if stale:
         send_stale_alert(stale)
         print(f"Stale alert sent for {len(stale)} card(s)")
@@ -155,7 +148,7 @@ def run():
 
     if _should_run_stale_check():
         print("Running stale market price check...")
-        _check_stale(watchlist)
+        _check_stale(watchlist, conn)
 
     bot_token = os.environ.get("DISCORD_BOT_TOKEN", "")
     channel_id = os.environ.get("DISCORD_WATCHLIST_CHANNEL_ID", "")

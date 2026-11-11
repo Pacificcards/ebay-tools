@@ -117,7 +117,9 @@ def append_watchlist_row(sheet_id: str, entry: dict) -> None:
             "",  # Hint URL
             "",  # EPID
             "",  # EPID Status
-            "",  # Last Hit
+            # Last Hit (display only; the stale check reads Supabase). ROW() keeps it pointing at
+            # this row's Description wherever append_row lands it.
+            "=MAXIFS('Observed Listings'!A:A, 'Observed Listings'!B:B, INDIRECT(\"B\"&ROW()))",
         ],
         value_input_option="USER_ENTERED",
     )
