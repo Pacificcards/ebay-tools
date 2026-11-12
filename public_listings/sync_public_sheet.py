@@ -28,17 +28,20 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from shared.db import get_connection
+from traffic_analytics.sync_listings import ensure_detail_columns
 
 PT = ZoneInfo("America/Los_Angeles")
 CATEGORIES_PATH = Path(__file__).with_name("categories.json")
-HEADER = ["Title", "Price", "Listed", "Category", "Link"]
+HEADER = ["Title", "Price", "Category", "Sport / Game", "Grader", "Grade", "Link"]
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+_LAST_COL = chr(ord("A") + len(HEADER) - 1)
+_LAST_COL_NEXT = chr(ord(_LAST_COL) + 1)
 _MAX_RETRIES = 4
 _RETRY_BASE_DELAY = 2  # seconds: 2, 4, 8, 16
 
 # Only these columns are ever selected. Keep this list public-only.
 FETCH_SQL = """
-    SELECT listing_id, title, current_price, start_time, category_id
+    SELECT listing_id, title, current_price, category_id, sport_or_game, grader, grade
     FROM listing_metadata
     WHERE status = 'active'
       AND category_id = ANY(%s)
@@ -78,14 +81,15 @@ def _cell_text(value: str | None) -> str:
 
 def build_values(rows: list[tuple], allowlist: dict[str, str], updated_at: datetime) -> list[list]:
     stamp = updated_at.astimezone(PT).strftime("%b %-d, %Y %-I:%M %p PT")
-    values = [[f"Last updated: {stamp}", "", "", "", ""], HEADER]
-    for listing_id, title, price, start_time, category_id in rows:
-        listed = start_time.astimezone(PT).strftime("%Y-%m-%d") if start_time else ""
+    values = [[f"Last updated: {stamp}"] + [""] * (len(HEADER) - 1), HEADER]
+    for listing_id, title, price, category_id, sport_or_game, grader, grade in rows:
         values.append([
             _cell_text(title),
             float(price) if price is not None else "",
-            listed,
             allowlist.get(str(category_id), ""),
+            _cell_text(sport_or_game),
+            _cell_text(grader),
+            _cell_text(grade),
             f"https://www.ebay.com/itm/{listing_id}",
         ])
     return values
@@ -120,9 +124,10 @@ def _open_worksheet(sheet_id: str):
 def write_sheet(ws, values: list[list]) -> None:
     """Overwrite in place, then clear leftover rows below — the sheet never shows empty mid-update."""
     _retry(ws.update, values, "A1", value_input_option="USER_ENTERED")
-    _retry(ws.batch_clear, [f"A{len(values) + 1}:E"])
+    # Clear leftover rows, plus any columns from an older, wider layout.
+    _retry(ws.batch_clear, [f"A{len(values) + 1}:Z", f"{_LAST_COL_NEXT}1:Z"])
     _retry(ws.freeze, rows=2)
-    _retry(ws.format, "A2:E2", {"textFormat": {"bold": True}})
+    _retry(ws.format, f"A2:{_LAST_COL}2", {"textFormat": {"bold": True}})
     _retry(ws.format, "B3:B", {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}})
 
 
@@ -147,6 +152,7 @@ def main(argv: list[str] | None = None) -> int:
 
     conn = get_connection()
     try:
+        ensure_detail_columns(conn)  # first run after deploy may precede sync_listings
         # Printed every run so a new category that should be allowlisted is visible in the log.
         list_categories(conn, allowlist)
         if args.list_categories:
@@ -157,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
 
     counts: dict[str, int] = {}
     for row in rows:
-        label = allowlist.get(str(row[4]), "?")
+        label = allowlist.get(str(row[3]), "?")
         counts[label] = counts.get(label, 0) + 1
     print(f"[public_listings] {len(rows)} listings: {counts}")
 

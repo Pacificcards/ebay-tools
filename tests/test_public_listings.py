@@ -28,7 +28,7 @@ class TestFetch(unittest.TestCase):
     def test_selects_only_public_columns(self):
         select = re.search(r"SELECT(.*?)FROM", sps.FETCH_SQL, re.S).group(1)
         cols = {c.strip() for c in select.split(",")}
-        self.assertEqual(cols, {"listing_id", "title", "current_price", "start_time", "category_id"})
+        self.assertEqual(cols, {"listing_id", "title", "current_price", "category_id", "sport_or_game", "grader", "grade"})
         for private in ("sku", "quantity_sold", "hide_reason", "impressions", "views"):
             self.assertNotIn(private, select)
 
@@ -55,21 +55,25 @@ class TestFetch(unittest.TestCase):
 class TestBuildValues(unittest.TestCase):
 
     def test_layout_and_row(self):
-        rows = [("1234", "Charizard 4/102", Decimal("199.99"),
-                 datetime(2026, 11, 11, 2, 0, tzinfo=timezone.utc), "183454")]
+        rows = [("1234", "Charizard 4/102", Decimal("199.99"), "183454", "Pokémon TCG", "PSA", "10"),
+                ("5678", "Bo Nix RC", Decimal("5"), "261328", "Football", None, "Raw")]
         values = sps.build_values(rows, ALLOW, NOW)
         self.assertEqual(values[0][0], "Last updated: Nov 12, 2026 3:05 AM PT")
+        self.assertEqual(len(values[0]), len(sps.HEADER))
         self.assertEqual(values[1], sps.HEADER)
-        # 02:00 UTC on 11/11 is still 11/10 in Pacific time.
-        self.assertEqual(values[2], ["Charizard 4/102", 199.99, "2026-11-10", "TCG Cards",
+        self.assertNotIn("Listed", sps.HEADER)
+        self.assertEqual(values[2], ["Charizard 4/102", 199.99, "TCG Cards", "Pokémon TCG", "PSA", "10",
                                      "https://www.ebay.com/itm/1234"])
+        self.assertEqual(values[3][2:6], ["Sports Cards", "Football", "", "Raw"])
 
     def test_formula_like_titles_neutralized(self):
-        rows = [("1", "=IMPORTXML(\"x\")", None, None, "261328"), ("2", "+1 Lot", None, None, "261328")]
+        rows = [("1", "=IMPORTXML(\"x\")", None, "261328", None, None, None),
+                ("2", "+1 Lot", None, "261328", "-x", None, None)]
         values = sps.build_values(rows, ALLOW, NOW)
         self.assertEqual(values[2][0], "'=IMPORTXML(\"x\")")
         self.assertEqual(values[3][0], "'+1 Lot")
-        self.assertEqual(values[2][1:3], ["", ""])
+        self.assertEqual(values[2][1], "")
+        self.assertEqual(values[3][3], "'-x")
 
 
 class TestMain(unittest.TestCase):
@@ -81,6 +85,7 @@ class TestMain(unittest.TestCase):
         with patch.object(sps, "get_connection", return_value=conn), \
              patch.object(sps, "load_allowlist", return_value=ALLOW), \
              patch.object(sps, "_open_worksheet") as open_ws, \
+             patch.object(sps, "ensure_detail_columns"), \
              patch.dict(os.environ, env, clear=False):
             rc = sps.main([])
         return rc, open_ws
@@ -91,19 +96,19 @@ class TestMain(unittest.TestCase):
         open_ws.assert_not_called()
 
     def test_missing_sheet_id_skips(self):
-        rows = [("1", "t", Decimal("1"), None, "261328")]
+        rows = [("1", "t", Decimal("1"), "261328", None, None, None)]
         rc, open_ws = self._run(rows, {"PUBLIC_LISTINGS_SHEET_ID": ""})
         self.assertEqual(rc, 0)
         open_ws.assert_not_called()
 
     def test_writes_then_clears_leftover_rows(self):
-        rows = [("1", "t", Decimal("1"), None, "261328")] * 3
+        rows = [("1", "t", Decimal("1"), "261328", None, None, None)] * 3
         rc, open_ws = self._run(rows, {"PUBLIC_LISTINGS_SHEET_ID": "abc"})
         self.assertEqual(rc, 0)
         ws = open_ws.return_value
         ws.update.assert_called_once()
         self.assertEqual(len(ws.update.call_args[0][0]), 5)  # stamp + header + 3 rows
-        ws.batch_clear.assert_called_once_with(["A6:E"])
+        ws.batch_clear.assert_called_once_with(["A6:Z", "H1:Z"])
 
 
 if __name__ == "__main__":

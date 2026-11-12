@@ -70,6 +70,8 @@ jobs:
       # Reads listing_metadata only (just refreshed by sync_listings above); skips if the sheet secret is unset.
       - name: Update public listings sheet
         id: public_sheet
+        # Only main publishes: a branch push must never change what viewers of the shared sheet see.
+        if: github.ref == 'refs/heads/main'
         continue-on-error: true
         timeout-minutes: 5
         env:
