@@ -362,6 +362,15 @@ Static, client-side-only page (no backend, no data pipeline) — live at `pacifi
 ### 9. Sealed Price Data (`sealed-price-data/`)
 Scraped DealernetX sealed-box price history in its **own, separate Supabase project** (not the main ebay-tools DB), with HTML charts of price indexed to MSRP for the first 45 days after release. Started 2026-10-16. Full context, decisions and the pending Supabase MCP setup are in `sealed-price-data/CLAUDE.md` and `sealed-price-data/next.md` — read those first when working there.
 
+### 10. Public Listings Sheet (`public_listings/`)
+View-only Google Sheet ("anyone with the link → Viewer") listing selected active eBay listings for sharing with others. Added 2026-11-12. Runs as a non-blocking step (`continue-on-error`) in `analytics-ingest.yml` right after `sync_listings`, so twice daily; reads `listing_metadata` only, no eBay calls.
+- **Public data only (hard rule):** the SQL selects only `listing_id, title, current_price, start_time, category_id`. Never add private fields (SKU, quantity_sold, traffic, fees), not even in hidden columns or extra tabs: viewers can download or "Make a copy".
+- Columns: `Title | Price | Listed (start date, PT) | Category | Link`. Row 1 = "Last updated" stamp, row 2 = header.
+- Rows: `status='active'` (hidden-from-search excluded), remaining qty > 0, `category_id` on the **allowlist** in `public_listings/categories.json` (`label` = what viewers see). Each run logs every active category with its count and an INCLUDED marker, so new categories are visible in the Actions log.
+- Text cells starting with `= + - @` get a leading `'` (written USER_ENTERED). Writes in place then clears leftover rows; 0 matching rows → sheet left untouched with a warning.
+- Separate spreadsheet (sharing is per file), created by the user and shared Editor with the service account; secret `PUBLIC_LISTINGS_SHEET_ID` (step skips the write if unset). Writes to the first tab.
+- Local: `.venv/bin/python -m public_listings.sync_public_sheet --dry-run` / `--list-categories`; tests `tests/test_public_listings.py`.
+
 ## Key Commands
 
 ```bash
@@ -388,7 +397,7 @@ gh workflow run pl-ingest.yml --repo Pacificcards/ebay-tools
 - `pl/credentials/` is gitignored — never commit
 
 ## GitHub Secrets (org: Pacificcards)
-`EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_REFRESH_TOKEN`, `SUPABASE_DB_URL`, `GOOGLE_SHEETS_CREDENTIALS`, `LISTENER_SHEET_ID`, `PL_SHEETS_DOC_ID`, `MARKET_MONITOR_SHEET_ID`, `DISCORD_WEBHOOK_URL`, `DISCORD_BOT_TOKEN`, `DISCORD_WATCHLIST_CHANNEL_ID`, `ANTHROPIC_API_KEY`, `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`, `SOLD_COMPS_API_KEY`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `FEDEX_API_KEY`, `FEDEX_SECRET_KEY`, `VEEQO_API_KEY` (add to local `.env` too for local runs)
+`EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_REFRESH_TOKEN`, `SUPABASE_DB_URL`, `GOOGLE_SHEETS_CREDENTIALS`, `LISTENER_SHEET_ID`, `PL_SHEETS_DOC_ID`, `MARKET_MONITOR_SHEET_ID`, `DISCORD_WEBHOOK_URL`, `DISCORD_BOT_TOKEN`, `DISCORD_WATCHLIST_CHANNEL_ID`, `ANTHROPIC_API_KEY`, `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`, `SOLD_COMPS_API_KEY`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `FEDEX_API_KEY`, `FEDEX_SECRET_KEY`, `VEEQO_API_KEY`, `PUBLIC_LISTINGS_SHEET_ID` (add to local `.env` too for local runs)
 
 ## Constraints
 - Do NOT fetch eBay developer docs from the web — user downloads PDFs and places in `/Users/eastcoastlimited/ClaudeCode/ebay_dev_docs/`

@@ -8,6 +8,7 @@ on:
       - 'traffic_analytics/**'
       - 'traffic_dashboard/**'
       - 'shared/**'
+      - 'public_listings/**'
 
 permissions:
   contents: write
@@ -64,6 +65,22 @@ jobs:
       - name: Warn if Veeqo import failed
         if: steps.veeqo.outcome == 'failure'
         run: echo "::warning title=Veeqo label import failed::Shipping labels were NOT imported this run. The rest of the ingest ran normally. Check the 'Fetch Veeqo shipping labels' step log; the next run's 14-day lookback will catch up."
+
+      # Non-blocking: the shared view-only listings sheet must never stop the traffic/P&L chain.
+      # Reads listing_metadata only (just refreshed by sync_listings above); skips if the sheet secret is unset.
+      - name: Update public listings sheet
+        id: public_sheet
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+          PUBLIC_LISTINGS_SHEET_ID: ${{ secrets.PUBLIC_LISTINGS_SHEET_ID }}
+        run: python -m public_listings.sync_public_sheet
+
+      - name: Warn if public listings sheet failed
+        if: steps.public_sheet.outcome == 'failure'
+        run: echo "::warning title=Public listings sheet not updated::Check the 'Update public listings sheet' step log. The rest of the ingest ran normally."
 
       - name: Compute metrics
         env:
