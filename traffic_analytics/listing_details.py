@@ -2,9 +2,10 @@
 
 - category (PrimaryCategory)
 - sport_or_game: item specific "Sport" (sports cards) or "Game" (TCG)
-- grader / grade: for graded cards (ConditionID 2750) from the item specifics
-  "Professional Grader" / "Grade", falling back to eBay's condition descriptors
-  (27501 = grader, 27502 = grade); ungraded cards get grade "Raw".
+- grader / grade: for graded cards (ConditionID 2750) ONLY from eBay's condition
+  descriptors (27501 = grader, 27502 = grade), mapped to short names ("PSA", "10").
+  Item specifics are deliberately ignored here: sellers fill them with free/long text
+  (e.g. "Professional Sports Authenticator (PSA)"). Ungraded cards get grade "Raw".
 
 All of this is shown on the public eBay listing page.
 
@@ -20,6 +21,10 @@ import requests
 
 TRADING_API_URL = "https://api.ebay.com/ws/api.dll"
 NS = {"e": "urn:ebay:apis:eBLBaseComponents"}
+
+# Bump when parse_details changes what it stores; sync_listings refetches every listing
+# whose stored details_version differs (one GetItem each, ~10 min for ~750 listings).
+DETAILS_VERSION = 2
 
 GRADED_CONDITION_ID = "2750"
 DESCRIPTOR_GRADER = "27501"
@@ -105,8 +110,8 @@ def parse_details(xml_text: str) -> dict | None:
 
     grader = grade = None
     if condition_id == GRADED_CONDITION_ID:
-        grader = specifics.get("professional grader") or GRADER_IDS.get(descriptors.get(DESCRIPTOR_GRADER, ""))
-        grade = _clean_grade(specifics.get("grade") or GRADE_IDS.get(descriptors.get(DESCRIPTOR_GRADE, "")))
+        grader = GRADER_IDS.get(descriptors.get(DESCRIPTOR_GRADER, ""))
+        grade = _clean_grade(GRADE_IDS.get(descriptors.get(DESCRIPTOR_GRADE, "")))
     elif condition_id:
         grade = "Raw"
 

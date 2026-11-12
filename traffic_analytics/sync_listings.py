@@ -7,6 +7,7 @@ Run this before fetch_analytics so the active-listing filter is current.
 Requires the base OAuth scope: https://api.ebay.com/oauth/api_scope
 """
 import os
+from collections import Counter
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
@@ -14,7 +15,10 @@ import requests
 
 from shared.db import get_connection
 from shared.ebay_auth import get_access_token
-from traffic_analytics.listing_details import fetch_item_xml, parse_details
+from traffic_analytics.listing_details import (
+    DESCRIPTOR_GRADE, DESCRIPTOR_GRADER, DETAILS_VERSION, GRADE_IDS, GRADED_CONDITION_ID, GRADER_IDS,
+    fetch_item_xml, parse_details,
+)
 
 TRADING_API_URL = "https://api.ebay.com/ws/api.dll"
 NS = {"e": "urn:ebay:apis:eBLBaseComponents"}
@@ -73,7 +77,8 @@ DETAIL_COLUMNS_DDL = """
         ADD COLUMN IF NOT EXISTS sport_or_game     TEXT,
         ADD COLUMN IF NOT EXISTS grader            TEXT,
         ADD COLUMN IF NOT EXISTS grade             TEXT,
-        ADD COLUMN IF NOT EXISTS details_synced_at TIMESTAMPTZ
+        ADD COLUMN IF NOT EXISTS details_synced_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS details_version   INTEGER
 """
 MAX_DETAIL_FETCHES = 1500
 
@@ -95,8 +100,9 @@ def _backfill_details(token: str) -> None:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT listing_id FROM listing_metadata WHERE status != 'ended' "
-                "AND (category_name IS NULL OR details_synced_at IS NULL) ORDER BY listing_id LIMIT %s",
-                (MAX_DETAIL_FETCHES,),
+                "AND (category_name IS NULL OR details_synced_at IS NULL OR details_version IS DISTINCT FROM %s) "
+                "ORDER BY listing_id LIMIT %s",
+                (DETAILS_VERSION, MAX_DETAIL_FETCHES),
             )
             missing_ids = [row[0] for row in cur.fetchall()]
     finally:
@@ -111,10 +117,11 @@ def _backfill_details(token: str) -> None:
         xml_text = fetch_item_xml(token, listing_id)
         details = parse_details(xml_text) if xml_text else None
         if details:
-            updates.append({**details, "listing_id": listing_id})
+            updates.append({**details, "listing_id": listing_id, "version": DETAILS_VERSION})
 
     if not updates:
         return
+    _log_grade_summary(updates)
 
     conn = get_connection()
     try:
@@ -125,7 +132,8 @@ def _backfill_details(token: str) -> None:
                     UPDATE listing_metadata SET
                         category_id = %(category_id)s, category_name = %(category_name)s,
                         condition_id = %(condition_id)s, sport_or_game = %(sport_or_game)s,
-                        grader = %(grader)s, grade = %(grade)s, details_synced_at = NOW()
+                        grader = %(grader)s, grade = %(grade)s, details_synced_at = NOW(),
+                        details_version = %(version)s
                     WHERE listing_id = %(listing_id)s
                     """,
                     d,
@@ -133,6 +141,19 @@ def _backfill_details(token: str) -> None:
         print(f"[sync_listings] details stored for {len(updates)} listing(s)")
     finally:
         conn.close()
+
+
+def _log_grade_summary(updates: list[dict]) -> None:
+    """Public listing data only: counts per grader/grade, plus any descriptor IDs not in the maps."""
+    graded = [d for d in updates if d.get("condition_id") == GRADED_CONDITION_ID]
+    combos = Counter((d["grader"] or "(blank)", d["grade"] or "(blank)") for d in graded)
+    print(f"[sync_listings] graded listings fetched: {len(graded)}; grader/grade -> count: {dict(combos)}")
+    unknown = Counter(
+        (k, v) for d in graded for k, v in d.get("_descriptors", {}).items()
+        if (k == DESCRIPTOR_GRADER and v not in GRADER_IDS) or (k == DESCRIPTOR_GRADE and v not in GRADE_IDS)
+    )
+    if unknown:
+        print(f"::warning title=Unmapped grader/grade IDs::{dict(unknown)} - add them to listing_details.py")
 
 
 def _fetch_all_active(token: str) -> list[dict]:

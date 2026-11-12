@@ -34,9 +34,18 @@ class TestParseDetails(unittest.TestCase):
         d = parse_details(_xml("2750", {"Game": "Pokémon TCG"}, {"27501": "275010", "27502": "275021"}))
         self.assertEqual((d["sport_or_game"], d["grader"], d["grade"]), ("Pokémon TCG", "PSA", "9.5"))
 
-    def test_item_specifics_win_and_grade_normalized(self):
-        d = parse_details(_xml("2750", {"Professional Grader": "TAG", "Grade": "10.0"}, {"27501": "275010"}))
-        self.assertEqual((d["grader"], d["grade"]), ("TAG", "10"))
+    def test_item_specifics_ignored_for_grader_and_grade(self):
+        # The seller's free-text item specifics must never override the condition descriptors.
+        d = parse_details(_xml(
+            "2750",
+            {"Professional Grader": "Professional Sports Authenticator (PSA)", "Grade": "Gem Mint 10"},
+            {"27501": "275010", "27502": "275020"},
+        ))
+        self.assertEqual((d["grader"], d["grade"]), ("PSA", "10"))
+
+    def test_item_specifics_alone_give_blank_not_long_text(self):
+        d = parse_details(_xml("2750", {"Professional Grader": "Professional Sports Authenticator (PSA)"}))
+        self.assertEqual((d["grader"], d["grade"]), (None, None))
 
     def test_unknown_descriptor_left_blank(self):
         d = parse_details(_xml("2750", {}, {"27501": "999", "27502": "999"}))
