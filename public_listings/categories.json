@@ -1,0 +1,7 @@
+{
+  "_comment": "Allowlist for the public listings sheet. Only active listings whose eBay category_id is listed here are published. 'label' is what viewers see in the Category column.",
+  "categories": [
+    {"id": "261328", "label": "Sports Cards"},
+    {"id": "183454", "label": "TCG Cards"}
+  ]
+}
