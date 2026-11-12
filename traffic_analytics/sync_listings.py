@@ -14,6 +14,7 @@ import requests
 
 from shared.db import get_connection
 from shared.ebay_auth import get_access_token
+from traffic_analytics.listing_details import fetch_item_xml, parse_details
 
 TRADING_API_URL = "https://api.ebay.com/ws/api.dll"
 NS = {"e": "urn:ebay:apis:eBLBaseComponents"}
@@ -37,7 +38,7 @@ def sync() -> None:
 
     _upsert(all_items)
     _mark_ended(all_items)
-    _backfill_categories(token)
+    _backfill_details(token)
 
     print("[sync_listings] done")
 
@@ -65,18 +66,37 @@ def _validate_active_count(stored_active: int, fetched: int) -> None:
         )
 
 
-def _backfill_categories(token: str) -> None:
-    """Fetch PrimaryCategory via GetItem for any active listing still missing one.
+# Columns filled by the one-time GetItem backfill. Added idempotently so code and schema can't drift.
+DETAIL_COLUMNS_DDL = """
+    ALTER TABLE listing_metadata
+        ADD COLUMN IF NOT EXISTS condition_id      TEXT,
+        ADD COLUMN IF NOT EXISTS sport_or_game     TEXT,
+        ADD COLUMN IF NOT EXISTS grader            TEXT,
+        ADD COLUMN IF NOT EXISTS grade             TEXT,
+        ADD COLUMN IF NOT EXISTS details_synced_at TIMESTAMPTZ
+"""
+MAX_DETAIL_FETCHES = 1500
 
-    Category essentially never changes once a listing is published, so this only
-    costs one extra Trading API call per listing the first time it's seen -- not
-    on every nightly run.
+
+def ensure_detail_columns(conn) -> None:
+    with conn, conn.cursor() as cur:
+        cur.execute(DETAIL_COLUMNS_DDL)
+
+
+def _backfill_details(token: str) -> None:
+    """Fetch category, sport/game and grader/grade via GetItem for active listings not yet fetched.
+
+    These essentially never change once a listing is published, so this costs one Trading API
+    call per listing the first time it's seen -- not on every run.
     """
     conn = get_connection()
     try:
+        ensure_detail_columns(conn)
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT listing_id FROM listing_metadata WHERE status != 'ended' AND category_name IS NULL"
+                "SELECT listing_id FROM listing_metadata WHERE status != 'ended' "
+                "AND (category_name IS NULL OR details_synced_at IS NULL) ORDER BY listing_id LIMIT %s",
+                (MAX_DETAIL_FETCHES,),
             )
             missing_ids = [row[0] for row in cur.fetchall()]
     finally:
@@ -85,12 +105,13 @@ def _backfill_categories(token: str) -> None:
     if not missing_ids:
         return
 
-    print(f"[sync_listings] backfilling category for {len(missing_ids)} listing(s)")
+    print(f"[sync_listings] fetching details for {len(missing_ids)} listing(s)")
     updates = []
     for listing_id in missing_ids:
-        cat = _fetch_category(token, listing_id)
-        if cat:
-            updates.append((listing_id, cat["id"], cat["name"]))
+        xml_text = fetch_item_xml(token, listing_id)
+        details = parse_details(xml_text) if xml_text else None
+        if details:
+            updates.append({**details, "listing_id": listing_id})
 
     if not updates:
         return
@@ -98,40 +119,20 @@ def _backfill_categories(token: str) -> None:
     conn = get_connection()
     try:
         with conn, conn.cursor() as cur:
-            for listing_id, cat_id, cat_name in updates:
+            for d in updates:
                 cur.execute(
-                    "UPDATE listing_metadata SET category_id = %s, category_name = %s WHERE listing_id = %s",
-                    (cat_id, cat_name, listing_id),
+                    """
+                    UPDATE listing_metadata SET
+                        category_id = %(category_id)s, category_name = %(category_name)s,
+                        condition_id = %(condition_id)s, sport_or_game = %(sport_or_game)s,
+                        grader = %(grader)s, grade = %(grade)s, details_synced_at = NOW()
+                    WHERE listing_id = %(listing_id)s
+                    """,
+                    d,
                 )
-        print(f"[sync_listings] category backfilled for {len(updates)} listing(s)")
+        print(f"[sync_listings] details stored for {len(updates)} listing(s)")
     finally:
         conn.close()
-
-
-def _fetch_category(token: str, listing_id: str) -> dict | None:
-    body = f"""<?xml version="1.0" encoding="utf-8"?>
-<GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
-  <ItemID>{listing_id}</ItemID>
-  <OutputSelector>Item.PrimaryCategory</OutputSelector>
-</GetItemRequest>"""
-    headers = {
-        "X-EBAY-API-CALL-NAME": "GetItem",
-        "X-EBAY-API-SITEID": "0",
-        "X-EBAY-API-COMPATIBILITY-LEVEL": "967",
-        "X-EBAY-API-IAF-TOKEN": token,
-        "Content-Type": "text/xml",
-    }
-    response = requests.post(TRADING_API_URL, data=body.encode("utf-8"), headers=headers, timeout=60)
-    if not response.ok:
-        print(f"[sync_listings] GetItem HTTP {response.status_code} for {listing_id}: {response.text[:200]}")
-        return None
-
-    root = ET.fromstring(response.text)
-    cat_id = root.findtext(".//e:PrimaryCategory/e:CategoryID", namespaces=NS)
-    cat_name = root.findtext(".//e:PrimaryCategory/e:CategoryName", namespaces=NS)
-    if not cat_id:
-        return None
-    return {"id": cat_id, "name": cat_name}
 
 
 def _fetch_all_active(token: str) -> list[dict]:
