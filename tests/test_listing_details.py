@@ -32,11 +32,20 @@ class TestParseDetails(unittest.TestCase):
 
     def test_graded_from_descriptors(self):
         d = parse_details(_xml("2750", {"Game": "Pokémon TCG"}, {"27501": "275010", "27502": "275021"}))
-        self.assertEqual((d["sport_or_game"], d["grader"], d["grade"]), ("Pokémon TCG", "PSA", "9.5"))
+        self.assertEqual((d["sport_or_game"], d["grader"], d["grade"]), ("Pokemon TCG", "PSA", "9.5"))
 
-    def test_item_specifics_win_and_grade_normalized(self):
-        d = parse_details(_xml("2750", {"Professional Grader": "TAG", "Grade": "10.0"}, {"27501": "275010"}))
-        self.assertEqual((d["grader"], d["grade"]), ("TAG", "10"))
+    def test_item_specifics_ignored_for_grader_and_grade(self):
+        # The seller's free-text item specifics must never override the condition descriptors.
+        d = parse_details(_xml(
+            "2750",
+            {"Professional Grader": "Professional Sports Authenticator (PSA)", "Grade": "Gem Mint 10"},
+            {"27501": "275010", "27502": "275020"},
+        ))
+        self.assertEqual((d["grader"], d["grade"]), ("PSA", "10"))
+
+    def test_item_specifics_alone_give_blank_not_long_text(self):
+        d = parse_details(_xml("2750", {"Professional Grader": "Professional Sports Authenticator (PSA)"}))
+        self.assertEqual((d["grader"], d["grade"]), (None, None))
 
     def test_unknown_descriptor_left_blank(self):
         d = parse_details(_xml("2750", {}, {"27501": "999", "27502": "999"}))
@@ -44,6 +53,11 @@ class TestParseDetails(unittest.TestCase):
 
     def test_no_condition_means_unknown_not_raw(self):
         self.assertIsNone(parse_details(_xml(None))["grade"])
+
+    def test_pokemon_accent_folded_and_utf8_bytes_decoded(self):
+        # eBay returns UTF-8 bytes with no charset header; parse the bytes, then fold the accent.
+        raw = _xml("4000", {"Game": "Pokémon TCG"}).encode("utf-8")
+        self.assertEqual(parse_details(raw)["sport_or_game"], "Pokemon TCG")
 
     def test_missing_category_returns_none(self):
         self.assertIsNone(parse_details(_xml("4000", category=False)))

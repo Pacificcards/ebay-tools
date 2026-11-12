@@ -16,9 +16,10 @@ CREATE TABLE IF NOT EXISTS listing_metadata (
     start_time          TIMESTAMPTZ,        -- ListingDetails.StartTime from GetMyeBaySelling (when the listing went live; resets on relist)
     condition_id        TEXT,               -- GetItem ConditionID (2750 = graded card, 4000 = ungraded)
     sport_or_game       TEXT,               -- item specific "Sport" (sports cards) or "Game" (TCG)
-    grader              TEXT,               -- graded cards only: PSA / BGS / TAG ...
+    grader              TEXT,               -- graded cards only, from condition descriptor 27501: PSA / BGS / TAG ...
     grade               TEXT,               -- graded: "10", "9.5" ...; ungraded: "Raw"
     details_synced_at   TIMESTAMPTZ,        -- when the one-time GetItem detail fetch ran (NULL = not yet)
+    details_version     INTEGER,            -- listing_details.DETAILS_VERSION used; a bump refetches every listing
     last_synced_at      TIMESTAMPTZ,        -- when sync_listings last ran
     updated_at          TIMESTAMPTZ DEFAULT NOW()
 );
