@@ -38,6 +38,9 @@ class TestFetch(unittest.TestCase):
         self.assertIn("category_id = ANY(%s)", sql)
         self.assertIn("COALESCE(quantity, 0) - COALESCE(quantity_sold, 0) > 0", sql)
 
+    def test_sorted_by_price_descending(self):
+        self.assertIn("ORDER BY current_price DESC NULLS LAST", sps.FETCH_SQL)
+
     def test_allowlist_ids_passed_as_param(self):
         conn, cur = _conn([])
         sps.fetch_rows(conn, ALLOW)

@@ -43,7 +43,7 @@ FETCH_SQL = """
     WHERE status = 'active'
       AND category_id = ANY(%s)
       AND COALESCE(quantity, 0) - COALESCE(quantity_sold, 0) > 0
-    ORDER BY start_time DESC NULLS LAST, listing_id
+    ORDER BY current_price DESC NULLS LAST, start_time DESC NULLS LAST, listing_id
 """
 
 LIST_CATEGORIES_SQL = """

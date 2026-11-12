@@ -365,7 +365,7 @@ Scraped DealernetX sealed-box price history in its **own, separate Supabase proj
 ### 10. Public Listings Sheet (`public_listings/`)
 View-only Google Sheet ("anyone with the link → Viewer") listing selected active eBay listings for sharing with others. Added 2026-11-12. Runs as a non-blocking step (`continue-on-error`) in `analytics-ingest.yml` right after `sync_listings`, so twice daily; reads `listing_metadata` only, no eBay calls.
 - **Public data only (hard rule):** the SQL selects only `listing_id, title, current_price, start_time, category_id`. Never add private fields (SKU, quantity_sold, traffic, fees), not even in hidden columns or extra tabs: viewers can download or "Make a copy".
-- Columns: `Title | Price | Listed (start date, PT) | Category | Link`. Row 1 = "Last updated" stamp, row 2 = header.
+- Columns: `Title | Price | Listed (start date, PT) | Category | Link`. Row 1 = "Last updated" stamp, row 2 = header. Sorted by price, highest first (ties: newest listing first).
 - Rows: `status='active'` (hidden-from-search excluded), remaining qty > 0, `category_id` on the **allowlist** in `public_listings/categories.json` (`label` = what viewers see). Each run logs every active category with its count and an INCLUDED marker, so new categories are visible in the Actions log.
 - Text cells starting with `= + - @` get a leading `'` (written USER_ENTERED). Writes in place then clears leftover rows; 0 matching rows → sheet left untouched with a warning.
 - Separate spreadsheet (sharing is per file), created by the user and shared Editor with the service account; secret `PUBLIC_LISTINGS_SHEET_ID` (step skips the write if unset). Writes to the first tab.
