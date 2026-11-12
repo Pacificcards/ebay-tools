@@ -32,7 +32,7 @@ class TestParseDetails(unittest.TestCase):
 
     def test_graded_from_descriptors(self):
         d = parse_details(_xml("2750", {"Game": "Pokémon TCG"}, {"27501": "275010", "27502": "275021"}))
-        self.assertEqual((d["sport_or_game"], d["grader"], d["grade"]), ("Pokémon TCG", "PSA", "9.5"))
+        self.assertEqual((d["sport_or_game"], d["grader"], d["grade"]), ("Pokemon TCG", "PSA", "9.5"))
 
     def test_item_specifics_ignored_for_grader_and_grade(self):
         # The seller's free-text item specifics must never override the condition descriptors.
@@ -53,6 +53,11 @@ class TestParseDetails(unittest.TestCase):
 
     def test_no_condition_means_unknown_not_raw(self):
         self.assertIsNone(parse_details(_xml(None))["grade"])
+
+    def test_pokemon_accent_folded_and_utf8_bytes_decoded(self):
+        # eBay returns UTF-8 bytes with no charset header; parse the bytes, then fold the accent.
+        raw = _xml("4000", {"Game": "Pokémon TCG"}).encode("utf-8")
+        self.assertEqual(parse_details(raw)["sport_or_game"], "Pokemon TCG")
 
     def test_missing_category_returns_none(self):
         self.assertIsNone(parse_details(_xml("4000", category=False)))

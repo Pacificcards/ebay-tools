@@ -13,6 +13,7 @@ Probe (read-only, prints aggregates only, writes nothing):
   python -m traffic_analytics.listing_details --probe
 """
 import argparse
+import unicodedata
 import os
 import xml.etree.ElementTree as ET
 from collections import Counter
@@ -24,7 +25,7 @@ NS = {"e": "urn:ebay:apis:eBLBaseComponents"}
 
 # Bump when parse_details changes what it stores; sync_listings refetches every listing
 # whose stored details_version differs (one GetItem each, ~10 min for ~750 listings).
-DETAILS_VERSION = 2
+DETAILS_VERSION = 3
 
 GRADED_CONDITION_ID = "2750"
 DESCRIPTOR_GRADER = "27501"
@@ -50,7 +51,7 @@ GRADE_IDS = {
 }
 
 
-def fetch_item_xml(token: str, listing_id: str) -> str | None:
+def fetch_item_xml(token: str, listing_id: str) -> bytes | None:
     body = f"""<?xml version="1.0" encoding="utf-8"?>
 <GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
   <ItemID>{listing_id}</ItemID>
@@ -71,7 +72,17 @@ def fetch_item_xml(token: str, listing_id: str) -> str | None:
     if not response.ok:
         print(f"[listing_details] GetItem HTTP {response.status_code} for {listing_id}: {response.text[:200]}")
         return None
-    return response.text
+    # Raw bytes, not response.text: eBay's text/xml has no charset header, so requests would decode
+    # UTF-8 as Latin-1 ("Pokémon" -> "PokÃ©mon"). The XML parser reads the encoding from the prolog.
+    return response.content
+
+
+def _plain(value: str | None) -> str | None:
+    """Fold accents/symbols to plain ASCII for display: "Pokémon TCG" -> "Pokemon TCG"."""
+    if not value:
+        return None
+    text = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
+    return " ".join(text.split()) or None
 
 
 def _clean_grade(value: str | None) -> str | None:
@@ -85,7 +96,7 @@ def _clean_grade(value: str | None) -> str | None:
         return value
 
 
-def parse_details(xml_text: str) -> dict | None:
+def parse_details(xml_text: str | bytes) -> dict | None:
     """Return the detail fields, or None if the response has no category (bad/empty response)."""
     root = ET.fromstring(xml_text)
     cat_id = root.findtext(".//e:PrimaryCategory/e:CategoryID", namespaces=NS)
@@ -119,7 +130,7 @@ def parse_details(xml_text: str) -> dict | None:
         "category_id": cat_id,
         "category_name": root.findtext(".//e:PrimaryCategory/e:CategoryName", namespaces=NS),
         "condition_id": condition_id,
-        "sport_or_game": specifics.get("sport") or specifics.get("game"),
+        "sport_or_game": _plain(specifics.get("sport") or specifics.get("game")),
         "grader": grader,
         "grade": grade,
         "_descriptors": descriptors,

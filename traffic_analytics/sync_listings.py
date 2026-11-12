@@ -196,10 +196,11 @@ def _fetch_page(token: str, page: int) -> tuple[list[dict], int]:
         print(f"[sync_listings] HTTP {response.status_code}: {response.text}")
         response.raise_for_status()
 
-    return _parse(response.text)
+    # Bytes, not response.text: no charset header, so .text would garble UTF-8 titles (é -> Ã©).
+    return _parse(response.content)
 
 
-def _parse(xml_text: str) -> tuple[list[dict], int]:
+def _parse(xml_text: str | bytes) -> tuple[list[dict], int]:
     root = ET.fromstring(xml_text)
 
     ack = root.findtext("e:Ack", namespaces=NS)
