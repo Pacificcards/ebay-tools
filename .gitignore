@@ -9,3 +9,4 @@ venv/
 dist/
 .DS_Store
 pl/credentials/
+policy_audit/output/

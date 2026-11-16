@@ -374,6 +374,11 @@ View-only Google Sheet ("anyone with the link → Viewer") listing selected acti
 - Separate spreadsheet (sharing is per file), created by the user and shared Editor with the service account; secret `PUBLIC_LISTINGS_SHEET_ID` (step skips the write if unset). Writes to the first tab.
 - Local: `.venv/bin/python -m public_listings.sync_public_sheet --dry-run` / `--list-categories`; tests `tests/test_public_listings.py`.
 
+### 11. Shipping Policy Audit (`policy_audit/`)
+Read-only, run locally (added 2026-11-16). Changes nothing on eBay or in sheets. Step 1 of a shipping-policy cleanup; any deletes/merges come after the user reviews the report.
+- `policy_audit/get_account_token.py` mints `EBAY_REFRESH_TOKEN_ACCOUNT` (scopes `api_scope` + `sell.account.readonly`; no existing token has `sell.account`).
+- `.venv/bin/python -m policy_audit.audit_shipping_policies [--skip-listings]`: Account API `fulfillment_policy` list + one GetItem (`Item.SellerProfiles`) per active listing (4 threads) + `Shipping Policy ID` counts from both publisher sheets. Flags `UNUSED` (no active listing and no sheet row), `no active listings`, `DUPLICATE-n` (identical handling/services/costs/exclusions, name ignored), `default`. Writes `policy_audit/output/shipping_policies.csv` (gitignored). Counts cover ACTIVE listings only (not scheduled/unsold).
+
 ## Key Commands
 
 ```bash
