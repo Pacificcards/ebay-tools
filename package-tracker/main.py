@@ -30,7 +30,7 @@ import google_auth
 from claude_cli import ClaudeError
 from extract import extract_batch, normalize_order_number
 from orders import PACIFIC, build_orders
-from tasks_sync import TaskIndex, TasksClient, needs_lookup, plan_order, stale_open_tasks
+from tasks_sync import TaskIndex, TasksClient, needs_lookup, plan_order, recheck_open_tasks
 
 
 def _unique(ids):
@@ -73,8 +73,8 @@ def _run(conn, dry_run: bool) -> int:
     tasks = tasks_api.list_tasks(list_id) if list_id else []
     index = TaskIndex.build(tasks, cache.load_links(conn))
 
-    # Step 2: stale open tasks get an order-number search
-    stale = [index.links_by_task[t["id"]] for t in stale_open_tasks(tasks, now)
+    # Step 2: stale open tasks, and open tasks with no items yet, get an order-number search
+    stale = [index.links_by_task[t["id"]] for t in recheck_open_tasks(tasks, now)
              if t["id"] in index.links_by_task]
     stale_orders = {link["order_number"] for link in stale}
     stale_trackings = {link["tracking"] for link in stale if link.get("tracking")}

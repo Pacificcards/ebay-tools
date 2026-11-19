@@ -8,7 +8,7 @@ No network, DB, Gmail, Tasks or Claude calls.
 import os
 import sys
 import unittest
-from datetime import date
+from datetime import date, datetime
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,7 +20,7 @@ import fedex_track  # noqa: E402
 config.TRACKING_START = "2000-01-01T00:00:00+00:00"   # sample data below predates the real cutoff
 
 from extract import normalize_merchant, resolve_date, resolve_range  # noqa: E402
-from orders import build_orders  # noqa: E402
+from orders import PACIFIC, Order, build_orders  # noqa: E402
 from tasks_sync import ETA_UNAVAILABLE, TaskIndex, needs_lookup, plan_order, render  # noqa: E402
 
 K = ("Topps", "A-1001")
@@ -579,6 +579,36 @@ class TestHeaderScreen(unittest.TestCase):
         self.assertIn("https://www.fedex.com/apps/fedextrack?trknbr=123456789012", text)
         self.assertIn("https://www.fanatics.com/track?order=279-6718-4964", text)
         self.assertNotIn("evil.example.com", text)
+
+class TestRecheckOpenTasks(unittest.TestCase):
+    NOW = datetime(2026, 11, 19, 12, tzinfo=PACIFIC)
+
+    @staticmethod
+    def _task(tid, title, status="needsAction", updated="2026-11-18T00:00:00.000Z", **extra):
+        return {"id": tid, "title": title, "status": status, "updated": updated, **extra}
+
+    def test_itemless_tasks_are_rechecked_even_when_fresh(self):
+        import tasks_sync
+        tasks = [
+            self._task("fresh_itemless", "Order #279-6718-4964 - Fanatics"),
+            self._task("fresh_with_items", "6x Mega Box - Fanatics"),
+            self._task("stale_with_items", "2x Pack - Topps", updated="2026-10-01T00:00:00.000Z"),
+            self._task("done_itemless", "Order #1 - Target", status="completed"),
+            self._task("deleted_itemless", "Order #2 - Target", deleted=True),
+        ]
+        got = {t["id"] for t in tasks_sync.recheck_open_tasks(tasks, self.NOW)}
+        self.assertEqual(got, {"fresh_itemless", "stale_with_items"})
+
+    def test_task_both_stale_and_itemless_is_returned_once(self):
+        import tasks_sync
+        tasks = [self._task("a", "Order #3 - Walmart", updated="2026-10-01T00:00:00.000Z")]
+        self.assertEqual(len(tasks_sync.recheck_open_tasks(tasks, self.NOW)), 1)
+
+    def test_fallback_title_prefix_matches_render(self):
+        import tasks_sync
+        order = Order("279-6718-4964", "Fanatics", date(2026, 10, 28))
+        title, _ = tasks_sync.render(order, None, 1, 1, None)
+        self.assertTrue(title.startswith(tasks_sync.NO_ITEMS_TITLE_PREFIX))
 
 if __name__ == "__main__":
     unittest.main()

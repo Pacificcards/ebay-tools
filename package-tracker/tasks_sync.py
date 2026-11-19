@@ -20,6 +20,7 @@ from orders import Order, Shipment
 
 API = "https://tasks.googleapis.com/tasks/v1"
 ETA_UNAVAILABLE = "No ETA - check tracking"
+NO_ITEMS_TITLE_PREFIX = "Order #"      # title render() falls back to when an order has no items
 
 
 # ── Index ────────────────────────────────────────────────────────────────────
@@ -101,7 +102,7 @@ def render(order: Order, sh: Shipment | None, index: int, count: int,
             shipped:      [Tracking #] / [Tracking link] / [Order #]
     """
     items = (", ".join(f"{q}x {n}" if q > 1 else n for n, q in _items(order, sh))
-             or f"Order #{order.order_number}")
+             or f"{NO_ITEMS_TITLE_PREFIX}{order.order_number}")
     title = f"{items} - {order.merchant}"
     if count > 1:
         title += f" ({index} of {count})"
@@ -223,6 +224,20 @@ def stale_open_tasks(tasks: list[dict], now: datetime) -> list[dict]:
     cutoff = now - timedelta(days=config.STALE_TASK_RECHECK_DAYS)
     return [t for t in tasks if not is_closed(t)
             and datetime.fromisoformat(t["updated"].replace("Z", "+00:00")) < cutoff]
+
+
+def itemless_open_tasks(tasks: list[dict]) -> list[dict]:
+    """Open tasks still showing the no-items fallback title. Their order is re-checked every
+    run (not only once stale), so an order whose items were missed gets repaired as soon as
+    extraction can read them, even if its emails are older than the search window."""
+    return [t for t in tasks if not is_closed(t)
+            and (t.get("title") or "").startswith(NO_ITEMS_TITLE_PREFIX)]
+
+
+def recheck_open_tasks(tasks: list[dict], now: datetime) -> list[dict]:
+    """Open tasks whose order gets an order-number Gmail search: stale ones and item-less ones."""
+    wanted = {t["id"]: t for t in stale_open_tasks(tasks, now) + itemless_open_tasks(tasks)}
+    return list(wanted.values())
 
 
 # ── Google Tasks API ─────────────────────────────────────────────────────────
