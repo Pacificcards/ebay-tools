@@ -69,7 +69,7 @@ SUMMARY_EMAIL_SUBJECT = "Package Tracker"     # excluded from searches so the to
 OLD_SUMMARY_EMAIL_SUBJECTS = ["Order Task Tracker"]   # reports sent before the 2026-10-02 rename
 
 # Claude (headless Claude Code on the Pro subscription)
-EXTRACT_VERSION = 2                      # bump when the extraction schema/prompt changes -> cached rows re-read
+EXTRACT_VERSION = 3                      # bump when the extraction schema/prompt/body cleaning changes -> cached rows re-read
 EXTRACT_MODEL = "haiku"
 EXTRACT_BATCH_SIZE = 15                   # emails per Claude call
 EXTRACT_PARALLEL_CALLS = 4                # Claude calls run at the same time

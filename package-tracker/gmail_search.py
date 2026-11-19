@@ -11,6 +11,7 @@ from email.utils import parseaddr
 from zoneinfo import ZoneInfo
 
 import config
+import tasks_sync
 from extract import is_carrier_domain, normalize_merchant
 
 API = "https://gmail.googleapis.com/gmail/v1/users/me"
@@ -125,9 +126,22 @@ def _body_text(payload) -> str:
             html_body = _decode(data)
     # some senders ship a stub text part ("We'll let you know when your items ship.")
     # next to the real HTML, so use whichever has more content
-    stripped = _strip_html(html_body) if html_body else ""
-    text = plain if len(plain) >= len(stripped) else stripped
-    return re.sub(r"\n\s*\n+", "\n\n", re.sub(r"[ \t ]+", " ", text)).strip()
+    plain, stripped = _clean(plain), _clean(_strip_html(html_body) if html_body else "")
+    return plain if len(plain) >= len(stripped) else stripped
+
+
+# Marketing emails pad the hidden preview line ("Order Details Inside") with hundreds of
+# invisible characters (&zwnj;, &#847;, ...). They are not whitespace, so without removing
+# them they eat the body-length cap before the order details (items, prices) are reached.
+_INVISIBLE_RE = re.compile("[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180e\u200b-\u200f"
+                           "\u202a-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0]")
+_SPACES_RE = re.compile("[ \t\u00a0\u2000-\u200a\u202f\u205f\u3000]+")
+MAX_KEPT_LINK_CHARS = 300
+
+
+def _clean(text: str) -> str:
+    text = _SPACES_RE.sub(" ", _INVISIBLE_RE.sub("", text))
+    return re.sub(r"\n\s*\n+", "\n\n", text).strip()
 
 
 def _strip_html(markup: str) -> str:
@@ -140,8 +154,13 @@ def _strip_html(markup: str) -> str:
 
 
 def _keep_track_link(m) -> str:
+    """Keep a link's URL only if it could become a task's tracking link: a short https URL
+    on an allow-listed retailer or carrier domain (the same test tasks_sync applies).
+    ESP click-tracking URLs often contain "track" too, are very long, and are never usable."""
     href, text = m.group(1), m.group(2)
-    return f"{text} ({href})" if "track" in href.lower() else text
+    keep = ("track" in href.lower() and len(href) <= MAX_KEPT_LINK_CHARS
+            and tasks_sync._trusted_url(html.unescape(href)))
+    return f"{text} ({href})" if keep else text
 
 
 def is_seller_mail(email: dict) -> bool:
