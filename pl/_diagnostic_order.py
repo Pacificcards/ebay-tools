@@ -13,8 +13,8 @@ with conn.cursor() as cur:
                    FROM orders_raw WHERE SPLIT_PART(order_id,'_',1) = %s""", (BASE,))
     print("orders_raw:")
     for r in cur.fetchall(): print("  ", r)
-    cur.execute("""SELECT fee_type, booking_entry, amount, date, group_name, billing_transaction_id
-                   FROM order_fees WHERE order_id = %s ORDER BY date""", (BASE,))
+    cur.execute("""SELECT fee_type, booking_entry, amount, transaction_date, group_name, billing_transaction_id
+                   FROM order_fees WHERE order_id = %s ORDER BY transaction_date""", (BASE,))
     print("order_fees:")
     for r in cur.fetchall(): print("  ", r)
 conn.close()
