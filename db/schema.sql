@@ -221,3 +221,21 @@ CREATE TABLE IF NOT EXISTS market_snapshot_items (
     last_seen     DATE        NOT NULL,
     UNIQUE(query_id, item_id)
 );
+
+-- Promoted Listings (cost-per-click, on eBay) results by listing, campaign and Pacific day; ad groups added together.
+-- Written by traffic_analytics/fetch_ads.py (re-reads the last 14 days each ingest run); read by the PCC Seller Hub's
+-- Ad Campaigns tab through the seller_hub_reader login (SELECT on this table only). RLS on: no public API access.
+CREATE TABLE IF NOT EXISTS ad_listing_daily (
+    day            DATE        NOT NULL,
+    listing_id     TEXT        NOT NULL,
+    campaign_id    TEXT        NOT NULL,
+    listing_title  TEXT,
+    impressions    INTEGER     NOT NULL DEFAULT 0,
+    clicks         INTEGER     NOT NULL DEFAULT 0,
+    ad_fees        NUMERIC(12,2) NOT NULL DEFAULT 0,
+    sale_amount    NUMERIC(12,2) NOT NULL DEFAULT 0,
+    sold           INTEGER     NOT NULL DEFAULT 0,
+    fetched_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (day, listing_id, campaign_id)
+);
+ALTER TABLE ad_listing_daily ENABLE ROW LEVEL SECURITY;
